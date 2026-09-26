@@ -58,3 +58,10 @@ backend/uploads/
 
 # Docker 数据
 data/
+# Local secrets (API keys) - never commit
+parthenon.env*
+*.env.rtf
+
+# Local scratch
+backend/prof.out
+locales/.merge.lock
