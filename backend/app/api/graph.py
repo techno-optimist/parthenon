@@ -19,6 +19,7 @@ from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
 from ..utils.locale import t, get_locale, set_locale
+from ..utils.zep import memory_backend_label
 from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ..models.task import TaskManager, TaskStatus
 from ..models.project import ProjectManager, ProjectStatus
@@ -125,6 +126,78 @@ def allowed_file(filename: str) -> bool:
         return False
     ext = os.path.splitext(filename)[1].lower().lstrip('.')
     return ext in Config.ALLOWED_EXTENSIONS
+
+
+ZEP_KEY_UNUSABLE_ERROR = (
+    "ZEP_API_KEY is missing or still a placeholder. Add a key from "
+    "https://app.getzep.com to .env and restart npm run dev."
+)
+_ZEP_API_ERROR_TEXT = re.compile(r"headers: .*?, status_code: (\S+), body: .*", re.DOTALL)
+
+
+def _zep_key_unusable() -> bool:
+    """True when Zep Cloud is the memory backend and ZEP_API_KEY is unset, blank,
+    or still the .env example placeholder. The local backend needs no key."""
+    key = Config.ZEP_API_KEY
+    return Config.memory_backend() == "zep" and (
+        not key or not key.strip() or Config.is_placeholder(key)
+    )
+
+
+def _zep_key_missing() -> bool:
+    """True when Zep Cloud is the memory backend and ZEP_API_KEY is not set."""
+    return Config.memory_backend() == "zep" and not Config.ZEP_API_KEY
+
+
+def _zep_status(error: BaseException) -> int | None:
+    status = getattr(error, "status_code", None)
+    if type(error).__module__.startswith("zep_cloud") and isinstance(status, int):
+        return status
+    return None
+
+
+def _error_chain(error: BaseException, max_depth: int = 8) -> list[BaseException]:
+    """The error plus its explicit/implicit causes, the way a traceback prints them."""
+    chain: list[BaseException] = []
+    current = error
+    while current is not None and len(chain) < max_depth and all(current is not e for e in chain):
+        chain.append(current)
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    return chain
+
+
+def _public_build_error(error: Exception) -> str:
+    """Plain-language message for a failed graph build, without provider bodies or tracebacks."""
+    # graph_builder re-wraps some Zep errors (`raise RuntimeError(...) from e`),
+    # so look through the cause chain for a rejected key first.
+    chain = _error_chain(error)
+    for link in chain:
+        status = _zep_status(link)
+        if status in (401, 403):
+            return (
+                f"Zep Cloud rejected ZEP_API_KEY (HTTP {status}). Put a valid key from "
+                "https://app.getzep.com in .env and restart npm run dev."
+            )
+    status = _zep_status(error)
+    if status is not None:
+        return f"{memory_backend_label()} request failed (HTTP {status}). Try the build again in a moment."
+    for link in chain[1:]:
+        status = _zep_status(link)
+        if status is not None:
+            return f"{error} ({memory_backend_label()} HTTP {status})"
+    return str(error)
+
+
+def _sanitize_progress_message(message: str) -> str:
+    """Replace a raw Zep ApiError dump (headers, body) in a progress message with its status."""
+    if not isinstance(message, str):
+        return message
+    return _ZEP_API_ERROR_TEXT.sub(lambda m: f"HTTP {m.group(1)}", message)
 
 
 # ============== 项目管理接口 ==============
@@ -293,7 +366,7 @@ def generate_ontology():
     project = None
     try:
         logger.info("=== 开始生成本体定义 ===")
-        
+
         # 获取参数
         simulation_requirement = request.form.get('simulation_requirement', '')
         project_name = request.form.get('project_name', 'Unnamed Project')
@@ -483,15 +556,14 @@ def _build_graph_impl():
         logger.info("=== 开始构建图谱 ===")
         
         # 检查配置
-        errors = []
-        if not Config.ZEP_API_KEY:
-            errors.append(t('api.zepApiKeyMissing'))
-        if errors:
-            logger.error(f"配置错误: {errors}")
+        # A placeholder key only fails later, inside the build thread, as a
+        # Zep 401. Reject it here with the fix instead.
+        if _zep_key_unusable():
+            logger.error("配置错误: ZEP_API_KEY is missing or still a placeholder")
             return jsonify({
                 "success": False,
-                "error": t('api.configError', details="; ".join(errors))
-            }), 500
+                "error": ZEP_KEY_UNUSABLE_ERROR
+            }), 503
         
         # 解析请求
         data = request.get_json() or {}
@@ -547,7 +619,12 @@ def _build_graph_impl():
                 and project.zep_batch_operation_id
             ):
                 builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-                batch_summary = builder.get_batch_summary(project.zep_batch_id)
+                try:
+                    batch_summary = builder.get_batch_summary(project.zep_batch_id)
+                except NotFoundError:
+                    # The batch is gone (for example a new local memory
+                    # database): it cannot be resumed, so fall through.
+                    batch_summary = None
                 if getattr(batch_summary, "status", None) in {
                     "queued",
                     "processing",
@@ -724,7 +801,7 @@ def _build_graph_impl():
                         progress = 15 + int(progress_ratio * 40)  # 15% - 55%
                         task_manager.update_task(
                             task_id,
-                            message=msg,
+                            message=_sanitize_progress_message(msg),
                             progress=progress
                         )
 
@@ -800,19 +877,20 @@ def _build_graph_impl():
                 
             except Exception as e:
                 # 更新项目状态为失败
-                build_logger.error(f"[{task_id}] 图谱构建失败: {str(e)}")
+                public_error = _public_build_error(e)
+                build_logger.error(f"[{task_id}] 图谱构建失败: {public_error}")
                 build_logger.debug(traceback.format_exc())
                 
                 with _project_build_lock(project_id):
                     project.status = ProjectStatus.FAILED
-                    project.error = str(e)
+                    project.error = public_error
                     ProjectManager.save_project(project)
 
                     task_manager.update_task(
                         task_id,
                         status=TaskStatus.FAILED,
-                        message=t('progress.buildFailed', error=str(e)),
-                        error=traceback.format_exc()
+                        message=t('progress.buildFailed', error=public_error),
+                        error=public_error
                     )
         
         # 启动后台线程
@@ -832,10 +910,10 @@ def _build_graph_impl():
     except GraphInUseError as e:
         return jsonify({"success": False, "error": str(e)}), 409
     except Exception as e:
+        logger.debug(traceback.format_exc())
         return jsonify({
             "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "error": _public_build_error(e),
         }), 500
 
 
@@ -882,7 +960,7 @@ def get_graph_data(graph_id: str):
     获取图谱数据（节点和边）
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if _zep_key_missing():
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')
@@ -897,10 +975,10 @@ def get_graph_data(graph_id: str):
         })
         
     except Exception as e:
+        logger.debug(traceback.format_exc())
         return jsonify({
             "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "error": _public_build_error(e),
         }), 500
 
 
@@ -910,7 +988,7 @@ def delete_graph(graph_id: str):
     删除Zep图谱
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if _zep_key_missing():
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')
@@ -956,8 +1034,8 @@ def delete_graph(graph_id: str):
     except GraphInUseError as e:
         return jsonify({"success": False, "error": str(e)}), 409
     except Exception as e:
+        logger.debug(traceback.format_exc())
         return jsonify({
             "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "error": _public_build_error(e),
         }), 500

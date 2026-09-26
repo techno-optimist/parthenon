@@ -1,4 +1,4 @@
-"""Shared Zep Cloud client, request limits, and retry policy."""
+"""Shared memory client (Zep Cloud or the local backend), request limits, and retry policy."""
 
 from __future__ import annotations
 
@@ -63,7 +63,17 @@ def _cached_zep_client(api_key: str, timeout: float) -> Zep:
 
 
 def get_zep_client(api_key: str | None = None, timeout: float | None = None) -> Zep:
-    """Return a process-shared, explicitly configured Zep Cloud client."""
+    """Return the process-shared memory client.
+
+    With the local backend (``Config.memory_backend(api_key) == "local"``)
+    this is the SQLite-backed ``LocalZep``; otherwise an explicitly
+    configured Zep Cloud client.
+    """
+
+    if Config.memory_backend(api_key) == "local":
+        from ..memory import get_local_memory_client
+
+        return get_local_memory_client()
 
     # zep-cloud gives ZEP_API_URL precedence even when base_url is explicit.
     # Reject it so this Cloud-only integration cannot silently target a
@@ -84,9 +94,50 @@ def get_zep_client(api_key: str | None = None, timeout: float | None = None) -> 
 
 
 def clear_zep_client_cache() -> None:
-    """Clear cached clients. Intended for tests and controlled reconfiguration."""
+    """Clear cached clients. Intended for tests and controlled reconfiguration.
+
+    Also stops the local backend's workers and closes its connection pools.
+    """
 
     _cached_zep_client.cache_clear()
+    from ..memory import clear_local_memory_clients
+
+    clear_local_memory_clients()
+
+
+def is_local_memory_backend() -> bool:
+    """True when the resolved memory backend is the local SQLite store."""
+
+    try:
+        return Config.memory_backend() == "local"
+    except ValueError:  # invalid MEMORY_BACKEND: Config.validate() reports it
+        return False
+
+
+def ingestion_wait_timeout_seconds() -> float:
+    """How long builders, updaters and runners wait for ingestion to finish."""
+
+    if is_local_memory_backend():
+        return float(Config.LOCAL_MEMORY_INGESTION_TIMEOUT_SECONDS)
+    return float(ZEP_INGESTION_WAIT_TIMEOUT_SECONDS)
+
+
+def client_ingestion_timeout(client: Any, default: float) -> float:
+    """The client's own ingestion deadline (``LocalZep``), else ``default``.
+
+    The Zep Cloud SDK client and test fakes have no such attribute.
+    """
+
+    value = getattr(client, "ingestion_wait_timeout_seconds", None)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return default
+
+
+def memory_backend_label() -> str:
+    """User-facing name of the active memory backend (for error text)."""
+
+    return "Local memory" if is_local_memory_backend() else "Zep Cloud"
 
 
 def is_retryable_zep_error(error: BaseException) -> bool:

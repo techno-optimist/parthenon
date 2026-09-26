@@ -887,6 +887,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # This probe validates Zep Cloud only; never let MEMORY_BACKEND=auto/local
+    # route it to the local store. Set here, not at import (tests import this).
+    from app.config import Config
+
+    Config.MEMORY_BACKEND = "zep"
+
     try:
         result = run(args)
     except Exception as error:

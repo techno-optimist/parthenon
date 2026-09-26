@@ -821,6 +821,29 @@ REACT_INSUFFICIENT_TOOLS_MSG_ALT = (
     "请调用工具获取模拟数据。{unused_hint}"
 )
 
+# A model can drift into describing the search it will make ("I'll start with the
+# full timeline") without emitting the <tool_call> block. Show it the exact block,
+# and if it stalls again make that search for it, so no section is written blind.
+REACT_TOOL_CALL_EXAMPLE = (
+    "\n\n你刚才只描述了计划，没有真正调用工具。现在只输出一个工具调用块，不要写其他文字，例如：\n"
+    "<tool_call>\n{example}\n</tool_call>"
+)
+FALLBACK_TOOL_ORDER = ("panorama_search", "insight_forge", "quick_search")
+# After enough searching, an unmarked reply is taken as the section, unless it is
+# too short to be one (a plan such as "Next I need who still holds a choice").
+SHORT_SECTION_CHARS = 600
+REACT_WRITE_NOW_MSG = (
+    "你已经获取了足够的信息。现在请以 \"Final Answer:\" 开头写出完整的章节内容，"
+    "不要再描述下一步计划；如果确实还缺少关键数据，只输出一个 <tool_call> 块。"
+)
+
+
+def _fallback_tool_call(section_title: str, used_tools: set) -> Dict[str, Any]:
+    """The search a stalled section most needs: an unused broad tool, on the section's own topic."""
+    name = next((tool for tool in FALLBACK_TOOL_ORDER if tool not in used_tools), FALLBACK_TOOL_ORDER[0])
+    return {"name": name, "parameters": {"query": section_title}}
+
+
 REACT_TOOL_LIMIT_MSG = (
     "工具调用次数已达上限（{tool_calls_count}/{max_tool_calls}），不能再调用工具。"
     '请立即基于已获取的信息，以 "Final Answer:" 开头输出章节内容。'
@@ -829,6 +852,18 @@ REACT_TOOL_LIMIT_MSG = (
 REACT_UNUSED_TOOLS_HINT = "\n💡 你还没有使用过: {unused_list}，建议尝试不同工具获取多角度信息"
 
 REACT_FORCE_FINAL_MSG = "已达到工具调用限制，请直接输出 Final Answer: 并生成章节内容。"
+
+# Models often dress the marker in Markdown ("**Final Answer:**", "**Final Answer**:").
+# Splitting on the bare "Final Answer:" left the closing "**" as a stray first line.
+_FINAL_ANSWER_MARKER = re.compile(r'(?:([*_]{1,3})\s*Final Answer\s*(?:\1\s*:|:\s*\1)|Final Answer\s*:)')
+
+
+def _final_answer_text(response: str) -> str:
+    """The text after the last Final Answer marker, without the marker's Markdown emphasis."""
+    marker = None
+    for marker in _FINAL_ANSWER_MARKER.finditer(response):
+        pass
+    return (response[marker.end():] if marker else response).strip()
 
 # ── Chat prompt ──
 
@@ -1328,6 +1363,7 @@ class ReportAgent:
         conflict_retries = 0  # 工具调用与Final Answer同时出现的连续冲突次数
         used_tools = set()  # 记录已调用过的工具名
         all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+        stalled_turns = 0  # consecutive replies with neither a tool call nor a Final Answer
 
         # 报告上下文，用于InsightForge的子问题生成
         report_context = f"章节标题: {section.title}\n模拟需求: {self.simulation_requirement}"
@@ -1430,7 +1466,7 @@ class ReportAgent:
                     continue
 
                 # 正常结束
-                final_answer = cleaned_response.split("Final Answer:")[-1].strip()
+                final_answer = _final_answer_text(cleaned_response)
                 logger.info(t('report.sectionGenDone', title=section.title, count=tool_calls_count))
 
                 if self.report_logger:
@@ -1488,6 +1524,7 @@ class ReportAgent:
 
                 tool_calls_count += 1
                 used_tools.add(call['name'])
+                stalled_turns = 0
 
                 # 构建未使用工具提示
                 unused_tools = all_tools - used_tools
@@ -1518,6 +1555,56 @@ class ReportAgent:
                 # 工具调用次数不足，推荐未用过的工具
                 unused_tools = all_tools - used_tools
                 unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
+                fallback = _fallback_tool_call(section.title, used_tools)
+                stalled_turns += 1
+
+                if stalled_turns >= 2:
+                    # Twice now the model has described a search without making it.
+                    logger.info(
+                        "Section %r stalled without a tool call; running %s for it",
+                        section.title, fallback["name"],
+                    )
+                    if self.report_logger:
+                        self.report_logger.log_tool_call(
+                            section_title=section.title,
+                            section_index=section_index,
+                            tool_name=fallback["name"],
+                            parameters=fallback["parameters"],
+                            iteration=iteration + 1
+                        )
+                    result = self._execute_tool(
+                        fallback["name"],
+                        fallback["parameters"],
+                        report_context=report_context
+                    )
+                    if self.report_logger:
+                        self.report_logger.log_tool_result(
+                            section_title=section.title,
+                            section_index=section_index,
+                            tool_name=fallback["name"],
+                            result=result,
+                            iteration=iteration + 1
+                        )
+                    tool_calls_count += 1
+                    used_tools.add(fallback["name"])
+                    stalled_turns = 0
+                    unused_tools = all_tools - used_tools
+                    messages.append({
+                        "role": "user",
+                        "content": REACT_OBSERVATION_TEMPLATE.format(
+                            tool_name=fallback["name"],
+                            result=result,
+                            tool_calls_count=tool_calls_count,
+                            max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
+                            used_tools_str=", ".join(used_tools),
+                            unused_hint=(
+                                REACT_UNUSED_TOOLS_HINT.format(unused_list="、".join(unused_tools))
+                                if unused_tools and tool_calls_count < self.MAX_TOOL_CALLS_PER_SECTION
+                                else ""
+                            ),
+                        ),
+                    })
+                    continue
 
                 messages.append({
                     "role": "user",
@@ -1525,12 +1612,18 @@ class ReportAgent:
                         tool_calls_count=tool_calls_count,
                         min_tool_calls=min_tool_calls,
                         unused_hint=unused_hint,
+                    ) + REACT_TOOL_CALL_EXAMPLE.format(
+                        example=json.dumps(fallback, ensure_ascii=False)
                     ),
                 })
                 continue
 
             # 工具调用已足够，LLM 输出了内容但没带 "Final Answer:" 前缀
-            # 直接将这段内容作为最终答案，不再空转
+            # 直接将这段内容作为最终答案，不再空转; a short reply is a plan, not a section: ask once.
+            if len(cleaned_response.strip()) < SHORT_SECTION_CHARS and stalled_turns < 1:
+                stalled_turns += 1
+                messages.append({"role": "user", "content": REACT_WRITE_NOW_MSG})
+                continue
             logger.info(t('report.sectionNoPrefix', title=section.title, count=tool_calls_count))
             final_answer = cleaned_response
 
@@ -1558,7 +1651,7 @@ class ReportAgent:
             logger.error(t('report.sectionForceFailed', title=section.title))
             final_answer = t('report.sectionGenFailedContent')
         elif "Final Answer:" in response:
-            final_answer = response.split("Final Answer:")[-1].strip()
+            final_answer = _final_answer_text(response)
         else:
             final_answer = response
         

@@ -346,7 +346,17 @@ def get_generate_status():
         
         task_id = data.get('task_id')
         simulation_id = data.get('simulation_id')
-        
+
+        # A task the caller is polling is authoritative: a regenerate must report
+        # its own progress, not the simulation's earlier finished Chronicle.
+        task_manager = TaskManager()
+        task = task_manager.get_task(task_id) if task_id else None
+        if task:
+            return jsonify({
+                "success": True,
+                "data": task.to_dict()
+            })
+
         # 如果提供了simulation_id，先检查是否已有完成的报告
         if simulation_id:
             existing_report = ReportManager.get_report_by_simulation(simulation_id)
@@ -369,19 +379,10 @@ def get_generate_status():
                 "error": t('api.requireTaskOrSimId')
             }), 400
         
-        task_manager = TaskManager()
-        task = task_manager.get_task(task_id)
-        
-        if not task:
-            return jsonify({
-                "success": False,
-                "error": t('api.taskNotFound', id=task_id)
-            }), 404
-        
         return jsonify({
-            "success": True,
-            "data": task.to_dict()
-        })
+            "success": False,
+            "error": t('api.taskNotFound', id=task_id)
+        }), 404
         
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")

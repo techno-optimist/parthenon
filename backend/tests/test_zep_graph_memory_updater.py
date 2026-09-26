@@ -3,6 +3,7 @@ import threading
 from queue import Queue
 
 import pytest
+from flask import Flask
 
 from app.services import zep_graph_memory_updater as updater_module
 from app.services.zep_graph_memory_updater import (
@@ -10,6 +11,7 @@ from app.services.zep_graph_memory_updater import (
     ZepGraphMemoryManager,
     ZepGraphMemoryUpdater,
 )
+from app.utils.locale import get_locale, set_locale
 
 
 def _activity(index=1, content="hello"):
@@ -235,3 +237,188 @@ def test_flush_deadline_keeps_unattempted_platform_for_a_safe_retry(monkeypatch)
     updater._flush_remaining(deadline=1.0)
     assert updater._platform_buffers["reddit"] == []
     assert len(writes) == 2
+
+
+# ---------------------------------------------------------------------------
+# Episode text language: Chinese for a 'zh' run, English for any other locale
+# ---------------------------------------------------------------------------
+
+# (action_type, action_args, English description, Chinese description). The
+# Chinese column is the upstream MiroFish text and must never change.
+DESCRIPTION_CASES = [
+    ("CREATE_POST", {"content": "Hi"}, "posted: “Hi”", "发布了一条帖子：「Hi」"),
+    ("CREATE_POST", {}, "posted", "发布了一条帖子"),
+    ("LIKE_POST", {"post_author_name": "Bob", "post_content": "Hi"},
+     "liked Bob's post: “Hi”", "点赞了Bob的帖子：「Hi」"),
+    ("LIKE_POST", {"post_content": "Hi"}, "liked a post: “Hi”", "点赞了一条帖子：「Hi」"),
+    ("LIKE_POST", {"post_author_name": "Bob"}, "liked a post by Bob", "点赞了Bob的一条帖子"),
+    ("LIKE_POST", {}, "liked a post", "点赞了一条帖子"),
+    ("DISLIKE_POST", {"post_author_name": "Bob", "post_content": "Hi"},
+     "disliked Bob's post: “Hi”", "踩了Bob的帖子：「Hi」"),
+    ("DISLIKE_POST", {"post_content": "Hi"}, "disliked a post: “Hi”", "踩了一条帖子：「Hi」"),
+    ("DISLIKE_POST", {"post_author_name": "Bob"}, "disliked a post by Bob", "踩了Bob的一条帖子"),
+    ("DISLIKE_POST", {}, "disliked a post", "踩了一条帖子"),
+    ("REPOST", {"original_author_name": "Bob", "original_content": "Hi"},
+     "reposted Bob's post: “Hi”", "转发了Bob的帖子：「Hi」"),
+    ("REPOST", {"original_content": "Hi"}, "reposted a post: “Hi”", "转发了一条帖子：「Hi」"),
+    ("REPOST", {"original_author_name": "Bob"}, "reposted a post by Bob", "转发了Bob的一条帖子"),
+    ("REPOST", {}, "reposted a post", "转发了一条帖子"),
+    ("QUOTE_POST", {"original_author_name": "Bob", "original_content": "Hi", "quote_content": "Yes"},
+     "quoted Bob's post “Hi”, adding: “Yes”", "引用了Bob的帖子「Hi」，并评论道：「Yes」"),
+    ("QUOTE_POST", {"original_author_name": "Bob", "original_content": "Hi"},
+     "quoted Bob's post “Hi”", "引用了Bob的帖子「Hi」"),
+    ("QUOTE_POST", {"original_content": "Hi", "quote_content": "Yes"},
+     "quoted a post “Hi”, adding: “Yes”", "引用了一条帖子「Hi」，并评论道：「Yes」"),
+    ("QUOTE_POST", {"original_author_name": "Bob", "content": "Yes"},
+     "quoted a post by Bob, adding: “Yes”", "引用了Bob的一条帖子，并评论道：「Yes」"),
+    ("QUOTE_POST", {"quote_content": "Yes"}, "quoted a post, adding: “Yes”", "引用了一条帖子，并评论道：「Yes」"),
+    ("QUOTE_POST", {}, "quoted a post", "引用了一条帖子"),
+    ("FOLLOW", {"target_user_name": "Bob"}, "followed the user “Bob”", "关注了用户「Bob」"),
+    ("FOLLOW", {}, "followed a user", "关注了一个用户"),
+    ("CREATE_COMMENT", {"post_author_name": "Bob", "post_content": "Hi", "content": "Nice"},
+     "commented on Bob's post “Hi”: “Nice”", "在Bob的帖子「Hi」下评论道：「Nice」"),
+    ("CREATE_COMMENT", {"post_content": "Hi", "content": "Nice"},
+     "commented on a post “Hi”: “Nice”", "在帖子「Hi」下评论道：「Nice」"),
+    ("CREATE_COMMENT", {"post_author_name": "Bob", "content": "Nice"},
+     "commented on Bob's post: “Nice”", "在Bob的帖子下评论道：「Nice」"),
+    ("CREATE_COMMENT", {"content": "Nice"}, "commented: “Nice”", "评论道：「Nice」"),
+    ("CREATE_COMMENT", {"post_author_name": "Bob", "post_content": "Hi"}, "left a comment", "发表了评论"),
+    ("LIKE_COMMENT", {"comment_author_name": "Bob", "comment_content": "Hi"},
+     "liked Bob's comment: “Hi”", "点赞了Bob的评论：「Hi」"),
+    ("LIKE_COMMENT", {"comment_content": "Hi"}, "liked a comment: “Hi”", "点赞了一条评论：「Hi」"),
+    ("LIKE_COMMENT", {"comment_author_name": "Bob"}, "liked a comment by Bob", "点赞了Bob的一条评论"),
+    ("LIKE_COMMENT", {}, "liked a comment", "点赞了一条评论"),
+    ("DISLIKE_COMMENT", {"comment_author_name": "Bob", "comment_content": "Hi"},
+     "disliked Bob's comment: “Hi”", "踩了Bob的评论：「Hi」"),
+    ("DISLIKE_COMMENT", {"comment_content": "Hi"}, "disliked a comment: “Hi”", "踩了一条评论：「Hi」"),
+    ("DISLIKE_COMMENT", {"comment_author_name": "Bob"}, "disliked a comment by Bob", "踩了Bob的一条评论"),
+    ("DISLIKE_COMMENT", {}, "disliked a comment", "踩了一条评论"),
+    ("SEARCH_POSTS", {"query": "AI"}, "searched for “AI”", "搜索了「AI」"),
+    ("SEARCH_POSTS", {"keyword": "AI"}, "searched for “AI”", "搜索了「AI」"),
+    ("SEARCH_POSTS", {}, "ran a search", "进行了搜索"),
+    ("SEARCH_USER", {"query": "Bob"}, "searched for the user “Bob”", "搜索了用户「Bob」"),
+    ("SEARCH_USER", {"username": "Bob"}, "searched for the user “Bob”", "搜索了用户「Bob」"),
+    ("SEARCH_USER", {}, "searched for users", "搜索了用户"),
+    ("MUTE", {"target_user_name": "Bob"}, "muted the user “Bob”", "屏蔽了用户「Bob」"),
+    ("MUTE", {}, "muted a user", "屏蔽了一个用户"),
+    ("UNFOLLOW", {"target_user_name": "Bob"}, "performed UNFOLLOW", "执行了UNFOLLOW操作"),
+    ("", {}, "performed an action", "执行了操作"),
+]
+PREFIX = "[2026-07-22T12:00:00+08:00] [reddit round 4] Ann Lee: "
+
+
+def _described(action_type, args):
+    return AgentActivity(
+        platform="reddit",
+        agent_id=3,
+        agent_name="Ann Lee",
+        action_type=action_type,
+        action_args=args,
+        round_num=4,
+        timestamp="2026-07-22T12:00:00+08:00",
+    )
+
+
+@pytest.mark.parametrize("action_type,args,english,chinese", DESCRIPTION_CASES)
+def test_episode_text_is_english_for_en_and_unchanged_chinese_for_zh(action_type, args, english, chinese):
+    activity = _described(action_type, args)
+    assert activity.to_episode_text("en") == PREFIX + english
+    assert activity.to_episode_text("zh") == PREFIX + chinese
+    # This thread has no locale set, so it keeps the upstream 'zh' default.
+    assert activity.to_episode_text() == PREFIX + chinese
+
+
+def test_every_non_chinese_locale_gets_english_and_zh_variants_stay_chinese():
+    activity = _described("LIKE_POST", {"post_author_name": "Bob", "post_content": "Hi"})
+    for locale in ("en", "fr", "de", "", "EN"):
+        assert activity.to_episode_text(locale) == PREFIX + "liked Bob's post: “Hi”"
+    for locale in ("zh", "zh-CN", "zh_TW", "ZH"):
+        assert activity.to_episode_text(locale) == PREFIX + "点赞了Bob的帖子：「Hi」"
+
+
+def test_quoted_content_and_names_are_kept_verbatim_in_english():
+    content = "Braces {x}, “curly”, 「corner」 and\na second line"
+    activity = _described("QUOTE_POST", {
+        "original_author_name": "Dr. J.-P. O'Brien", "original_content": content, "quote_content": "{0} ok",
+    })
+    assert activity.to_episode_text("en") == (
+        PREFIX + f"quoted Dr. J.-P. O'Brien's post “{content}”, adding: “{{0}} ok”"
+    )
+
+
+def test_episode_text_defaults_to_the_rendering_threads_locale():
+    activity = _described("FOLLOW", {"target_user_name": "Bob"})
+    rendered = {}
+
+    def render(locale):
+        set_locale(locale)
+        rendered[locale] = activity.to_episode_text()
+
+    for locale in ("en", "zh"):
+        worker = threading.Thread(target=render, args=(locale,))
+        worker.start()
+        worker.join()
+    assert rendered == {
+        "en": PREFIX + "followed the user “Bob”",
+        "zh": PREFIX + "关注了用户「Bob」",
+    }
+
+
+def _recording_updater(monkeypatch, writes, **kwargs):
+    def add(**payload):
+        writes.append({
+            **payload,
+            "thread": threading.current_thread().name,
+            "thread_locale": get_locale(),
+        })
+        return SimpleNamespace(uuid_=f"episode-{len(writes)}")
+
+    client = _client(add)
+    monkeypatch.setattr(updater_module, "get_zep_client", lambda _key: client)
+    updater = ZepGraphMemoryUpdater("graph-1", api_key="test-key", simulation_id="sim-1", **kwargs)
+    updater.SEND_INTERVAL = 0
+    return updater
+
+
+def test_updater_writes_every_line_in_the_locale_of_the_run(monkeypatch):
+    writes = []
+    # The run starts from an English request; the updater captures that locale.
+    with Flask(__name__).test_request_context(headers={"Accept-Language": "en"}):
+        updater = _recording_updater(monkeypatch, writes)
+    assert updater.locale == "en"
+
+    updater.start()
+    # One full batch goes out from the worker; the tail is flushed by stop()
+    # on this thread, whose own locale is still the 'zh' default.
+    for index in range(updater.BATCH_SIZE + 2):
+        updater.add_activity(_activity(index))
+    assert get_locale() == "zh"
+    updater.stop()
+
+    lines = [line for write in writes for line in write["data"].splitlines()]
+    assert len(lines) == updater.BATCH_SIZE + 2
+    assert all(line.endswith(": posted: “hello”") for line in lines)
+    tail = [write for write in writes if write["thread"] == threading.current_thread().name]
+    assert tail and all(write["thread_locale"] == "zh" for write in tail)
+    assert all("posted: “hello”" in write["data"] for write in tail)
+
+
+def test_updater_in_a_chinese_run_keeps_the_upstream_text(monkeypatch):
+    writes = []
+    updater = _recording_updater(monkeypatch, writes)  # no request: the 'zh' default
+    assert updater.locale == "zh"
+    updater.start()
+    updater.add_activity(_activity(1))
+    updater.stop()
+    assert writes[0]["data"] == (
+        "[2026-07-22T12:00:00+08:00] [twitter round 1] Agent 1: 发布了一条帖子：「hello」"
+    )
+
+
+def test_an_explicit_updater_locale_wins_over_the_creating_thread(monkeypatch):
+    writes = []
+    with Flask(__name__).test_request_context(headers={"Accept-Language": "en"}):
+        updater = _recording_updater(monkeypatch, writes, locale="zh")
+    assert updater.locale == "zh"
+    updater._send_batch_activities([_activity(1)], "twitter")
+    assert writes[0]["data"].endswith("Agent 1: 发布了一条帖子：「hello」")

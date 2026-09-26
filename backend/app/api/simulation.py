@@ -87,7 +87,7 @@ def get_graph_entities(graph_id: str):
         enrich: 是否获取相关边信息（默认true）
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if Config.memory_backend() == "zep" and not Config.ZEP_API_KEY:
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')
@@ -124,7 +124,7 @@ def get_graph_entities(graph_id: str):
 def get_entity_detail(graph_id: str, entity_uuid: str):
     """获取单个实体的详细信息"""
     try:
-        if not Config.ZEP_API_KEY:
+        if Config.memory_backend() == "zep" and not Config.ZEP_API_KEY:
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')
@@ -157,7 +157,7 @@ def get_entity_detail(graph_id: str, entity_uuid: str):
 def get_entities_by_type(graph_id: str, entity_type: str):
     """获取指定类型的所有实体"""
     try:
-        if not Config.ZEP_API_KEY:
+        if Config.memory_backend() == "zep" and not Config.ZEP_API_KEY:
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')
@@ -936,16 +936,81 @@ def get_simulation_history():
                     "total_rounds": 120,
                     "current_round": 120,
                     "report_id": "report_xxxx",
+                    "question": "如果武汉大学发布...",
+                    "report_title": "The Marble Question",
+                    "report_status": "completed",
+                    "film": {
+                        "status": "completed",
+                        "poster_url": "/api/parthenon/chronicle/report_xxxx/film/poster.jpg?v=1758800000"
+                    },
                     "version": "v1.0.2"
                 },
                 ...
             ],
             "count": 7
         }
+
+    The Chronicles shelf reads question (the simulation_requirement), report_title
+    and report_status (the newest Chronicle of the run, when there is one) and
+    film (the Chronicle's film: its status, and a poster_url only once the film
+    is complete). Every field that existed before the shelf is still returned.
     """
+    # The film url builder lives in the parthenon API, which api/__init__.py
+    # registers after this module, so it is imported here rather than at the top.
+    import json
+    from ..services import chronicle_film
+    from ..services.report_agent import ReportManager
+    from .parthenon import _film_file_url
+
+    def chronicle_title(report_id, report):
+        """The Chronicle's title from its meta, else from the outline saved while planning."""
+        if report is not None and report.outline is not None and report.outline.title:
+            return report.outline.title
+        try:
+            with open(ReportManager._get_outline_path(report_id), 'r', encoding='utf-8') as f:
+                outline = json.load(f)
+        except (OSError, ValueError):
+            return None
+        title = outline.get("title") if isinstance(outline, dict) else None
+        return title or None
+
+    def film_for_shelf(report_id):
+        """{status, poster_url}: what the film endpoint would answer, without writing anything."""
+        try:
+            manifest = chronicle_film.read_manifest(report_id)
+        except chronicle_film.FilmValidationError:
+            manifest = None
+        status = manifest["status"] if manifest else "none"
+        if status == "running" and not chronicle_film.is_filming(report_id):
+            # The film died with a restart; the film endpoint records that when next asked.
+            status = "failed"
+        poster_url = None
+        if status == "completed":
+            poster_url = _film_file_url(report_id, chronicle_film.POSTER_NAME)
+        return {"status": status, "poster_url": poster_url}
+
+    def chronicle_for_shelf(report_id):
+        """report_title, report_status and film for the run's newest Chronicle, if any."""
+        if not report_id:
+            return {
+                "report_title": None,
+                "report_status": None,
+                "film": {"status": "none", "poster_url": None},
+            }
+        try:
+            report = ReportManager.get_report(report_id)
+        except Exception as error:
+            logger.warning(f"Chronicle {report_id} could not be read for the shelf: {error}")
+            report = None
+        return {
+            "report_title": chronicle_title(report_id, report),
+            "report_status": report.status.value if report else None,
+            "film": film_for_shelf(report_id),
+        }
+
     try:
         limit = request.args.get('limit', 20, type=int)
-        
+
         manager = SimulationManager()
         simulations = manager.list_simulations()[:limit]
         
@@ -994,7 +1059,12 @@ def get_simulation_history():
             
             # 获取关联的 report_id（查找该 simulation 最新的 report）
             sim_dict["report_id"] = _get_report_id_for_simulation(sim.simulation_id)
-            
+
+            # The Chronicles shelf: the question that was asked, the Chronicle's
+            # title and status, and its film (a poster only once the film is done).
+            sim_dict["question"] = sim_dict["simulation_requirement"]
+            sim_dict.update(chronicle_for_shelf(sim_dict["report_id"]))
+
             # 添加版本号
             sim_dict["version"] = "v1.0.2"
             
@@ -1517,6 +1587,15 @@ def start_simulation():
         - 清理的内容包括：run_state.json, actions.jsonl, simulation.log 等
         - 不会清理配置文件（simulation_config.json）和 profile 文件
         - 适用于需要重新运行模拟的场景
+        - Applies whatever state.json says, READY included.
+
+    A run whose process is gone (e.g. the backend restarted mid-run) is first
+    marked stopped, with a note, so it no longer blocks a start. Refused at
+    once, force or not: a run this server is starting, stopping or finalizing
+    (the request never waits for a graph memory drain), and a simulator left
+    running by a previous backend. With force, a running run is stopped and a
+    finished run's interview environment is closed before the logs are
+    cleared; without force both are refused.
 
     关于 enable_graph_memory_update：
         - 启用后，模拟中所有Agent的活动（发帖、评论、点赞等）都会实时更新到Zep图谱
@@ -1596,87 +1675,152 @@ def start_simulation():
             }), 404
 
         force_restarted = False
-        
+
+        # A run left active by a backend that has since restarted has no
+        # process, monitor or updater to finish it. Mark it stopped first so
+        # it cannot block this start, whatever state.json says (READY, or a
+        # STOPPING that the prepared check below would reject), and find out
+        # what still owns the run. This never waits on the runner's
+        # finalization lock: its holder is launching, stopping or draining
+        # this very run (a graph memory drain takes minutes), and a forced
+        # start that waited it out would then wipe the run that just ended.
+        run_state, owner = SimulationRunner.reconcile_and_find_owner(simulation_id)
+        # The reconcile may have synced state.json; this manager caches the
+        # old one.
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id) or state
+
+        if owner in {"busy", "starting", "stopping"}:
+            # This server is launching, stopping or finalizing the run now.
+            return jsonify({
+                "success": False,
+                "error": t('api.simAlreadyActive', id=simulation_id)
+            }), 400
+        if owner == "orphan_process":
+            # A simulator from a previous backend still runs in this
+            # directory; neither a stop nor force can end it from here.
+            return jsonify({
+                "success": False,
+                "error": SimulationRunner.active_run_message(
+                    simulation_id, run_state, owner
+                ),
+            }), 409
+
         # 智能处理状态：如果准备工作已完成，允许重新启动
         if state.status != SimulationStatus.READY:
             # 检查准备工作是否已完成
             is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
+            if not is_prepared:
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        # e.g. state.json says "stopping" because the run is
+                        # still finishing here: say that, not "call /prepare".
+                        SimulationRunner.active_run_message(
+                            simulation_id, run_state, owner
+                        )
+                        if owner is not None
+                        else t('api.simNotReady', status=state.status.value)
+                    ),
+                }), 400
 
-            if is_prepared:
-                run_state = SimulationRunner.get_run_state(simulation_id)
-                updater = ZepGraphMemoryManager.get_updater(simulation_id)
-                needs_finalization = bool(
-                    run_state
-                    and run_state.runner_status in {
-                        RunnerStatus.RUNNING,
-                        RunnerStatus.PAUSED,
-                        RunnerStatus.STOPPING,
-                        RunnerStatus.FAILED,
-                    }
-                    and (
-                        run_state.runner_status
-                        in {
-                            RunnerStatus.RUNNING,
-                            RunnerStatus.PAUSED,
-                            RunnerStatus.STOPPING,
-                        }
-                        or updater is not None
-                    )
-                )
+        if run_state and run_state.runner_status == RunnerStatus.STARTING:
+            # Still STARTING after reconciliation: another request in this
+            # server is launching it. Neither stop it nor wipe its logs.
+            return jsonify({
+                "success": False,
+                "error": t('api.simAlreadyActive', id=simulation_id)
+            }), 400
+        updater = ZepGraphMemoryManager.get_updater(simulation_id)
+        needs_finalization = bool(
+            run_state
+            and run_state.runner_status in {
+                RunnerStatus.RUNNING,
+                RunnerStatus.PAUSED,
+                RunnerStatus.STOPPING,
+                RunnerStatus.FAILED,
+            }
+            and (
+                run_state.runner_status
+                in {
+                    RunnerStatus.RUNNING,
+                    RunnerStatus.PAUSED,
+                    RunnerStatus.STOPPING,
+                }
+                or updater is not None
+            )
+        )
+        # A finished run whose simulator this server still keeps open for
+        # interviews (its monitor keeps reading the action logs meanwhile).
+        env_open = not needs_finalization and owner == "process"
+        if owner is not None and not (needs_finalization or env_open):
+            # Something here still owns a run that neither a stop nor closing
+            # its environment would end (a monitor finishing up, a graph
+            # memory drain). Refuse before force wipes anything.
+            return jsonify({
+                "success": False,
+                "error": SimulationRunner.active_run_message(
+                    simulation_id, run_state, owner
+                ),
+            }), 400
+        if needs_finalization or env_open:
+            if not force:
+                return jsonify({
+                    "success": False,
+                    "error": (
+                        t('api.simRunningForceHint')
+                        if needs_finalization
+                        else SimulationRunner.active_run_message(
+                            simulation_id, run_state, owner
+                        )
+                    ),
+                }), 400
+            try:
                 if needs_finalization:
-                    if not force:
-                        return jsonify({
-                            "success": False,
-                            "error": t('api.simRunningForceHint')
-                        }), 400
                     logger.info(f"强制模式：先完成旧模拟终止 {simulation_id}")
-                    try:
-                        stopped = SimulationRunner.stop_simulation(simulation_id)
-                    except SimulationStopPending as error:
-                        return jsonify({
-                            "success": False,
-                            "pending": True,
-                            "error": str(error),
-                        }), 409
-                    except Exception as error:
-                        return jsonify({
-                            "success": False,
-                            "error": (
-                                "Cannot restart until the previous simulation "
-                                f"finalizes safely: {error}"
-                            ),
-                        }), 409
+                    stopped = SimulationRunner.stop_simulation(simulation_id)
                     if stopped.runner_status != RunnerStatus.STOPPED:
                         return jsonify({
                             "success": False,
-                            "error": "Previous simulation did not reach STOPPED",
+                            "error": t('api.simPreviousNotStopped'),
                         }), 409
-
-                # 如果是强制模式，清理运行日志
-                if force:
-                    logger.info(f"强制模式：清理模拟日志 {simulation_id}")
-                    cleanup_result = SimulationRunner.cleanup_simulation_logs(simulation_id)
-                    if not cleanup_result.get("success"):
-                        return jsonify({
-                            "success": False,
-                            "error": (
-                                "Failed to clean previous simulation logs: "
-                                f"{cleanup_result.get('errors')}"
-                            ),
-                        }), 500
-                    force_restarted = True
-
-                # 进程不存在或已结束，重置状态为 ready
-                logger.info(f"模拟 {simulation_id} 准备工作已完成，重置状态为 ready（原状态: {state.status.value}）")
-                state.status = SimulationStatus.READY
-                manager._save_simulation_state(state)
-            else:
-                # 准备工作未完成
+                else:
+                    logger.info(f"强制模式：先结束已完成模拟的采访环境 {simulation_id}")
+                    SimulationRunner.close_finished_run(simulation_id)
+            except SimulationStopPending as error:
                 return jsonify({
                     "success": False,
-                    "error": t('api.simNotReady', status=state.status.value)
-                }), 400
-        
+                    "pending": True,
+                    "error": str(error),
+                }), 409
+            except Exception as error:
+                return jsonify({
+                    "success": False,
+                    "error": t('api.simRestartBlocked', error=str(error)),
+                }), 409
+
+        # 如果是强制模式，清理运行日志
+        if force:
+            logger.info(f"强制模式：清理模拟日志 {simulation_id}")
+            cleanup_result = SimulationRunner.cleanup_simulation_logs(simulation_id)
+            if not cleanup_result.get("success"):
+                return jsonify({
+                    "success": False,
+                    "error": t(
+                        'api.simCleanupFailed',
+                        errors="; ".join(cleanup_result.get("errors") or []),
+                    ),
+                }), 500
+            # Report a restart only when a previous run left something to
+            # clear; a simulation that never ran has nothing.
+            force_restarted = bool(cleanup_result.get("cleaned_files"))
+
+        if state.status != SimulationStatus.READY:
+            # 进程不存在或已结束，重置状态为 ready
+            logger.info(f"模拟 {simulation_id} 准备工作已完成，重置状态为 ready（原状态: {state.status.value}）")
+            state.status = SimulationStatus.READY
+            manager._save_simulation_state(state)
+
         # 获取图谱ID（用于图谱记忆更新）
         graph_id = None
         if enable_graph_memory_update:

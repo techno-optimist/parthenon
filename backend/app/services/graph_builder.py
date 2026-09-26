@@ -24,11 +24,106 @@ from ..utils.ontology import (
 from ..utils.zep import (
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
+    client_ingestion_timeout,
     get_zep_client,
     is_retryable_zep_error,
 )
 from .text_processor import TextProcessor
 from ..utils.locale import t, get_locale, set_locale
+from ..utils.logger import get_logger
+
+logger = get_logger('mirofish.graph_builder')
+
+BATCH_POLL_INTERVAL_SECONDS = 3
+BATCH_TERMINAL_STATES = frozenset({"succeeded", "partial", "failed", "invalid", "canceled"})
+# The local backend's worker drains one FIFO queue across all graphs with a
+# small LLM concurrency, so a build's total wait grows with its own size and
+# with the work queued ahead of it. Local waits therefore time out only when
+# nothing moves for the client's ingestion timeout; this cap is a backstop
+# against a wait that never converges, never a budget for normal progress.
+LOCAL_BATCH_WAIT_MIN_HARD_CAP_SECONDS = 6 * 60 * 60
+# Per outstanding item (default chunk: 500 chars). The slowest documented
+# local rate (spec §4.10) is about 6 s per such chunk, so 30 s leaves ample room.
+LOCAL_BATCH_WAIT_SECONDS_PER_ITEM = 30
+_LOCAL_ACTIVE_BATCH_STATUSES = ("queued", "processing")
+
+
+class BatchWaitTimeoutError(TimeoutError):
+    """``_wait_for_batch`` stopped waiting before the batch reached a terminal state.
+
+    Giving up does not cancel the batch. ``resumable`` is true when the local
+    backend last reported it ``queued`` or ``processing``: its durable queue
+    keeps extracting, so a caller can keep the persisted batch identity and
+    wait again (the ``graph.py`` resume path) instead of deleting the graph.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        batch_id: str,
+        status: Optional[str],
+        resumable: bool,
+    ) -> None:
+        super().__init__(message)
+        self.batch_id = batch_id
+        self.status = status
+        self.resumable = resumable
+
+
+def _batch_progress_marks(progress: Any) -> tuple[int, int]:
+    """``(finished, started)`` item counts of a ``BatchProgress``.
+
+    ``started`` also counts in-flight items, so a claimed window registers as
+    movement before its extraction commits.
+    """
+
+    def count(name: str) -> int:
+        return int(getattr(progress, name, 0) or 0)
+
+    finished = (
+        count("succeeded_items")
+        + count("failed_items")
+        + count("skipped_items")
+        + count("canceled_items")
+    )
+    return finished, finished + count("processing_items")
+
+
+class _LocalQueueProgress:
+    """Detects forward movement of the local ingestion queue between polls.
+
+    Only increases of per-batch high-water marks count, plus batches leaving
+    the active set (they reached a terminal state). Lease recovery can move
+    items from ``processing`` back to ``queued``; that is not progress, so it
+    neither resets the idle timer nor hides a stall. A newly queued batch
+    starts at zero and does not count until the worker claims it.
+    """
+
+    def __init__(self) -> None:
+        self._marks: Dict[str, tuple[int, int]] = {}
+        self._active_others: Optional[frozenset[str]] = None
+
+    def observe(self, batch_id: str, progress: Any) -> bool:
+        finished, started = _batch_progress_marks(progress)
+        old_finished, old_started = self._marks.get(batch_id, (0, 0))
+        if finished <= old_finished and started <= old_started:
+            return False
+        self._marks[batch_id] = (max(finished, old_finished), max(started, old_started))
+        return True
+
+    def observe_others(self, summaries: Dict[str, Any]) -> bool:
+        advanced = False
+        for batch_id, summary in summaries.items():
+            if self.observe(batch_id, getattr(summary, "progress", None)):
+                advanced = True
+        current = frozenset(summaries)
+        if self._active_others is not None and self._active_others - current:
+            advanced = True
+        for batch_id in (self._active_others or frozenset()) - current:
+            self._marks.pop(batch_id, None)
+        self._active_others = current
+        return advanced
 
 
 @dataclass
@@ -66,7 +161,7 @@ class GraphBuilderService:
     
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
+        if not self.api_key and Config.memory_backend(self.api_key) == "zep":
             raise ValueError("ZEP_API_KEY 未配置")
         
         self.client = get_zep_client(self.api_key)
@@ -628,47 +723,233 @@ class GraphBuilderService:
             operation_name=f"get batch {batch_id}",
         )
 
+    def _uses_local_backend(self) -> bool:
+        """True for the SQLite ``LocalZep`` client (the SDK client and test fakes lack ``backend``)."""
+
+        return getattr(self.client, "backend", None) == "local"
+
+    def _read_batch_summary(self, batch_id: str) -> Any:
+        return call_zep_read_with_retry(
+            lambda: self.client.batch.get(batch_id=batch_id),
+            operation_name=f"poll batch {batch_id}",
+        )
+
+    @staticmethod
+    def _report_batch_wait(
+        progress_callback: Optional[Callable],
+        submission: BatchSubmission,
+        progress: Any,
+        elapsed: float,
+    ) -> None:
+        if not progress_callback:
+            return
+        percent = float(getattr(progress, "percent_complete", 0) or 0) / 100
+        completed = int(getattr(progress, "succeeded_items", 0) or 0)
+        progress_callback(
+            t(
+                'progress.zepProcessing',
+                completed=completed,
+                total=submission.item_count,
+                pending=max(submission.item_count - completed, 0),
+                elapsed=int(elapsed),
+            ),
+            min(max(percent, 0.0), 1.0),
+        )
+
     def _wait_for_batch(
         self,
         submission: BatchSubmission,
         progress_callback: Optional[Callable] = None,
         timeout: int | None = None,
     ) -> List[str]:
-        """Wait for a Batch API terminal state and validate every item."""
+        """Wait for a Batch API terminal state and validate every item.
 
-        timeout = timeout or ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        Zep Cloud: ``timeout`` (default ``ZEP_INGESTION_WAIT_TIMEOUT_SECONDS``)
+        bounds the total wait. Local backend: ``timeout`` (default the client's
+        ``ingestion_wait_timeout_seconds``) is how long the wait tolerates no
+        progress at all, see ``_poll_local_batch``. Either way a give-up raises
+        ``BatchWaitTimeoutError`` (a ``TimeoutError``).
+        """
+
+        if self._uses_local_backend():
+            summary = self._poll_local_batch(
+                submission,
+                progress_callback,
+                idle_timeout=float(
+                    timeout
+                    or client_ingestion_timeout(self.client, ZEP_INGESTION_WAIT_TIMEOUT_SECONDS)
+                ),
+            )
+        else:
+            summary = self._poll_cloud_batch(
+                submission,
+                progress_callback,
+                timeout=timeout
+                or client_ingestion_timeout(self.client, ZEP_INGESTION_WAIT_TIMEOUT_SECONDS),
+            )
+        return self._validate_finished_batch(
+            submission,
+            getattr(summary, "status", None),
+            progress_callback,
+        )
+
+    def _poll_cloud_batch(
+        self,
+        submission: BatchSubmission,
+        progress_callback: Optional[Callable],
+        *,
+        timeout: float,
+    ) -> Any:
+        """Poll a Zep Cloud batch until it is terminal, within a fixed total deadline."""
+
         start_time = time.time()
-        terminal_states = {"succeeded", "partial", "failed", "invalid", "canceled"}
-
         while True:
             if time.time() - start_time > timeout:
-                raise TimeoutError(
-                    f"Zep batch {submission.batch_id} did not finish within {timeout}s"
+                raise BatchWaitTimeoutError(
+                    f"Zep batch {submission.batch_id} did not finish within {timeout}s",
+                    batch_id=submission.batch_id,
+                    status=None,
+                    resumable=False,
                 )
 
-            summary = call_zep_read_with_retry(
-                lambda: self.client.batch.get(batch_id=submission.batch_id),
-                operation_name=f"poll batch {submission.batch_id}",
+            summary = self._read_batch_summary(submission.batch_id)
+            self._report_batch_wait(
+                progress_callback,
+                submission,
+                getattr(summary, "progress", None),
+                time.time() - start_time,
             )
+            if getattr(summary, "status", None) in BATCH_TERMINAL_STATES:
+                return summary
+            time.sleep(BATCH_POLL_INTERVAL_SECONDS)
+
+    def _poll_local_batch(
+        self,
+        submission: BatchSubmission,
+        progress_callback: Optional[Callable],
+        *,
+        idle_timeout: float,
+    ) -> Any:
+        """Poll a local-backend batch until it is terminal; time out on a stall only.
+
+        The local worker extracts at ``LOCAL_MEMORY_LLM_CONCURRENCY`` and
+        drains one FIFO queue across all graphs, so a large document, or one
+        queued behind another project's batch, legitimately takes longer than
+        any fixed deadline. The idle timer restarts whenever this batch or a
+        batch in the queue with it moves forward (see ``_LocalQueueProgress``).
+        A hard cap scaled to the outstanding work bounds the wait anyway.
+
+        Uses the monotonic clock, so time the machine spends asleep (when the
+        worker cannot run either) does not count as a stall.
+        """
+
+        start = time.monotonic()
+        last_progress_at = start
+        tracker = _LocalQueueProgress()
+        hard_cap: float | None = None
+
+        while True:
+            summary = self._read_batch_summary(submission.batch_id)
             status = getattr(summary, "status", None)
             progress = getattr(summary, "progress", None)
-            percent = float(getattr(progress, "percent_complete", 0) or 0) / 100
-            if progress_callback:
-                completed = int(getattr(progress, "succeeded_items", 0) or 0)
-                progress_callback(
-                    t(
-                        'progress.zepProcessing',
-                        completed=completed,
-                        total=submission.item_count,
-                        pending=max(submission.item_count - completed, 0),
-                        elapsed=int(time.time() - start_time),
-                    ),
-                    min(max(percent, 0.0), 1.0),
-                )
+            now = time.monotonic()
+            self._report_batch_wait(progress_callback, submission, progress, now - start)
+            if status in BATCH_TERMINAL_STATES:
+                return summary
 
-            if status in terminal_states:
-                break
-            time.sleep(3)
+            others = self._list_other_active_local_batches(submission.batch_id)
+            if hard_cap is None:
+                hard_cap = self._local_batch_hard_cap(submission, idle_timeout, others)
+            advanced = tracker.observe(submission.batch_id, progress)
+            if others is not None and tracker.observe_others(others):
+                advanced = True
+            if advanced:
+                last_progress_at = now
+
+            finished, _started = _batch_progress_marks(progress)
+            state = (
+                f"status {status}, {finished}/{submission.item_count} items finished, "
+                f"waited {int(now - start)}s"
+            )
+            if now - last_progress_at > idle_timeout:
+                raise BatchWaitTimeoutError(
+                    f"Local memory batch {submission.batch_id} made no progress for "
+                    f"{int(idle_timeout)}s ({state}). Check the LLM settings, or raise "
+                    "LOCAL_MEMORY_INGESTION_TIMEOUT_SECONDS for a slow LLM.",
+                    batch_id=submission.batch_id,
+                    status=status,
+                    resumable=status in _LOCAL_ACTIVE_BATCH_STATUSES,
+                )
+            if now - start > hard_cap:
+                raise BatchWaitTimeoutError(
+                    f"Local memory batch {submission.batch_id} did not finish within "
+                    f"{int(hard_cap)}s ({state}).",
+                    batch_id=submission.batch_id,
+                    status=status,
+                    resumable=status in _LOCAL_ACTIVE_BATCH_STATUSES,
+                )
+            time.sleep(BATCH_POLL_INTERVAL_SECONDS)
+
+    def _list_other_active_local_batches(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        """Queued/processing local batches other than ``batch_id``, by batch ID.
+
+        They share the worker's FIFO queue with ``batch_id``. Returns ``None``
+        when the listing fails: queue liveness is advisory, so a failed probe
+        must not fail the build (the batch poll itself still has to succeed).
+        """
+
+        active: Dict[str, Any] = {}
+        try:
+            for status in _LOCAL_ACTIVE_BATCH_STATUSES:
+                # One page is enough: far fewer than 100 builds run at once.
+                page = call_zep_read_with_retry(
+                    lambda status=status: self.client.batch.list(limit=100, status=status),
+                    operation_name=f"list {status} batches",
+                )
+                for batch in getattr(page, "batches", None) or []:
+                    other_id = getattr(batch, "batch_id", None)
+                    if other_id and other_id != batch_id:
+                        active[other_id] = batch
+        except Exception as error:
+            logger.debug(
+                "Local batch queue probe failed while waiting for %s: %s",
+                batch_id,
+                type(error).__name__,
+            )
+            return None
+        return active
+
+    @staticmethod
+    def _local_batch_hard_cap(
+        submission: BatchSubmission,
+        idle_timeout: float,
+        others: Optional[Dict[str, Any]],
+    ) -> float:
+        """Backstop for a local wait: several hours, more for large or queued-behind builds."""
+
+        outstanding = submission.item_count
+        for summary in (others or {}).values():
+            progress = getattr(summary, "progress", None)
+            total = int(
+                getattr(progress, "total_items", 0)
+                or getattr(summary, "item_count", 0)
+                or 0
+            )
+            finished, _started = _batch_progress_marks(progress)
+            outstanding += max(total - finished, 0)
+        return float(max(
+            LOCAL_BATCH_WAIT_MIN_HARD_CAP_SECONDS,
+            idle_timeout,
+            LOCAL_BATCH_WAIT_SECONDS_PER_ITEM * outstanding,
+        ))
+
+    def _validate_finished_batch(
+        self,
+        submission: BatchSubmission,
+        status: Optional[str],
+        progress_callback: Optional[Callable],
+    ) -> List[str]:
+        """Check a terminal batch's items and return their episode UUIDs in order."""
 
         items = self._list_batch_items(submission.batch_id)
         if status != "succeeded":

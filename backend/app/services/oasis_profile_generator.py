@@ -23,6 +23,7 @@ from ..utils.openai_chat_compat import create_chat_completion, extract_chat_comp
 from ..utils.zep import (
     call_zep_read_with_retry,
     get_zep_client,
+    is_local_memory_backend,
     is_retryable_zep_error,
     normalize_zep_search_query,
 )
@@ -265,7 +266,7 @@ class OasisProfileGenerator:
         self.zep_client = None
         self.graph_id = graph_id
         
-        if self.zep_api_key:
+        if self.zep_api_key or is_local_memory_backend():
             try:
                 self.zep_client = get_zep_client(self.zep_api_key)
             except Exception as e:
@@ -1027,7 +1028,7 @@ class OasisProfileGenerator:
                         progress_callback(
                             current, 
                             total, 
-                            f"已完成 {current}/{total}: {entity.name}（{entity_type}）"
+                            t('progress.profileDone', current=current, total=total, name=entity.name, type=entity_type)
                         )
                     
                     if error:

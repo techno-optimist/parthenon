@@ -12,7 +12,7 @@ import threading
 import subprocess
 import signal
 import atexit
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -20,10 +20,10 @@ from queue import Queue
 
 from ..config import Config
 from ..utils.logger import get_logger
-from ..utils.locale import get_locale, set_locale
+from ..utils.locale import get_locale, set_locale, t
 from ..utils.zep import (
     ZEP_HTTP_REQUEST_TIMEOUT_SECONDS,
-    ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
+    ingestion_wait_timeout_seconds,
 )
 from .zep_graph_memory_updater import ZepGraphMemoryManager
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
@@ -49,8 +49,161 @@ class RunnerStatus(str, Enum):
     FAILED = "failed"
 
 
+# Statuses in which run_state.json claims that something still owns the run.
+ACTIVE_RUNNER_STATUSES = frozenset({
+    RunnerStatus.STARTING,
+    RunnerStatus.RUNNING,
+    RunnerStatus.PAUSED,
+    RunnerStatus.STOPPING,
+})
+
+
 class SimulationStopPending(TimeoutError):
     """The monitor still owns a bounded graph-ingestion finalization."""
+
+
+def _process_command_line(pid: int) -> Optional[str]:
+    """Command line of a running process.
+
+    Returns "" when no such process exists and None when it cannot be told.
+    """
+    if IS_WINDOWS:
+        # os.kill(pid, 0) terminates the process on Windows; never probe that way.
+        try:
+            import psutil
+        except ImportError:
+            return None
+        try:
+            return " ".join(psutil.Process(pid).cmdline())
+        except psutil.NoSuchProcess:  # includes zombies
+            return ""
+        except psutil.Error:
+            return None
+    try:
+        result = subprocess.run(
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 1 and not result.stdout.strip():
+        return ""  # ps found no such process
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _valid_pid(pid: Any) -> bool:
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+
+
+def _simulator_process_alive(simulation_id: str, pid: Optional[int]) -> bool:
+    """Whether the simulator recorded in run_state.json is still running.
+
+    The simulator runs in its own session (start_new_session=True), so it can
+    outlive a backend that died before its shutdown cleanup ran. Its command
+    line carries this simulation's config path, so a live pid without the
+    simulation ID is a reused pid, not our simulator. When the process table
+    cannot be read, assume it is alive: a refused start is recoverable, two
+    simulators writing into one directory is not.
+    """
+    if not _valid_pid(pid):
+        return False
+    command = _process_command_line(pid)
+    if command is None:
+        return True
+    return simulation_id in command
+
+
+# The scripts SimulationRunner launches (see _launch_claimed_simulation).
+SIMULATOR_SCRIPTS = (
+    "run_parallel_simulation.py",
+    "run_twitter_simulation.py",
+    "run_reddit_simulation.py",
+)
+
+
+def _process_table() -> Optional[List[Tuple[int, str]]]:
+    """(pid, command line) of every running process, or None if unreadable."""
+    if IS_WINDOWS:
+        try:
+            import psutil
+        except ImportError:
+            return None
+        table = []
+        try:
+            for process in psutil.process_iter(["pid", "cmdline"]):
+                cmdline = process.info.get("cmdline") or []
+                table.append((process.info["pid"], " ".join(cmdline)))
+        except psutil.Error:
+            return None
+        return table
+    try:
+        result = subprocess.run(
+            ["ps", "-A", "-ww", "-o", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    table = []
+    for line in result.stdout.splitlines():
+        pid_text, _, command = line.strip().partition(" ")
+        try:
+            table.append((int(pid_text), command.strip()))
+        except ValueError:
+            continue
+    return table
+
+
+def _find_simulator_pids(simulation_id: str) -> Optional[List[int]]:
+    """PIDs of running simulator scripts launched with this simulation's config.
+
+    None when the process table cannot be read.
+    """
+    table = _process_table()
+    if table is None:
+        return None
+    # The separator in front keeps "xsim_1" from matching "sim_1".
+    config_path_tail = os.sep + os.path.join(simulation_id, "simulation_config.json")
+    own_pid = os.getpid()
+    return [
+        pid
+        for pid, command in table
+        if pid != own_pid
+        and config_path_tail in command
+        and any(script in command for script in SIMULATOR_SCRIPTS)
+    ]
+
+
+def _surviving_simulator_pid(
+    simulation_id: str, state: Optional["SimulationRunState"]
+) -> Optional[Union[int, str]]:
+    """The simulator a previous backend left running for this run, if any.
+
+    Uses the pid in run_state.json. An active run without one was left by a
+    backend that died between spawning the simulator and publishing RUNNING,
+    so the process table is searched for this simulation's simulator instead.
+    Returns the pid, "?" when the process table cannot be read (fail closed,
+    as in _simulator_process_alive), or None.
+    """
+    if state is None:
+        return None
+    if _valid_pid(state.process_pid):
+        if _simulator_process_alive(simulation_id, state.process_pid):
+            return state.process_pid
+        return None
+    if state.runner_status not in ACTIVE_RUNNER_STATUSES:
+        return None
+    pids = _find_simulator_pids(simulation_id)
+    if pids is None:
+        return "?"
+    return pids[0] if pids else None
 
 
 @dataclass
@@ -237,6 +390,16 @@ class SimulationRunner:
     _finalization_locks: Dict[str, threading.Lock] = {}
     _finalization_locks_guard = threading.Lock()
     _manual_stop_requests: set[str] = set()
+    # IDs whose start_simulation call has claimed STARTING but not yet
+    # published a process (or failed). Guarded by _finalization_lock.
+    _start_claims: set[str] = set()
+    # How long stop_simulation waits for such a start to publish its process
+    # before refusing. The launch creates the updater and spawns the
+    # simulator, which normally takes well under a second.
+    START_CLAIM_WAIT_SECONDS = 60.0
+    # How long a forced restart waits for a finished run's monitor to exit
+    # once its simulator has been ended.
+    ENV_CLOSE_MONITOR_TIMEOUT_SECONDS = 30.0
 
     @classmethod
     def _finalization_lock(cls, simulation_id: str) -> threading.Lock:
@@ -244,6 +407,168 @@ class SimulationRunner:
             return cls._finalization_locks.setdefault(
                 simulation_id, threading.Lock()
             )
+
+    @classmethod
+    def _run_owner(
+        cls, simulation_id: str, state: Optional[SimulationRunState]
+    ) -> Optional[str]:
+        """Name what still owns a simulation's run, or None if nothing does.
+
+        A run is owned while this server is starting or stopping it, while
+        its tracked process or monitor thread is alive (a finished run keeps
+        its simulator open for interviews), while graph memory is still
+        draining, or while a simulator left by a previous backend survives.
+        Whatever run_state.json says: a finished status does not mean the
+        simulator is gone. Caller holds _finalization_lock.
+        """
+        if simulation_id in cls._start_claims:
+            return "starting"
+        if simulation_id in cls._manual_stop_requests:
+            return "stopping"
+        process = cls._processes.get(simulation_id)
+        if process is not None and process.poll() is None:
+            return "process"
+        monitor = cls._monitor_threads.get(simulation_id)
+        if monitor is not None and monitor.is_alive():
+            return "monitor"
+        if (
+            cls._graph_memory_enabled.get(simulation_id)
+            or ZepGraphMemoryManager.get_updater(simulation_id) is not None
+        ):
+            return "graph_memory"
+        if _surviving_simulator_pid(simulation_id, state) is not None:
+            return "orphan_process"
+        return None
+
+    @classmethod
+    def active_run_message(
+        cls,
+        simulation_id: str,
+        state: Optional[SimulationRunState],
+        owner: Optional[str],
+    ) -> str:
+        """Refusal text for a start blocked by the owner _run_owner named."""
+        if owner == "orphan_process":
+            return t(
+                'api.simOrphanProcessAlive',
+                id=simulation_id,
+                pid=_surviving_simulator_pid(simulation_id, state) or "?",
+            )
+        if (
+            owner == "process"
+            and state is not None
+            and state.runner_status not in ACTIVE_RUNNER_STATUSES
+        ):
+            return t('api.simEnvOpen', id=simulation_id)
+        return t('api.simAlreadyActive', id=simulation_id)
+
+    @classmethod
+    def reconcile_and_find_owner(
+        cls, simulation_id: str
+    ) -> Tuple[Optional[SimulationRunState], Optional[str]]:
+        """Reconcile a run whose owner is gone, then name what owns the run.
+
+        For the start API, which must not queue behind the finalization lock:
+        its holder is launching, stopping or finalizing this very run, and a
+        graph memory drain can hold it for many minutes. A busy lock is
+        reported as the owner "busy" and nothing is changed. Otherwise returns
+        the run state (after any reconciliation) and _run_owner's answer.
+        """
+        lock = cls._finalization_lock(simulation_id)
+        if not lock.acquire(blocking=False):
+            return cls._run_states.get(simulation_id), "busy"
+        try:
+            cls._reconcile_orphaned_run_locked(simulation_id)
+            state = cls.get_run_state(simulation_id)
+            return state, cls._run_owner(simulation_id, state)
+        finally:
+            lock.release()
+
+    @classmethod
+    def _reconcile_orphaned_run_locked(
+        cls, simulation_id: str
+    ) -> Optional[SimulationRunState]:
+        """Mark an active run with no live owner as STOPPED.
+
+        Such a run was left behind by a backend that exited without its
+        shutdown cleanup: nothing will ever finish it, and it would block
+        restarts, reports and graph deletion. Progress, counters and recent
+        actions are kept; the note in ``error`` says what happened. Returns
+        the reconciled state, or None when there was nothing to reconcile.
+        Caller holds _finalization_lock.
+        """
+        state = cls.get_run_state(simulation_id)
+        if state is None or state.runner_status not in ACTIVE_RUNNER_STATUSES:
+            return None
+        if cls._run_owner(simulation_id, state) is not None:
+            return None
+
+        previous_status = state.runner_status
+        note = t(
+            'api.simRunInterrupted',
+            status=previous_status.value,
+            round=state.current_round,
+            total=state.total_rounds,
+            pid=state.process_pid or '-',
+        )
+        state.runner_status = RunnerStatus.STOPPED
+        state.twitter_running = False
+        state.reddit_running = False
+        state.completed_at = datetime.now().isoformat()
+        state.updated_at = state.completed_at
+        state.error = note
+        cls._save_run_state(state)
+        cls._sync_simulation_status(simulation_id, RunnerStatus.STOPPED, note)
+        logger.warning(
+            "Reconciled interrupted simulation run: simulation_id=%s, "
+            "previous_status=%s, round=%s/%s, pid=%s",
+            simulation_id,
+            previous_status.value,
+            state.current_round,
+            state.total_rounds,
+            state.process_pid,
+        )
+        return state
+
+    @classmethod
+    def reconcile_orphaned_run(
+        cls, simulation_id: str
+    ) -> Optional[SimulationRunState]:
+        """Mark an active run whose owner is gone as STOPPED (see above)."""
+        with cls._finalization_lock(simulation_id):
+            return cls._reconcile_orphaned_run_locked(simulation_id)
+
+    @classmethod
+    def reconcile_orphaned_runs(cls) -> List[str]:
+        """Reconcile every run a previous backend left active. Run at startup.
+
+        Returns the IDs that were marked STOPPED. A failure on one simulation
+        is logged and does not stop the scan.
+        """
+        root = cls.RUN_STATE_DIR
+        if not os.path.isdir(root):
+            return []
+        reconciled = []
+        for simulation_id in sorted(os.listdir(root)):
+            if not os.path.isfile(os.path.join(root, simulation_id, "run_state.json")):
+                continue
+            try:
+                # Peek without caching every simulation's state in memory.
+                state = cls._run_states.get(simulation_id) or cls._load_run_state(
+                    simulation_id
+                )
+                if state is None or state.runner_status not in ACTIVE_RUNNER_STATUSES:
+                    continue
+                if cls.reconcile_orphaned_run(simulation_id) is not None:
+                    reconciled.append(simulation_id)
+            except Exception as error:
+                logger.error(
+                    "Could not reconcile simulation run state: "
+                    "simulation_id=%s, error=%s",
+                    simulation_id,
+                    error,
+                )
+        return reconciled
 
     @classmethod
     def _sync_simulation_status(
@@ -419,29 +744,67 @@ class SimulationRunner:
             total_simulation_hours=total_hours,
             started_at=datetime.now().isoformat(),
         )
-        
+
+        # Validate before claiming, so a rejected request leaves no STARTING.
+        if enable_graph_memory_update and not graph_id:
+            raise ValueError("启用图谱记忆更新时必须提供 graph_id")
+
         # Atomically claim this simulation ID. The expensive updater/process
         # startup happens after releasing the lock, while the persisted
-        # STARTING state makes every concurrent start fail closed.
+        # STARTING state and the in-process claim make every concurrent start
+        # fail closed. A run left active by a previous backend is reconciled
+        # first so it cannot block restarts forever.
         with cls._finalization_lock(simulation_id):
+            cls._reconcile_orphaned_run_locked(simulation_id)
             existing = cls.get_run_state(simulation_id)
-            active_statuses = {
-                RunnerStatus.STARTING,
-                RunnerStatus.RUNNING,
-                RunnerStatus.PAUSED,
-                RunnerStatus.STOPPING,
-            }
-            if (
-                existing and existing.runner_status in active_statuses
-            ) or ZepGraphMemoryManager.get_updater(simulation_id) is not None:
-                raise ValueError(f"模拟已在运行或结束处理中: {simulation_id}")
+            # Checked whatever the persisted status says: a COMPLETED run
+            # keeps its simulator and monitor alive for interviews, and a
+            # second simulator in the same directory would corrupt both runs.
+            owner = cls._run_owner(simulation_id, existing)
+            if owner is not None:
+                raise ValueError(
+                    cls.active_run_message(simulation_id, existing, owner)
+                )
+            if existing and existing.runner_status in ACTIVE_RUNNER_STATUSES:
+                # Reconciliation stops every active run without an owner;
+                # still fail closed if one gets through.
+                raise ValueError(t('api.simAlreadyActive', id=simulation_id))
             cls._save_run_state(state)
-        
+            cls._start_claims.add(simulation_id)
+
+        try:
+            return cls._launch_claimed_simulation(
+                simulation_id,
+                state,
+                sim_dir=sim_dir,
+                config_path=config_path,
+                platform=platform,
+                max_rounds=max_rounds,
+                enable_graph_memory_update=enable_graph_memory_update,
+                graph_id=graph_id,
+            )
+        finally:
+            # Every exit publishes RUNNING (with a tracked process) or FAILED
+            # before reaching here, so the claim is no longer the evidence.
+            with cls._finalization_lock(simulation_id):
+                cls._start_claims.discard(simulation_id)
+
+    @classmethod
+    def _launch_claimed_simulation(
+        cls,
+        simulation_id: str,
+        state: SimulationRunState,
+        *,
+        sim_dir: str,
+        config_path: str,
+        platform: str,
+        max_rounds: Optional[int],
+        enable_graph_memory_update: bool,
+        graph_id: Optional[str],
+    ) -> SimulationRunState:
+        """Create the updater and simulator for a run claimed as STARTING."""
         # 如果启用图谱记忆更新，创建更新器
         if enable_graph_memory_update:
-            if not graph_id:
-                raise ValueError("启用图谱记忆更新时必须提供 graph_id")
-            
             try:
                 ZepGraphMemoryManager.create_updater(simulation_id, graph_id)
                 cls._graph_memory_enabled[simulation_id] = True
@@ -628,15 +991,23 @@ class SimulationRunner:
         
         process = cls._processes.get(simulation_id)
         state = cls.get_run_state(simulation_id)
-        
+
         if not process or not state:
             return
-        
+
+        # This run's registrations. A newer run of the same simulation must
+        # never be finalized or unregistered by this monitor.
+        monitor_thread = threading.current_thread()
+        action_queue = cls._action_queues.get(simulation_id)
+        stdout_file = cls._stdout_files.get(simulation_id)
+        stderr_file = cls._stderr_files.get(simulation_id)
+
         twitter_position = 0
         reddit_position = 0
         
         monitor_error: Exception | None = None
         exit_code: int | None = None
+        rounds_published = False
         try:
             while process.poll() is None:  # 进程仍在运行
                 # 读取 Twitter 动作日志
@@ -653,6 +1024,13 @@ class SimulationRunner:
                 
                 # 更新状态
                 cls._save_run_state(state)
+
+                # The simulator keeps its environment open after the last round
+                # so agents can be interviewed; it only exits on close_env.
+                # Publish completion once every platform has finished and graph
+                # memory has drained, without waiting for that exit.
+                if not rounds_published and cls._check_all_platforms_completed(state):
+                    rounds_published = cls._publish_rounds_complete(simulation_id)
                 time.sleep(2)
             
             # 进程结束后，最后读取一次日志
@@ -673,12 +1051,29 @@ class SimulationRunner:
             # owns the final result.
             with cls._finalization_lock(simulation_id):
                 latest_state = cls.get_run_state(simulation_id)
-                if latest_state is not None:
+                owns_run = (
+                    latest_state is None
+                    or latest_state is state
+                    or latest_state.process_pid == process.pid
+                )
+                if latest_state is not None and owns_run:
                     state = latest_state
 
-                if state.runner_status not in {
+                # COMPLETED here means the rounds already finished and were
+                # published by _publish_rounds_complete; closing the interview
+                # environment later must not rewrite that result.
+                if not owns_run:
+                    logger.warning(
+                        "监控线程结束时模拟已由新的运行接管，跳过收尾: "
+                        "simulation_id=%s, pid=%s, current_pid=%s",
+                        simulation_id,
+                        process.pid,
+                        latest_state.process_pid,
+                    )
+                elif state.runner_status not in {
                     RunnerStatus.STOPPED,
                     RunnerStatus.FAILED,
+                    RunnerStatus.COMPLETED,
                 }:
                     manual_stop = simulation_id in cls._manual_stop_requests
                     desired_status = (
@@ -742,27 +1137,31 @@ class SimulationRunner:
                         logger.info(f"模拟完成: {simulation_id}")
                     else:
                         logger.error(f"模拟失败: {simulation_id}, error={state.error}")
-                cls._manual_stop_requests.discard(simulation_id)
-            
-            # 清理进程资源
-            cls._processes.pop(simulation_id, None)
-            cls._action_queues.pop(simulation_id, None)
-            cls._monitor_threads.pop(simulation_id, None)
-            
-            # 关闭日志文件句柄
-            if simulation_id in cls._stdout_files:
-                try:
-                    cls._stdout_files[simulation_id].close()
-                except Exception:
-                    pass
-                cls._stdout_files.pop(simulation_id, None)
-            if simulation_id in cls._stderr_files and cls._stderr_files[simulation_id]:
-                try:
-                    cls._stderr_files[simulation_id].close()
-                except Exception:
-                    pass
-                cls._stderr_files.pop(simulation_id, None)
-    
+                if owns_run:
+                    cls._manual_stop_requests.discard(simulation_id)
+
+                # 清理进程资源：只释放本次运行自己的登记项
+                for registry, own in (
+                    (cls._processes, process),
+                    (cls._action_queues, action_queue),
+                    (cls._monitor_threads, monitor_thread),
+                    (cls._stdout_files, stdout_file),
+                    (cls._stderr_files, stderr_file),
+                ):
+                    if (
+                        simulation_id in registry
+                        and registry[simulation_id] is own
+                    ):
+                        registry.pop(simulation_id, None)
+
+            # 关闭本次运行的日志文件句柄
+            for handle in (stdout_file, stderr_file):
+                if handle is not None:
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+
     @classmethod
     def _read_action_log(
         cls, 
@@ -879,6 +1278,51 @@ class SimulationRunner:
             return position
     
     @classmethod
+    def _publish_rounds_complete(cls, simulation_id: str) -> bool:
+        """Mark a run COMPLETED while its process waits for interviews.
+
+        Same barrier as process exit: STOPPING until the graph memory updater
+        has drained, then COMPLETED (or FAILED if the drain fails). The
+        environment stays open so the Symposium can still interview agents.
+        Returns True once there is nothing left to publish for this run.
+        """
+        with cls._finalization_lock(simulation_id):
+            state = cls.get_run_state(simulation_id)
+            if state is None or state.runner_status != RunnerStatus.RUNNING:
+                return True  # a stop, failure or exit already owns the result
+            if simulation_id in cls._manual_stop_requests:
+                return True
+
+            state.twitter_running = False
+            state.reddit_running = False
+            desired_status = RunnerStatus.COMPLETED
+            error_message = None
+
+            if cls._graph_memory_enabled.get(simulation_id, False):
+                state.runner_status = RunnerStatus.STOPPING
+                cls._save_run_state(state)
+                cls._sync_simulation_status(simulation_id, RunnerStatus.STOPPING)
+                try:
+                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                    cls._graph_memory_enabled.pop(simulation_id, None)
+                except Exception as error:
+                    logger.error(f"停止图谱记忆更新器失败: {error}")
+                    desired_status = RunnerStatus.FAILED
+                    error_message = f"Zep图谱写入未完整完成: {error}"
+
+            state.runner_status = desired_status
+            state.error = error_message
+            state.completed_at = datetime.now().isoformat()
+            cls._save_run_state(state)
+            cls._sync_simulation_status(simulation_id, desired_status, error_message)
+            logger.info(
+                "所有平台已完成，环境保持开启以供采访: simulation_id=%s status=%s",
+                simulation_id,
+                desired_status.value if hasattr(desired_status, "value") else desired_status,
+            )
+            return True
+
+    @classmethod
     def _check_all_platforms_completed(cls, state: SimulationRunState) -> bool:
         """
         检查所有启用的平台是否都已完成模拟
@@ -962,14 +1406,55 @@ class SimulationRunner:
                 process.wait(timeout=5)
     
     @classmethod
+    def _wait_for_start_to_publish(cls, simulation_id: str, timeout: float) -> bool:
+        """Wait until no start in this server holds a claim on the run.
+
+        Returns False if a claim is still held after ``timeout`` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            with cls._finalization_lock(simulation_id):
+                if simulation_id not in cls._start_claims:
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+    @classmethod
     def stop_simulation(cls, simulation_id: str) -> SimulationRunState:
         """停止模拟"""
+        # A start in progress here has claimed STARTING but not yet published
+        # its process or updater. Stopping now would publish STOPPED (and
+        # drain its updater), and the launch would then publish RUNNING with
+        # a live simulator. Let it publish, then stop what it started.
+        cls._wait_for_start_to_publish(simulation_id, cls.START_CLAIM_WAIT_SECONDS)
         with cls._finalization_lock(simulation_id):
+            if simulation_id in cls._start_claims:
+                raise ValueError(t('api.simStillStarting', id=simulation_id))
             state = cls.get_run_state(simulation_id)
             if not state:
                 raise ValueError(f"模拟不存在: {simulation_id}")
             if state.runner_status == RunnerStatus.STOPPED:
                 return state
+            orphan_pid = (
+                _surviving_simulator_pid(simulation_id, state)
+                if (
+                    state.runner_status in ACTIVE_RUNNER_STATUSES
+                    and simulation_id not in cls._processes
+                )
+                else None
+            )
+            if orphan_pid is not None:
+                # A simulator that outlived a previous backend is not ours to
+                # terminate. Marking it STOPPED would let a restart run a
+                # second simulator in the same directory.
+                raise ValueError(
+                    t(
+                        'api.simOrphanProcessAlive',
+                        id=simulation_id,
+                        pid=orphan_pid,
+                    )
+                )
 
             pending_updater = ZepGraphMemoryManager.get_updater(simulation_id)
             retrying_finalization = (
@@ -1025,7 +1510,7 @@ class SimulationRunner:
         ):
             wait_timeout = max(
                 30.0,
-                ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+                ingestion_wait_timeout_seconds()
                 + ZEP_HTTP_REQUEST_TIMEOUT_SECONDS
                 + 5,
             )
@@ -1036,7 +1521,7 @@ class SimulationRunner:
                 # leave the observable state as STOPPING and let polling expose
                 # the eventual STOPPED/FAILED result.
                 raise SimulationStopPending(
-                    f"模拟仍在停止中，图谱写入未在 {wait_timeout:.0f}s 内完成"
+                    t('api.simStopPending', seconds=f"{wait_timeout:.0f}")
                 )
         else:
             # Restart recovery or tests may have no monitor thread. Complete
@@ -1082,6 +1567,52 @@ class SimulationRunner:
 
         logger.info(f"模拟已停止: {simulation_id}")
         return state
+
+    @classmethod
+    def close_finished_run(cls, simulation_id: str) -> Optional[SimulationRunState]:
+        """End the simulator a finished run still keeps open for interviews.
+
+        After its last round the simulator stays up so agents can be
+        interviewed, and its monitor keeps reading the action logs. A forced
+        restart must end both first, or a second simulator would write into
+        the same directory while the old monitor publishes into the new run.
+        The finished run's result (COMPLETED, STOPPED or FAILED) is kept.
+        Raises SimulationStopPending if the monitor has not exited in time.
+        """
+        with cls._finalization_lock(simulation_id):
+            if simulation_id in cls._start_claims:
+                raise ValueError(t('api.simAlreadyActive', id=simulation_id))
+            state = cls.get_run_state(simulation_id)
+            if state is not None and state.runner_status in ACTIVE_RUNNER_STATUSES:
+                raise ValueError(t('api.simAlreadyActive', id=simulation_id))
+            process = cls._processes.get(simulation_id)
+            if process is not None and process.poll() is None:
+                logger.info("结束已完成模拟的采访环境: %s, pid=%s", simulation_id, process.pid)
+                try:
+                    cls._terminate_process(process, simulation_id)
+                except ProcessLookupError:
+                    pass
+                except Exception as error:
+                    logger.error(f"终止进程组失败: {simulation_id}, error={error}")
+                    try:
+                        process.terminate()
+                        process.wait(timeout=5)
+                    except Exception:
+                        process.kill()
+
+        monitor = cls._monitor_threads.get(simulation_id)
+        if (
+            monitor is not None
+            and monitor is not threading.current_thread()
+            and monitor.is_alive()
+        ):
+            timeout = cls.ENV_CLOSE_MONITOR_TIMEOUT_SECONDS
+            monitor.join(timeout=timeout)
+            if monitor.is_alive():
+                raise SimulationStopPending(
+                    t('api.simEnvClosePending', seconds=f"{timeout:.0f}")
+                )
+        return cls.get_run_state(simulation_id) or state
 
     @classmethod
     def _read_actions_from_file(
@@ -1444,19 +1975,30 @@ class SimulationRunner:
     
     # 防止重复清理的标志
     _cleanup_done = False
-    
+    # True while a cleanup runs. The signal handler then ignores further
+    # signals: raising into the running cleanup would abort its stop and
+    # graph drain half way and leave the run stuck in STOPPING.
+    _cleanup_in_progress = False
+
     @classmethod
     def cleanup_all_simulations(cls):
         """
         清理所有运行中的模拟进程
-        
+
         在服务器关闭时调用，确保所有子进程被终止
         """
         # 防止重复清理
-        if cls._cleanup_done:
+        if cls._cleanup_done or cls._cleanup_in_progress:
             return
         cls._cleanup_done = True
+        cls._cleanup_in_progress = True
+        try:
+            cls._cleanup_all_simulations()
+        finally:
+            cls._cleanup_in_progress = False
 
+    @classmethod
+    def _cleanup_all_simulations(cls):
         updater_ids = set(ZepGraphMemoryManager.get_simulation_ids())
         simulation_ids = sorted(
             set(cls._processes)
@@ -1515,7 +2057,16 @@ class SimulationRunner:
                     }
                 )
                 if needs_finalization:
-                    cls.stop_simulation(simulation_id)
+                    if (
+                        state.runner_status in ACTIVE_RUNNER_STATUSES
+                        or updater is not None
+                    ):
+                        cls.stop_simulation(simulation_id)
+                    else:
+                        # A finished run whose simulator is still open for
+                        # interviews: end it too, or it outlives the backend
+                        # and blocks the next start of this simulation.
+                        cls.close_finished_run(simulation_id)
 
                 # A recovery path without a monitor does not run the monitor's
                 # resource cleanup block. Release only successfully stopped
@@ -1584,6 +2135,19 @@ class SimulationRunner:
         
         def cleanup_handler(signum=None, frame=None):
             """信号处理器：先清理模拟进程，再调用原处理器"""
+            if cls._cleanup_in_progress:
+                # Under `npm run dev` one Ctrl+C arrives more than once: from
+                # the terminal, then again from concurrently, which forwards
+                # it to every process in the tree. Let the running cleanup
+                # finish its stop and graph drain; SIGKILL still ends the
+                # process at once.
+                logger.warning(
+                    "收到信号 %s，模拟清理仍在进行中，忽略该信号以免中断图谱写入"
+                    "（如需立即退出请使用 kill -9 %s）",
+                    signum,
+                    os.getpid(),
+                )
+                return
             # 只有在有进程需要清理时才打印日志
             if cls._processes or cls._graph_memory_enabled:
                 logger.info(f"收到信号 {signum}，开始清理...")

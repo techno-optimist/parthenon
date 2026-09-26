@@ -482,3 +482,60 @@ def test_shutdown_drain_failure_remains_failed_and_retryable(monkeypatch):
         SimulationRunner._cleanup_done = False
         SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
         SimulationRunner._manual_stop_requests.discard(simulation_id)
+
+
+def test_rounds_complete_publishes_completed_after_drain_and_keeps_env(monkeypatch, tmp_path):
+    """The simulator stays alive for interviews; completion must not wait for its exit."""
+    simulation_id = "sim-rounds"
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.RUNNING,
+        twitter_running=True,
+        reddit_running=True,
+    )
+    SimulationRunner._run_states[simulation_id] = state
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    drained = []
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda cls, s: None))
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(lambda cls, sid: drained.append((sid, state.runner_status))),
+    )
+    try:
+        assert SimulationRunner._publish_rounds_complete(simulation_id) is True
+        assert drained == [(simulation_id, RunnerStatus.STOPPING)]  # drained before success
+        assert state.runner_status == RunnerStatus.COMPLETED
+        assert state.twitter_running is False and state.reddit_running is False
+        assert simulation_id not in SimulationRunner._graph_memory_enabled
+        # A second call is a no-op: the result is already owned.
+        assert SimulationRunner._publish_rounds_complete(simulation_id) is True
+        assert len(drained) == 1
+    finally:
+        SimulationRunner._run_states.pop(simulation_id, None)
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+
+def test_rounds_complete_drain_failure_is_failed(monkeypatch, tmp_path):
+    simulation_id = "sim-rounds-fail"
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.RUNNING)
+    SimulationRunner._run_states[simulation_id] = state
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda cls, s: None))
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda cls, *a, **k: None))
+
+    def boom(cls, sid):
+        raise RuntimeError("drain timed out")
+
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "stop_updater", classmethod(boom))
+    try:
+        SimulationRunner._publish_rounds_complete(simulation_id)
+        assert state.runner_status == RunnerStatus.FAILED
+        assert "drain timed out" in state.error
+        assert SimulationRunner._graph_memory_enabled.get(simulation_id) is True  # retryable
+    finally:
+        SimulationRunner._run_states.pop(simulation_id, None)
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)

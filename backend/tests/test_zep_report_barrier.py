@@ -159,7 +159,10 @@ def test_report_reader_lease_blocks_graph_start_and_delete(monkeypatch):
         status=ProjectStatus.GRAPH_COMPLETED,
         simulation_requirement="mock requirement",
     )
-    run_state = SimpleNamespace(runner_status=RunnerStatus.COMPLETED)
+    run_state = SimpleNamespace(
+        runner_status=RunnerStatus.COMPLETED,
+        process_pid=None,
+    )
     worker_targets = []
     runner_calls = []
 

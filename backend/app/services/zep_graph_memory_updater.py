@@ -16,10 +16,91 @@ from ..utils.locale import get_locale, set_locale
 from ..utils.zep import (
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
+    client_ingestion_timeout,
     get_zep_client,
 )
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
+
+
+# Activity description templates per language, filled with str.format (braces
+# inside the filled-in values are safe). The Chinese set is the upstream
+# MiroFish text and must stay byte-for-byte stable; every other locale gets the
+# English set. The local memory's rules extractor (app/memory/activity.py)
+# parses both sets, so a template change must be mirrored there.
+#
+# Four-template tuples cover, in order: author and content, content only,
+# author only, neither. Two-template tuples: with the value, without it.
+_DESCRIPTION_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "zh": {
+        "post": ("发布了一条帖子：「{content}」", "发布了一条帖子"),
+        "like_post": ("点赞了{author}的帖子：「{content}」", "点赞了一条帖子：「{content}」",
+                      "点赞了{author}的一条帖子", "点赞了一条帖子"),
+        "dislike_post": ("踩了{author}的帖子：「{content}」", "踩了一条帖子：「{content}」",
+                         "踩了{author}的一条帖子", "踩了一条帖子"),
+        "repost": ("转发了{author}的帖子：「{content}」", "转发了一条帖子：「{content}」",
+                   "转发了{author}的一条帖子", "转发了一条帖子"),
+        "quote": ("引用了{author}的帖子「{content}」", "引用了一条帖子「{content}」",
+                  "引用了{author}的一条帖子", "引用了一条帖子"),
+        "quote_suffix": "，并评论道：「{quote}」",
+        "follow": ("关注了用户「{name}」", "关注了一个用户"),
+        # Keyed by the commented post: {post} is its content, {content} the comment.
+        "comment": ("在{author}的帖子「{post}」下评论道：「{content}」", "在帖子「{post}」下评论道：「{content}」",
+                    "在{author}的帖子下评论道：「{content}」", "评论道：「{content}」"),
+        "comment_empty": "发表了评论",
+        "like_comment": ("点赞了{author}的评论：「{content}」", "点赞了一条评论：「{content}」",
+                         "点赞了{author}的一条评论", "点赞了一条评论"),
+        "dislike_comment": ("踩了{author}的评论：「{content}」", "踩了一条评论：「{content}」",
+                            "踩了{author}的一条评论", "踩了一条评论"),
+        "search": ("搜索了「{query}」", "进行了搜索"),
+        "search_user": ("搜索了用户「{query}」", "搜索了用户"),
+        "mute": ("屏蔽了用户「{name}」", "屏蔽了一个用户"),
+        "generic": ("执行了{action}操作", "执行了操作"),
+    },
+    "en": {
+        "post": ("posted: “{content}”", "posted"),
+        "like_post": ("liked {author}'s post: “{content}”", "liked a post: “{content}”",
+                      "liked a post by {author}", "liked a post"),
+        "dislike_post": ("disliked {author}'s post: “{content}”", "disliked a post: “{content}”",
+                         "disliked a post by {author}", "disliked a post"),
+        "repost": ("reposted {author}'s post: “{content}”", "reposted a post: “{content}”",
+                   "reposted a post by {author}", "reposted a post"),
+        "quote": ("quoted {author}'s post “{content}”", "quoted a post “{content}”",
+                  "quoted a post by {author}", "quoted a post"),
+        "quote_suffix": ", adding: “{quote}”",
+        "follow": ("followed the user “{name}”", "followed a user"),
+        "comment": ("commented on {author}'s post “{post}”: “{content}”",
+                    "commented on a post “{post}”: “{content}”",
+                    "commented on {author}'s post: “{content}”", "commented: “{content}”"),
+        "comment_empty": "left a comment",
+        "like_comment": ("liked {author}'s comment: “{content}”", "liked a comment: “{content}”",
+                         "liked a comment by {author}", "liked a comment"),
+        "dislike_comment": ("disliked {author}'s comment: “{content}”",
+                            "disliked a comment: “{content}”",
+                            "disliked a comment by {author}", "disliked a comment"),
+        "search": ("searched for “{query}”", "ran a search"),
+        "search_user": ("searched for the user “{query}”", "searched for users"),
+        "mute": ("muted the user “{name}”", "muted a user"),
+        "generic": ("performed {action}", "performed an action"),
+    },
+}
+
+
+def _description_templates(locale: Optional[str]) -> Dict[str, Any]:
+    """Chinese templates for a Chinese locale ('zh', 'zh-CN', ...), English otherwise."""
+    code = str(locale or "").strip().lower().replace("_", "-")
+    return _DESCRIPTION_TEMPLATES["zh" if code == "zh" or code.startswith("zh-") else "en"]
+
+
+def _shape(author: Any, content: Any) -> int:
+    """Index into a four-template tuple: author and content, content, author, neither."""
+    if content and author:
+        return 0
+    if content:
+        return 1
+    if author:
+        return 2
+    return 3
 
 
 @dataclass
@@ -33,12 +114,16 @@ class AgentActivity:
     round_num: int
     timestamp: str
     
-    def to_episode_text(self) -> str:
+    def to_episode_text(self, locale: Optional[str] = None) -> str:
         """
-        将活动转换为可以发送给Zep的文本描述
-        
-        采用自然语言描述格式，让Zep能够从中提取实体和关系
-        不添加模拟相关的前缀，避免误导图谱更新
+        Render the activity as one episode line for the graph.
+
+        ``locale`` picks the description language: Chinese for 'zh' (and
+        'zh-*' variants), English for anything else. When it is None the
+        calling thread's locale (get_locale()) is used. ZepGraphMemoryUpdater
+        always passes the locale of the run, because a tail flush can run on
+        another thread. Quoted content and names are kept verbatim in both
+        languages.
         """
         # 根据不同的动作类型生成不同的描述
         action_descriptions = {
@@ -56,8 +141,9 @@ class AgentActivity:
             "MUTE": self._describe_mute,
         }
         
+        templates = _description_templates(get_locale() if locale is None else locale)
         describe_func = action_descriptions.get(self.action_type, self._describe_generic)
-        description = describe_func()
+        description = describe_func(templates)
         
         # Keep the event time in the source text as well as episode metadata so
         # temporal extraction does not collapse a multi-action batch.
@@ -66,142 +152,101 @@ class AgentActivity:
             f"{self.agent_name}: {description}"
         )
     
-    def _describe_create_post(self) -> str:
+    def _describe_create_post(self, templates: Dict[str, Any]) -> str:
         content = self.action_args.get("content", "")
-        if content:
-            return f"发布了一条帖子：「{content}」"
-        return "发布了一条帖子"
+        with_content, bare = templates["post"]
+        return with_content.format(content=content) if content else bare
     
-    def _describe_like_post(self) -> str:
+    def _describe_like_post(self, templates: Dict[str, Any]) -> str:
         """点赞帖子 - 包含帖子原文和作者信息"""
         post_content = self.action_args.get("post_content", "")
         post_author = self.action_args.get("post_author_name", "")
-        
-        if post_content and post_author:
-            return f"点赞了{post_author}的帖子：「{post_content}」"
-        elif post_content:
-            return f"点赞了一条帖子：「{post_content}」"
-        elif post_author:
-            return f"点赞了{post_author}的一条帖子"
-        return "点赞了一条帖子"
+        template = templates["like_post"][_shape(post_author, post_content)]
+        return template.format(author=post_author, content=post_content)
     
-    def _describe_dislike_post(self) -> str:
+    def _describe_dislike_post(self, templates: Dict[str, Any]) -> str:
         """踩帖子 - 包含帖子原文和作者信息"""
         post_content = self.action_args.get("post_content", "")
         post_author = self.action_args.get("post_author_name", "")
-        
-        if post_content and post_author:
-            return f"踩了{post_author}的帖子：「{post_content}」"
-        elif post_content:
-            return f"踩了一条帖子：「{post_content}」"
-        elif post_author:
-            return f"踩了{post_author}的一条帖子"
-        return "踩了一条帖子"
+        template = templates["dislike_post"][_shape(post_author, post_content)]
+        return template.format(author=post_author, content=post_content)
     
-    def _describe_repost(self) -> str:
+    def _describe_repost(self, templates: Dict[str, Any]) -> str:
         """转发帖子 - 包含原帖内容和作者信息"""
         original_content = self.action_args.get("original_content", "")
         original_author = self.action_args.get("original_author_name", "")
-        
-        if original_content and original_author:
-            return f"转发了{original_author}的帖子：「{original_content}」"
-        elif original_content:
-            return f"转发了一条帖子：「{original_content}」"
-        elif original_author:
-            return f"转发了{original_author}的一条帖子"
-        return "转发了一条帖子"
+        template = templates["repost"][_shape(original_author, original_content)]
+        return template.format(author=original_author, content=original_content)
     
-    def _describe_quote_post(self) -> str:
+    def _describe_quote_post(self, templates: Dict[str, Any]) -> str:
         """引用帖子 - 包含原帖内容、作者信息和引用评论"""
         original_content = self.action_args.get("original_content", "")
         original_author = self.action_args.get("original_author_name", "")
         quote_content = self.action_args.get("quote_content", "") or self.action_args.get("content", "")
         
-        base = ""
-        if original_content and original_author:
-            base = f"引用了{original_author}的帖子「{original_content}」"
-        elif original_content:
-            base = f"引用了一条帖子「{original_content}」"
-        elif original_author:
-            base = f"引用了{original_author}的一条帖子"
-        else:
-            base = "引用了一条帖子"
-        
+        template = templates["quote"][_shape(original_author, original_content)]
+        base = template.format(author=original_author, content=original_content)
         if quote_content:
-            base += f"，并评论道：「{quote_content}」"
+            base += templates["quote_suffix"].format(quote=quote_content)
         return base
     
-    def _describe_follow(self) -> str:
+    def _describe_follow(self, templates: Dict[str, Any]) -> str:
         """关注用户 - 包含被关注用户的名称"""
         target_user_name = self.action_args.get("target_user_name", "")
-        
-        if target_user_name:
-            return f"关注了用户「{target_user_name}」"
-        return "关注了一个用户"
+        with_name, bare = templates["follow"]
+        return with_name.format(name=target_user_name) if target_user_name else bare
     
-    def _describe_create_comment(self) -> str:
+    def _describe_create_comment(self, templates: Dict[str, Any]) -> str:
         """发表评论 - 包含评论内容和所评论的帖子信息"""
         content = self.action_args.get("content", "")
         post_content = self.action_args.get("post_content", "")
         post_author = self.action_args.get("post_author_name", "")
         
-        if content:
-            if post_content and post_author:
-                return f"在{post_author}的帖子「{post_content}」下评论道：「{content}」"
-            elif post_content:
-                return f"在帖子「{post_content}」下评论道：「{content}」"
-            elif post_author:
-                return f"在{post_author}的帖子下评论道：「{content}」"
-            return f"评论道：「{content}」"
-        return "发表了评论"
+        if not content:
+            return templates["comment_empty"]
+        template = templates["comment"][_shape(post_author, post_content)]
+        return template.format(author=post_author, post=post_content, content=content)
     
-    def _describe_like_comment(self) -> str:
+    def _describe_like_comment(self, templates: Dict[str, Any]) -> str:
         """点赞评论 - 包含评论内容和作者信息"""
         comment_content = self.action_args.get("comment_content", "")
         comment_author = self.action_args.get("comment_author_name", "")
-        
-        if comment_content and comment_author:
-            return f"点赞了{comment_author}的评论：「{comment_content}」"
-        elif comment_content:
-            return f"点赞了一条评论：「{comment_content}」"
-        elif comment_author:
-            return f"点赞了{comment_author}的一条评论"
-        return "点赞了一条评论"
+        template = templates["like_comment"][_shape(comment_author, comment_content)]
+        return template.format(author=comment_author, content=comment_content)
     
-    def _describe_dislike_comment(self) -> str:
+    def _describe_dislike_comment(self, templates: Dict[str, Any]) -> str:
         """踩评论 - 包含评论内容和作者信息"""
         comment_content = self.action_args.get("comment_content", "")
         comment_author = self.action_args.get("comment_author_name", "")
-        
-        if comment_content and comment_author:
-            return f"踩了{comment_author}的评论：「{comment_content}」"
-        elif comment_content:
-            return f"踩了一条评论：「{comment_content}」"
-        elif comment_author:
-            return f"踩了{comment_author}的一条评论"
-        return "踩了一条评论"
+        template = templates["dislike_comment"][_shape(comment_author, comment_content)]
+        return template.format(author=comment_author, content=comment_content)
     
-    def _describe_search(self) -> str:
+    def _describe_search(self, templates: Dict[str, Any]) -> str:
         """搜索帖子 - 包含搜索关键词"""
         query = self.action_args.get("query", "") or self.action_args.get("keyword", "")
-        return f"搜索了「{query}」" if query else "进行了搜索"
+        with_query, bare = templates["search"]
+        return with_query.format(query=query) if query else bare
     
-    def _describe_search_user(self) -> str:
+    def _describe_search_user(self, templates: Dict[str, Any]) -> str:
         """搜索用户 - 包含搜索关键词"""
         query = self.action_args.get("query", "") or self.action_args.get("username", "")
-        return f"搜索了用户「{query}」" if query else "搜索了用户"
+        with_query, bare = templates["search_user"]
+        return with_query.format(query=query) if query else bare
     
-    def _describe_mute(self) -> str:
+    def _describe_mute(self, templates: Dict[str, Any]) -> str:
         """屏蔽用户 - 包含被屏蔽用户的名称"""
         target_user_name = self.action_args.get("target_user_name", "")
-        
-        if target_user_name:
-            return f"屏蔽了用户「{target_user_name}」"
-        return "屏蔽了一个用户"
+        with_name, bare = templates["mute"]
+        return with_name.format(name=target_user_name) if target_user_name else bare
     
-    def _describe_generic(self) -> str:
+    def _describe_generic(self, templates: Dict[str, Any]) -> str:
         # 对于未知的动作类型，生成通用描述
-        return f"执行了{self.action_type}操作"
+        with_action, bare = templates["generic"]
+        # Only an empty type has no name to show; any other value (even None)
+        # is rendered as before.
+        if self.action_type == "":
+            return bare
+        return with_action.format(action=self.action_type)
 
 
 class _DrainDeadlineExceeded(TimeoutError):
@@ -245,19 +290,28 @@ class ZepGraphMemoryUpdater:
         graph_id: str,
         api_key: Optional[str] = None,
         simulation_id: Optional[str] = None,
+        locale: Optional[str] = None,
     ):
         """
         初始化更新器
-        
+
         Args:
             graph_id: Zep图谱ID
             api_key: Zep API Key（可选，默认从配置读取）
+            simulation_id: the simulation whose activity this updater sends
+            locale: language of the episode text ('zh' keeps the Chinese
+                templates, anything else is English). Defaults to the
+                creating thread's locale, i.e. the request that starts the run.
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id or "unknown"
+        # Captured once so every line of this run uses the run's language:
+        # the worker thread sends full batches, but stop() flushes the tail on
+        # whichever thread calls it (monitor, stop request, shutdown).
+        self.locale = locale or get_locale()
         self.api_key = api_key or Config.ZEP_API_KEY
         
-        if not self.api_key:
+        if not self.api_key and Config.memory_backend(self.api_key) == "zep":
             raise ValueError("ZEP_API_KEY未配置")
         
         self.client = get_zep_client(self.api_key)
@@ -297,13 +351,10 @@ class ZepGraphMemoryUpdater:
         if self._running:
             return
 
-        # Capture locale before spawning background thread
-        current_locale = get_locale()
-
         self._running = True
         self._worker_thread = threading.Thread(
             target=self._worker_loop,
-            args=(current_locale,),
+            args=(self.locale,),
             daemon=True,
             name=f"ZepMemoryUpdater-{self.graph_id[:8]}"
         )
@@ -312,7 +363,7 @@ class ZepGraphMemoryUpdater:
     
     def stop(self):
         """Drain the worker, flush tail events, and wait for Cloud ingestion."""
-        deadline = time.time() + ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        deadline = time.time() + client_ingestion_timeout(self.client, ZEP_INGESTION_WAIT_TIMEOUT_SECONDS)
         # Serialize the accepting->closed transition with add_activity's
         # check+enqueue operation. This closes the small race where a producer
         # could enqueue after both the worker and final flush had exited.
@@ -451,7 +502,7 @@ class ZepGraphMemoryUpdater:
         current_length = 0
 
         for activity in activities:
-            text = activity.to_episode_text()
+            text = activity.to_episode_text(self.locale)
             if len(text) > self.MAX_EPISODE_CHARS:
                 marker = "... [truncated by MiroFish]"
                 text = text[: self.MAX_EPISODE_CHARS - len(marker)] + marker
@@ -602,7 +653,7 @@ class ZepGraphMemoryUpdater:
             return
 
         if deadline is None:
-            deadline = time.time() + ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+            deadline = time.time() + client_ingestion_timeout(self.client, ZEP_INGESTION_WAIT_TIMEOUT_SECONDS)
         while pending:
             if time.time() >= deadline:
                 raise TimeoutError(

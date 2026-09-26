@@ -33,6 +33,9 @@ def main():
         print("\n请检查 .env 文件中的配置")
         sys.exit(1)
     
+    for warning in Config.warnings():
+        print(f"WARNING: {warning}")
+
     # 创建应用
     app = create_app()
     
