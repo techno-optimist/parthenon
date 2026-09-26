@@ -1,422 +1,308 @@
 <template>
-  <div class="interaction-panel">
-    <!-- Main Split Layout -->
-    <div class="main-split-layout">
-      <!-- LEFT PANEL: Report Style -->
-      <div class="left-panel report-style" ref="leftPanel">
-        <div v-if="reportOutline" class="report-content-wrapper">
-          <!-- Report Header -->
-          <div class="report-header-block">
-            <div class="report-meta">
-              <span class="report-tag">Prediction Report</span>
-              <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
-            </div>
-            <h1 class="main-title">{{ reportOutline.title }}</h1>
-            <p class="sub-title">{{ reportOutline.summary }}</p>
-            <div class="header-divider"></div>
-          </div>
+  <section ref="rootRef" class="symposium" :class="{ 'crowd-mode': mode === 'crowd' }">
+    <!-- The room band: who is here, and the two doors out of the ordinary conversation. -->
+    <header class="room-band">
+      <div class="room-copy">
+        <span class="p-eyebrow">{{ t('step5.symposium.room') }}</span>
+        <h2 class="room-title">{{ t('step5.symposium.whoIsHere') }}</h2>
+        <p class="room-line">{{ companyLine }}</p>
+      </div>
+      <div class="room-actions">
+        <button
+          type="button"
+          class="p-button secondary"
+          :aria-pressed="mode === 'crowd'"
+          @click="toggleCrowdMode"
+        >{{ mode === 'crowd' ? t('step5.symposium.backToTable') : t('step5.symposium.askCrowd') }}</button>
+        <button
+          ref="chronicleToggle"
+          type="button"
+          class="p-button secondary"
+          :aria-expanded="chronicleOpen"
+          aria-controls="chronicle-drawer"
+          @click="openChronicle"
+        >{{ t('step5.symposium.readChronicle') }}</button>
+      </div>
+    </header>
 
-          <!-- Sections List -->
-          <div class="sections-list">
-            <div 
-              v-for="(section, idx) in reportOutline.sections" 
-              :key="idx"
-              class="report-section-item"
-              :class="{ 
-                'is-active': currentSectionIndex === idx + 1,
-                'is-completed': isSectionCompleted(idx + 1),
-                'is-pending': !isSectionCompleted(idx + 1) && currentSectionIndex !== idx + 1
+    <div class="room">
+      <!-- The couches: the Scribe at the head, the citizens along the wall. -->
+      <div class="couches" role="group" :aria-label="t('step5.symposium.couches')">
+        <p class="couches-hint" aria-live="polite">{{ mode === 'crowd' ? t('step5.symposium.chooseCrowd') : t('step5.symposium.chooseSeat') }}</p>
+
+        <button
+          type="button"
+          class="couch head"
+          :class="{ seated: mode === 'chat' && chatTarget === 'report_agent' }"
+          :aria-pressed="mode === 'chat' ? chatTarget === 'report_agent' : undefined"
+          :disabled="mode === 'crowd'"
+          @click="sitWithScribe"
+        >
+          <span class="p-coin couch-coin scribe-coin" aria-hidden="true">Σ</span>
+          <span class="couch-text">
+            <span v-if="mode === 'chat' && chatTarget === 'report_agent'" class="couch-badge">{{ t('step5.symposium.seated') }}</span>
+            <span v-else-if="mode === 'crowd'" class="couch-badge quiet">{{ t('step5.symposium.scribeListens') }}</span>
+            <span class="couch-name">{{ t('step5.symposium.scribe') }}</span>
+            <span class="couch-role">{{ t('step5.symposium.scribeRole') }}</span>
+            <span class="couch-line">{{ t('step5.symposium.scribeLine') }}</span>
+          </span>
+        </button>
+
+        <ul id="symposium-couches" class="couch-list" role="list">
+          <li v-for="citizen in visibleCitizens" :key="citizen.key">
+            <button
+              type="button"
+              class="couch"
+              :class="{
+                seated: mode === 'chat' && selectedAgentIndex === citizen.idx,
+                chosen: mode === 'crowd' && selectedAgents.has(citizen.idx),
+                away: !cityAwake
               }"
+              :style="{ '--role': citizen.color }"
+              :aria-pressed="mode === 'crowd' ? selectedAgents.has(citizen.idx) : selectedAgentIndex === citizen.idx && chatTarget === 'agent'"
+              @click="mode === 'crowd' ? toggleAgentSelection(citizen.idx) : sitWith(citizen, citizen.idx)"
             >
-              <div class="section-header-row" @click="toggleSectionCollapse(idx)" :class="{ 'clickable': isSectionCompleted(idx + 1) }">
-                <span class="section-number">{{ String(idx + 1).padStart(2, '0') }}</span>
-                <h3 class="section-title">{{ section.title }}</h3>
-                <svg 
-                  v-if="isSectionCompleted(idx + 1)" 
-                  class="collapse-icon" 
-                  :class="{ 'is-collapsed': collapsedSections.has(idx) }"
-                  viewBox="0 0 24 24" 
-                  width="20" 
-                  height="20" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  stroke-width="2"
-                >
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </div>
-              
-              <div class="section-body" v-show="!collapsedSections.has(idx)">
-                <!-- Completed Content -->
-                <div v-if="generatedSections[idx + 1]" class="generated-content" v-html="renderMarkdown(generatedSections[idx + 1])"></div>
-                
-                <!-- Loading State -->
-                <div v-else-if="currentSectionIndex === idx + 1" class="loading-state">
-                  <div class="loading-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <circle cx="12" cy="12" r="10" stroke-width="4" stroke="#E5E7EB"></circle>
-                      <path d="M12 2a10 10 0 0 1 10 10" stroke-width="4" stroke="#4B5563" stroke-linecap="round"></path>
-                    </svg>
-                  </div>
-                  <span class="loading-text">{{ $t('step4.generatingSection', { title: section.title }) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+              <span class="p-coin couch-coin" aria-hidden="true">{{ citizen.initial }}</span>
+              <span class="couch-text">
+                <span v-if="mode === 'chat' && selectedAgentIndex === citizen.idx && chatTarget === 'agent'" class="couch-badge">{{ t('step5.symposium.seated') }}</span>
+                <span v-else-if="mode === 'crowd' && selectedAgents.has(citizen.idx)" class="couch-badge">{{ t('step5.symposium.willAnswer') }}</span>
+                <span v-else-if="!cityAwake" class="couch-badge quiet">{{ t('step5.symposium.away') }}</span>
+                <span class="couch-name">{{ citizen.name }}</span>
+                <span class="couch-role">{{ citizen.role }}</span>
+                <span v-if="citizen.line" class="couch-line">{{ citizen.line }}</span>
+              </span>
+            </button>
+          </li>
+        </ul>
 
-        <!-- Waiting State -->
-        <div v-if="!reportOutline" class="waiting-placeholder">
-          <div class="waiting-animation">
-            <div class="waiting-ring"></div>
-            <div class="waiting-ring"></div>
-            <div class="waiting-ring"></div>
-          </div>
-          <span class="waiting-text">Waiting for Report Agent...</span>
+        <!-- On phones the couches are a short column: the Scribe and six citizens, the rest behind one button. -->
+        <div v-if="couchesFolded || couchesUnfolded" class="couches-more">
+          <p v-if="couchesFolded" class="couches-hidden">{{ capital(t('step5.symposium.moreOnCouches', { n: hiddenCount, w: inWords(hiddenCount) })) }}</p>
+          <button
+            type="button"
+            class="p-button ghost small"
+            :aria-expanded="couchesOpen"
+            aria-controls="symposium-couches"
+            @click="toggleCouches"
+          >{{ couchesOpen ? t('step5.symposium.seeFewer') : t('step5.symposium.seeAll', { n: citizens.length, w: inWords(citizens.length) }) }}</button>
         </div>
       </div>
 
-      <!-- RIGHT PANEL: Interaction Interface -->
-      <div class="right-panel" ref="rightPanel">
-        <!-- Unified Action Bar - Professional Design -->
-        <div class="action-bar">
-        <div class="action-bar-header">
-          <svg class="action-bar-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-          <div class="action-bar-text">
-            <span class="action-bar-title">{{ $t('step5.interactiveTools') }}</span>
-            <span class="action-bar-subtitle mono">{{ $t('step5.agentsAvailable', { count: profiles.length }) }}</span>
+      <!-- The table: one conversation, staged as dialogue. -->
+      <div v-if="mode === 'chat'" class="table">
+        <div class="table-band">
+          <span class="p-coin band-coin" :class="{ 'scribe-coin': chatTarget === 'report_agent' }" :style="companion ? { '--role': companion.color } : null" aria-hidden="true">{{ companion ? companion.initial : 'Σ' }}</span>
+          <div class="band-text">
+            <span class="p-eyebrow">{{ t('step5.symposium.seatedWith') }}</span>
+            <h3 class="band-name">{{ companion ? companion.name : t('step5.symposium.scribe') }}</h3>
+            <p class="band-role">{{ companion ? companion.role : t('step5.symposium.scribeRole') }}</p>
+            <p class="band-line">{{ companion ? companion.line : t('step5.symposium.scribeLine') }}</p>
           </div>
         </div>
-          <div class="action-bar-tabs">
-            <button 
-              class="tab-pill"
-              :class="{ active: activeTab === 'chat' && chatTarget === 'report_agent' }"
-              @click="selectReportAgentChat"
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
-              </svg>
-              <span>{{ $t('step5.chatWithReportAgent') }}</span>
-            </button>
-            <div class="agent-dropdown" v-if="profiles.length > 0">
-              <button 
-                class="tab-pill agent-pill"
-                :class="{ active: activeTab === 'chat' && chatTarget === 'agent' }"
-                @click="toggleAgentDropdown"
-              >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="12" cy="7" r="4"></circle>
-                </svg>
-                <span>{{ selectedAgent ? selectedAgent.username : $t('step5.chatWithAgent') }}</span>
-                <svg class="dropdown-arrow" :class="{ open: showAgentDropdown }" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </button>
-              <div v-if="showAgentDropdown" class="dropdown-menu">
-                <div class="dropdown-header">{{ $t('step5.selectChatTarget') }}</div>
-                <div 
-                  v-for="(agent, idx) in profiles" 
-                  :key="idx"
-                  class="dropdown-item"
-                  @click="selectAgent(agent, idx)"
-                >
-                  <div class="agent-avatar">{{ (agent.username || 'A')[0] }}</div>
-                  <div class="agent-info">
-                    <span class="agent-name">{{ agent.username }}</span>
-                    <span class="agent-role">{{ agent.profession || $t('step2.unknownProfession') }}</span>
-                  </div>
-                </div>
+        <div class="p-meander table-rule" aria-hidden="true"></div>
+
+        <ol class="dialogue" role="log" aria-live="polite" aria-relevant="additions">
+          <li v-if="chatHistory.length === 0 && !isSending" class="dialogue-empty">
+            <p>{{ chatTarget === 'report_agent' ? t('step5.symposium.emptyScribe') : t('step5.symposium.emptyCitizen', { name: companion ? companion.name : '' }) }}</p>
+          </li>
+          <li
+            v-for="(msg, idx) in chatHistory"
+            :key="idx"
+            class="line"
+            :class="msg.role === 'user' ? 'asked' : 'answered'"
+          >
+            <template v-if="msg.role === 'user'">
+              <div class="asked-text">{{ msg.content }}</div>
+              <span class="line-meta"><span class="line-who">{{ t('step5.symposium.you') }}</span> {{ formatTime(msg.timestamp) }}</span>
+            </template>
+            <template v-else>
+              <span class="p-coin line-coin" :class="{ 'scribe-coin': chatTarget === 'report_agent' }" :style="companion ? { '--role': companion.color } : null" aria-hidden="true">{{ companion ? companion.initial : 'Σ' }}</span>
+              <div class="answered-body">
+                <span class="line-meta"><span class="line-who">{{ companion ? companion.name : t('step5.symposium.scribe') }}</span> {{ formatTime(msg.timestamp) }}</span>
+                <div class="answered-text" v-html="renderMarkdown(msg.content)"></div>
               </div>
+            </template>
+          </li>
+          <li v-if="isSending" class="line answered thinking">
+            <span class="p-coin line-coin" :class="{ 'scribe-coin': chatTarget === 'report_agent' }" :style="companion ? { '--role': companion.color } : null" aria-hidden="true">{{ companion ? companion.initial : 'Σ' }}</span>
+            <div class="answered-body">
+              <span class="line-meta"><span class="line-who">{{ workingText }}</span></span>
+              <span class="ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
             </div>
-            <div class="tab-divider"></div>
+          </li>
+        </ol>
+
+        <div class="prompt" :class="{ stuck: chatHistory.length > 0 }">
+          <p v-if="!cityAwake && chatTarget === 'agent'" class="asleep-note" role="status">
+            {{ t('step5.symposium.asleepCitizen', { name: companion ? companion.name : '' }) }}
+            <button type="button" class="p-button ghost small" @click="sitWithScribe">{{ t('step5.symposium.sitWithScribe') }}</button>
+          </p>
+
+          <!-- Socratic questions: they are placed in the mouth, not sent. -->
+          <div
+            v-if="Array.isArray(socraticPrompts)"
+            class="socratic-row"
+            role="group"
+            :aria-label="t('step5.socraticLabel')"
+          >
+            <span class="p-eyebrow socratic-label">{{ t('step5.socraticLabel') }}</span>
             <button
-              class="tab-pill survey-pill"
-              :class="{ active: activeTab === 'survey' }"
-              @click="selectSurveyTab"
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 11l3 3L22 4"></path>
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-              </svg>
-              <span>{{ $t('step5.sendSurvey') }}</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Chat Mode -->
-        <div v-if="activeTab === 'chat'" class="chat-container">
-
-          <!-- Report Agent Tools Card -->
-          <div v-if="chatTarget === 'report_agent'" class="report-agent-tools-card">
-            <div class="tools-card-header">
-              <div class="tools-card-avatar">R</div>
-              <div class="tools-card-info">
-                <div class="tools-card-name">{{ $t('step5.reportAgentChat') }}</div>
-                <div class="tools-card-subtitle">{{ $t('step5.reportAgentDesc') }}</div>
-              </div>
-              <button class="tools-card-toggle" @click="showToolsDetail = !showToolsDetail">
-                <svg :class="{ 'is-expanded': showToolsDetail }" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </button>
-            </div>
-            <div v-if="showToolsDetail" class="tools-card-body">
-              <div class="tools-grid">
-                <div class="tool-item tool-purple">
-                  <div class="tool-icon-wrapper">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.5V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.5A7 7 0 0 0 12 2z"></path>
-                    </svg>
-                  </div>
-                  <div class="tool-content">
-                    <div class="tool-name">{{ $t('step5.toolInsightForge') }}</div>
-                    <div class="tool-desc">{{ $t('step5.toolInsightForgeDesc') }}</div>
-                  </div>
-                </div>
-                <div class="tool-item tool-blue">
-                  <div class="tool-icon-wrapper">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-                    </svg>
-                  </div>
-                  <div class="tool-content">
-                    <div class="tool-name">{{ $t('step5.toolPanoramaSearch') }}</div>
-                    <div class="tool-desc">{{ $t('step5.toolPanoramaSearchDesc') }}</div>
-                  </div>
-                </div>
-                <div class="tool-item tool-orange">
-                  <div class="tool-icon-wrapper">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-                    </svg>
-                  </div>
-                  <div class="tool-content">
-                    <div class="tool-name">{{ $t('step5.toolQuickSearch') }}</div>
-                    <div class="tool-desc">{{ $t('step5.toolQuickSearchDesc') }}</div>
-                  </div>
-                </div>
-                <div class="tool-item tool-green">
-                  <div class="tool-icon-wrapper">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                      <circle cx="9" cy="7" r="4"></circle>
-                      <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path>
-                    </svg>
-                  </div>
-                  <div class="tool-content">
-                    <div class="tool-name">{{ $t('step5.toolInterviewSubAgent') }}</div>
-                    <div class="tool-desc">{{ $t('step5.toolInterviewSubAgentDesc') }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
+              v-for="(question, qIdx) in socraticPrompts"
+              :key="qIdx"
+              type="button"
+              class="socratic-chip"
+              :disabled="isChatInputDisabled"
+              @click="insertSocraticPrompt(question)"
+            >{{ question }}</button>
           </div>
 
-          <!-- Agent Profile Card -->
-          <div v-if="chatTarget === 'agent' && selectedAgent" class="agent-profile-card">
-            <div class="profile-card-header">
-              <div class="profile-card-avatar">{{ (selectedAgent.username || 'A')[0] }}</div>
-              <div class="profile-card-info">
-                <div class="profile-card-name">{{ selectedAgent.username }}</div>
-                <div class="profile-card-meta">
-                  <span v-if="selectedAgent.name" class="profile-card-handle">@{{ selectedAgent.name }}</span>
-                  <span class="profile-card-profession">{{ selectedAgent.profession || $t('step2.unknownProfession') }}</span>
-                </div>
-              </div>
-              <button class="profile-card-toggle" @click="showFullProfile = !showFullProfile">
-                <svg :class="{ 'is-expanded': showFullProfile }" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </button>
-            </div>
-            <div v-if="showFullProfile && selectedAgent.bio" class="profile-card-body">
-              <div class="profile-card-bio">
-                <div class="profile-card-label">{{ $t('step5.profileBio') }}</div>
-                <p>{{ selectedAgent.bio }}</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Chat Messages -->
-          <div class="chat-messages" ref="chatMessages">
-            <div v-if="chatHistory.length === 0" class="chat-empty">
-              <div class="empty-icon">
-                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
-              </div>
-              <p class="empty-text">
-                {{ chatTarget === 'report_agent' ? $t('step5.chatEmptyReportAgent') : $t('step5.chatEmptyAgent') }}
-              </p>
-            </div>
-            <div 
-              v-for="(msg, idx) in chatHistory" 
-              :key="idx"
-              class="chat-message"
-              :class="msg.role"
-            >
-              <div class="message-avatar">
-                <span v-if="msg.role === 'user'">U</span>
-                <span v-else>{{ msg.role === 'assistant' && chatTarget === 'report_agent' ? 'R' : (selectedAgent?.username?.[0] || 'A') }}</span>
-              </div>
-              <div class="message-content">
-                <div class="message-header">
-                  <span class="sender-name">
-                    {{ msg.role === 'user' ? 'You' : (chatTarget === 'report_agent' ? 'Report Agent' : (selectedAgent?.username || 'Agent')) }}
-                  </span>
-                  <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
-                </div>
-                <div class="message-text" v-html="renderMarkdown(msg.content)"></div>
-              </div>
-            </div>
-            <div v-if="isSending" class="chat-message assistant">
-              <div class="message-avatar">
-                <span>{{ chatTarget === 'report_agent' ? 'R' : (selectedAgent?.username?.[0] || 'A') }}</span>
-              </div>
-              <div class="message-content">
-                <div class="typing-indicator">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Chat Input -->
-          <div class="chat-input-area">
-            <textarea 
-              v-model="chatInput"
-              class="chat-input"
-              :placeholder="$t('step5.chatInputPlaceholder')"
-              @keydown.enter.exact.prevent="sendMessage"
-              :disabled="isSending || (!selectedAgent && chatTarget === 'agent')"
-              rows="1"
+          <form class="ask" @submit.prevent="sendMessage">
+            <label class="sr-only" for="symposium-ask">{{ chatTarget === 'report_agent' ? t('step5.symposium.placeholderScribe') : t('step5.symposium.placeholder') }}</label>
+            <textarea
+              id="symposium-ask"
               ref="chatInputRef"
+              v-model="chatInput"
+              class="ask-input"
+              :placeholder="chatTarget === 'report_agent' ? t('step5.symposium.placeholderScribe') : t('step5.symposium.placeholder')"
+              rows="1"
+              :disabled="isChatInputDisabled"
+              @keydown.enter.exact.prevent="sendMessage"
+              @input="growInput"
             ></textarea>
-            <button 
-              class="send-btn"
-              @click="sendMessage"
-              :disabled="!chatInput.trim() || isSending || (!selectedAgent && chatTarget === 'agent')"
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
+            <button
+              type="submit"
+              class="p-button ask-send"
+              :disabled="!chatInput.trim() || isChatInputDisabled"
+            >{{ isSending ? t('step5.symposium.sending') : t('step5.symposium.send') }}</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- The crowd: one question, many voices. -->
+      <div v-else class="table crowd">
+        <div class="crowd-head">
+          <span class="p-eyebrow">{{ t('step5.symposium.askCrowd') }}</span>
+          <h3 class="band-name">{{ t('step5.symposium.crowdTitle') }}</h3>
+          <p class="band-line">{{ t('step5.symposium.crowdHint') }}</p>
+        </div>
+        <div class="p-meander table-rule" aria-hidden="true"></div>
+
+        <div class="crowd-pick">
+          <p class="crowd-count" aria-live="polite">{{ crowdCountLine }}</p>
+          <div class="crowd-links">
+            <button type="button" class="p-button ghost small" :disabled="!citizens.length" @click="selectAllAgents">{{ t('step5.symposium.everyone') }}</button>
+            <button type="button" class="p-button ghost small" :disabled="!selectedAgents.size" @click="clearAgentSelection">{{ t('step5.symposium.noOne') }}</button>
           </div>
         </div>
+        <ul v-if="chosenCitizens.length" class="faces" role="list" :aria-label="t('step5.symposium.chooseCrowd')">
+          <li v-for="c in chosenCitizens" :key="c.key" class="face">
+            <span class="p-coin face-coin" :style="{ '--role': c.color }" aria-hidden="true">{{ c.initial }}</span>
+            <span class="face-name">{{ c.name }}</span>
+          </li>
+        </ul>
 
-        <!-- Survey Mode -->
-        <div v-if="activeTab === 'survey'" class="survey-container">
-          <!-- Survey Setup -->
-          <div class="survey-setup">
-            <div class="setup-section">
-              <div class="section-header">
-                <span class="section-title">{{ $t('step5.selectSurveyTarget') }}</span>
-                <span class="selection-count">{{ $t('step5.selectedCount', { selected: selectedAgents.size, total: profiles.length }) }}</span>
-              </div>
-              <div class="agents-grid">
-                <label 
-                  v-for="(agent, idx) in profiles" 
-                  :key="idx"
-                  class="agent-checkbox"
-                  :class="{ checked: selectedAgents.has(idx) }"
-                >
-                  <input 
-                    type="checkbox" 
-                    :checked="selectedAgents.has(idx)"
-                    @change="toggleAgentSelection(idx)"
-                  >
-                  <div class="checkbox-avatar">{{ (agent.username || 'A')[0] }}</div>
-                  <div class="checkbox-info">
-                    <span class="checkbox-name">{{ agent.username }}</span>
-                    <span class="checkbox-role">{{ agent.profession || $t('step2.unknownProfession') }}</span>
-                  </div>
-                  <div class="checkbox-indicator">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3">
-                      <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                  </div>
-                </label>
-              </div>
-              <div class="selection-actions">
-                <button class="action-link" @click="selectAllAgents">{{ $t('step5.selectAll') }}</button>
-                <span class="action-divider">|</span>
-                <button class="action-link" @click="clearAgentSelection">{{ $t('step5.clearSelection') }}</button>
-              </div>
-            </div>
-
-            <div class="setup-section">
-              <div class="section-header">
-                <span class="section-title">{{ $t('step5.surveyQuestions') }}</span>
-              </div>
-              <textarea 
-                v-model="surveyQuestion"
-                class="survey-input"
-                :placeholder="$t('step5.surveyInputPlaceholder')"
-                rows="3"
-              ></textarea>
-            </div>
-
-            <button 
-              class="survey-submit-btn"
-              :disabled="selectedAgents.size === 0 || !surveyQuestion.trim() || isSurveying"
-              @click="submitSurvey"
-            >
-              <span v-if="isSurveying" class="loading-spinner"></span>
-              <span v-else>{{ $t('step5.submitSurvey') }}</span>
-            </button>
+        <form class="ask crowd-ask" @submit.prevent="submitSurvey">
+          <label class="sr-only" for="symposium-crowd">{{ t('step5.symposium.crowdPlaceholder') }}</label>
+          <textarea
+            id="symposium-crowd"
+            v-model="surveyQuestion"
+            class="ask-input"
+            :placeholder="t('step5.symposium.crowdPlaceholder')"
+            rows="2"
+            :disabled="isSurveying || !cityAwake"
+          ></textarea>
+          <div class="crowd-submit">
+            <button
+              type="submit"
+              class="p-button"
+              :disabled="!canAskCrowd"
+            >{{ isSurveying ? t('step5.symposium.crowdAnswering') : t('step5.symposium.askTheCrowd') }}</button>
+            <span v-if="crowdReason" class="ask-reason">{{ crowdReason }}</span>
           </div>
+        </form>
 
-          <!-- Survey Results -->
-          <div v-if="surveyResults.length > 0" class="survey-results">
-            <div class="results-header">
-              <span class="results-title">{{ $t('step5.surveyResults') }}</span>
-              <span class="results-count">{{ $t('step5.surveyResultsCount', { count: surveyResults.length }) }}</span>
-            </div>
-            <div class="results-list">
-              <div 
-                v-for="(result, idx) in surveyResults" 
-                :key="idx"
-                class="result-card"
-              >
-                <div class="result-header">
-                  <div class="result-avatar">{{ (result.agent_name || 'A')[0] }}</div>
-                  <div class="result-info">
-                    <span class="result-name">{{ result.agent_name }}</span>
-                    <span class="result-role">{{ result.profession || $t('step2.unknownProfession') }}</span>
-                  </div>
-                </div>
-                <div class="result-question">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                  </svg>
-                  <span>{{ result.question }}</span>
-                </div>
-                <div class="result-answer" v-html="renderMarkdown(result.answer)"></div>
-              </div>
-            </div>
+        <div v-if="surveyResults.length" class="answers">
+          <div class="answers-head">
+            <span class="p-eyebrow">{{ t('step5.symposium.answers') }}</span>
+            <p class="crowd-count">{{ answersCountLine }}</p>
           </div>
+          <ul class="faces" role="list">
+            <li v-for="r in surveyResults" :key="r.agent_id" class="face">
+              <span class="p-coin face-coin" :style="{ '--role': r.color }" aria-hidden="true">{{ r.initial }}</span>
+              <span class="face-name">{{ r.name }}</span>
+            </li>
+          </ul>
+          <p class="answers-question">{{ surveyResults[0].question }}</p>
+          <ul class="reply-list" role="list">
+            <li v-for="r in surveyResults" :key="`reply-${r.agent_id}`" class="reply">
+              <span class="p-coin line-coin" :style="{ '--role': r.color }" aria-hidden="true">{{ r.initial }}</span>
+              <div class="answered-body">
+                <span class="line-meta"><span class="line-who">{{ r.name }}</span> {{ r.role }}</span>
+                <div class="answered-text" v-html="renderMarkdown(r.answer)"></div>
+              </div>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
-  </div>
+
+    <!-- The Chronicle, held up in the dark: a page of parchment that slides in from the side. -->
+    <Teleport to="body">
+      <Transition name="drawer">
+        <div v-if="chronicleOpen" class="drawer-root">
+          <div class="drawer-backdrop" aria-hidden="true" @click="closeChronicle"></div>
+          <aside
+            id="chronicle-drawer"
+            class="chronicle p-paper"
+            role="dialog"
+            aria-modal="true"
+            :aria-label="t('step5.symposium.chronicle')"
+            @keydown.esc.prevent="closeChronicle"
+            @keydown.tab="trapFocus"
+          >
+            <div class="chronicle-bar">
+              <span class="p-eyebrow">Δ΄ · {{ t('step5.symposium.chronicle') }}</span>
+              <button ref="chronicleClose" type="button" class="p-button ghost small" @click="closeChronicle">{{ t('step5.symposium.closeChronicle') }}</button>
+            </div>
+            <div class="chronicle-page">
+              <template v-if="reportOutline">
+                <h1 class="chronicle-title">{{ reportOutline.title }}</h1>
+                <p v-if="reportOutline.summary" class="chronicle-summary">{{ reportOutline.summary }}</p>
+                <div v-if="question" class="chronicle-question">
+                  <span class="p-eyebrow">{{ t('step5.symposium.theQuestion') }}</span>
+                  <p>{{ question }}</p>
+                </div>
+                <div class="p-meander chronicle-rule" aria-hidden="true"></div>
+                <article v-for="(section, idx) in reportOutline.sections" :key="idx" class="chapter">
+                  <span class="p-eyebrow">{{ t('step5.symposium.chapter') }} {{ greekNumeral(idx + 1) }}</span>
+                  <h2 class="chapter-title">{{ section.title }}</h2>
+                  <div v-if="generatedSections[idx + 1]" class="chapter-body" v-html="renderMarkdown(generatedSections[idx + 1])"></div>
+                  <p v-else class="chapter-pending">{{ t('step5.symposium.chapterPending') }}</p>
+                </article>
+              </template>
+              <p v-else class="chronicle-waiting">{{ t('step5.symposium.chronicleWaiting') }}</p>
+              <router-link v-if="reportId" class="p-button secondary chronicle-link" :to="{ name: 'Report', params: { reportId } }">{{ t('step5.symposium.openChronicleAct') }}</router-link>
+            </div>
+          </aside>
+        </div>
+      </Transition>
+    </Teleport>
+  </section>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+// Act Ε΄, the Symposium. The citizens sit on couches along the wall, the Scribe
+// at the head; the visitor sits down with one of them and the conversation is
+// staged as dialogue, or puts one question to the whole crowd. Every call the
+// old workbench made (chat with the Scribe, interviews, the Chronicle's pages,
+// the citizens' profiles) is kept; only the room around them is new.
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { chatWithReport, getReport, getAgentLog } from '../api/report'
-import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
+import { interviewAgents, getSimulationProfilesRealtime, getEnvStatus } from '../api/simulation'
+import { citizenName, entityTypeName, roleFamily, ROLE_COLOR_VAR } from '../parthenon/vocabulary.js'
 
-const { t } = useI18n()
+const { t, tm } = useI18n()
 
 const props = defineProps({
   reportId: String,
@@ -425,138 +311,237 @@ const props = defineProps({
 
 const emit = defineEmits(['add-log', 'update-status'])
 
-// State
-const activeTab = ref('chat')
-const chatTarget = ref('report_agent')
-const showAgentDropdown = ref(false)
+// Room state
+const mode = ref('chat') // chat | crowd
+const chatTarget = ref('report_agent') // report_agent | agent
 const selectedAgent = ref(null)
 const selectedAgentIndex = ref(null)
-const showFullProfile = ref(true)
-const showToolsDetail = ref(true)
+const cityAwake = ref(true)
 
-// Chat State
+// Chat state
 const chatInput = ref('')
 const chatHistory = ref([])
-const chatHistoryCache = ref({}) // 缓存所有对话记录: { 'report_agent': [], 'agent_0': [], 'agent_1': [], ... }
+const chatHistoryCache = ref({}) // { report_agent: [], agent_0: [], ... }
 const isSending = ref(false)
-const chatMessages = ref(null)
 const chatInputRef = ref(null)
 
-// Survey State
+// Crowd state
 const selectedAgents = ref(new Set())
 const surveyQuestion = ref('')
 const surveyResults = ref([])
 const isSurveying = ref(false)
 
-// Report Data
+// The Chronicle
 const reportOutline = ref(null)
 const generatedSections = ref({})
-const collapsedSections = ref(new Set())
-const currentSectionIndex = ref(null)
+const question = ref('')
 const profiles = ref([])
+const chronicleOpen = ref(false)
+const chronicleToggle = ref(null)
+const chronicleClose = ref(null)
+const rootRef = ref(null)
 
-// Helper Methods
-const isSectionCompleted = (sectionIndex) => {
-  return !!generatedSections.value[sectionIndex]
+// Narrow rooms (phones and small tablets): the couches stand in one column and
+// fold after the Scribe and six citizens, so the table is never far below.
+const NARROW = '(max-width: 1023px)'
+const COUCH_PEEK = 6
+const narrowQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(NARROW) : null
+const isNarrow = ref(narrowQuery ? narrowQuery.matches : false)
+const onNarrowChange = (e) => { isNarrow.value = e.matches }
+const couchesOpen = ref(false)
+
+const socraticPrompts = computed(() => tm('step5.socraticPrompts'))
+
+// Words for small numbers: the city counts in words.
+const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+const inWords = (n) => (n >= 0 && n < WORDS.length ? WORDS[n] : String(n))
+const capital = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
+const GREEK = ['Α΄', 'Β΄', 'Γ΄', 'Δ΄', 'Ε΄', 'Ϛ΄', 'Ζ΄', 'Η΄', 'Θ΄', 'Ι΄', 'ΙΑ΄', 'ΙΒ΄']
+const greekNumeral = (n) => GREEK[n - 1] || String(n)
+
+// A citizen as the room sees them: a name without a suffix, a role in words,
+// one line of their own, and the colour of their family.
+const ACCOUNT_PREFIX = /^(this is )?(the )?(official )?(civic |public |municipal )?(account|channel|office|desk|page|profile|biography)( biography)?( for the public channel)?( of)?\s*/i
+const familyOf = (name, profession) => {
+  const text = `${name} ${profession}`
+  if (/\b(campaign|movement|coalition)\b/i.test(text)) return 'movements'
+  if (/\b(compute|company|firm|corporation|council|cooperative|association|secretariat|school|ministry|outlet|agency|authority)\b/i.test(text)) return 'institutions'
+  return roleFamily(profession)
 }
-
-// Refs
-const leftPanel = ref(null)
-const rightPanel = ref(null)
-
-// Methods
-const addLog = (msg) => {
-  emit('add-log', msg)
+const roleLine = (p) => {
+  const raw = String(p.profession || '').trim()
+  if (raw) return capital(raw.split(/[,;(]/)[0].trim())
+  const typed = entityTypeName(p.entity_type || p.type)
+  return typed ? capital(typed) : ''
 }
-
-const toggleSectionCollapse = (idx) => {
-  if (!generatedSections.value[idx + 1]) return
-  const newSet = new Set(collapsedSections.value)
-  if (newSet.has(idx)) {
-    newSet.delete(idx)
-  } else {
-    newSet.add(idx)
-  }
-  collapsedSections.value = newSet
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const bioLine = (p, name) => {
+  let text = String(p.bio || p.persona || '').replace(/\s+/g, ' ').trim()
+  text = text.replace(ACCOUNT_PREFIX, '')
+  if (name) text = text.replace(new RegExp(`^(the )?${escapeRe(name)}\\s*(,|:|is|was)?\\s*`, 'i'), '')
+  const first = text.split(/(?<=[.!?])\s+/)[0] || ''
+  return capital(first.length > 160 ? `${first.slice(0, 157).replace(/\s+\S*$/, '')}...` : first)
 }
+const citizens = computed(() =>
+  profiles.value.map((p, idx) => {
+    const name = citizenName(p.name, p.username) || `Citizen ${idx + 1}`
+    const profession = String(p.profession || '')
+    return {
+      key: p.user_id ?? p.username ?? idx,
+      idx,
+      name,
+      initial: name.replace(/^(the|dr\.?|father|mother)\s+/i, '').charAt(0).toUpperCase() || 'Α',
+      role: roleLine(p) || t('step2.unknownProfession'),
+      line: bioLine(p, name),
+      color: ROLE_COLOR_VAR[familyOf(name, profession)] || ROLE_COLOR_VAR.people
+    }
+  })
+)
+const couchesFolded = computed(() => isNarrow.value && !couchesOpen.value && citizens.value.length > COUCH_PEEK)
+const couchesUnfolded = computed(() => isNarrow.value && couchesOpen.value && citizens.value.length > COUCH_PEEK)
+const visibleCitizens = computed(() => (couchesFolded.value ? citizens.value.slice(0, COUCH_PEEK) : citizens.value))
+const hiddenCount = computed(() => Math.max(0, citizens.value.length - COUCH_PEEK))
+const companion = computed(() => (chatTarget.value === 'agent' && selectedAgentIndex.value !== null ? citizens.value[selectedAgentIndex.value] : null))
+const chosenCitizens = computed(() => citizens.value.filter((c) => selectedAgents.value.has(c.idx)))
 
-const selectChatTarget = (target) => {
-  chatTarget.value = target
-  if (target === 'report_agent') {
-    showAgentDropdown.value = false
-  }
-}
+const companyLine = computed(() => {
+  const n = citizens.value.length
+  if (!n) return t('step5.symposium.companyScribeOnly')
+  if (n === 1) return t('step5.symposium.companyOne')
+  return t('step5.symposium.company', { n, w: inWords(n) })
+})
+const crowdCountLine = computed(() => {
+  const n = selectedAgents.value.size
+  if (!n) return t('step5.symposium.crowdNone')
+  if (n === 1) return t('step5.symposium.crowdCountOne')
+  return capital(t('step5.symposium.crowdCount', { n, w: inWords(n) }))
+})
+const answersCountLine = computed(() => {
+  const n = surveyResults.value.length
+  if (n === 1) return t('step5.symposium.answersCountOne')
+  return capital(t('step5.symposium.answersCount', { n, w: inWords(n) }))
+})
+const workingText = computed(() =>
+  chatTarget.value === 'report_agent'
+    ? t('step5.symposium.scribeWriting')
+    : t('step5.symposium.thinking', { name: companion.value ? companion.value.name : '' })
+)
 
-// 保存当前对话记录到缓存
+const isChatInputDisabled = computed(() =>
+  isSending.value || (chatTarget.value === 'agent' && (selectedAgentIndex.value === null || !cityAwake.value))
+)
+const canAskCrowd = computed(() => cityAwake.value && selectedAgents.value.size > 0 && !!surveyQuestion.value.trim() && !isSurveying.value)
+const crowdReason = computed(() => {
+  if (isSurveying.value) return ''
+  if (!cityAwake.value) return t('step5.symposium.asleep')
+  if (!selectedAgents.value.size) return t('step5.symposium.needCrowd')
+  if (!surveyQuestion.value.trim()) return t('step5.symposium.needQuestion')
+  return ''
+})
+
+const addLog = (msg) => emit('add-log', msg)
+const setStatus = (status, text = '') => emit('update-status', status, text)
+
+// Seats
 const saveChatHistory = () => {
-  if (chatHistory.value.length === 0) return
-  
   if (chatTarget.value === 'report_agent') {
-    chatHistoryCache.value['report_agent'] = [...chatHistory.value]
+    chatHistoryCache.value.report_agent = [...chatHistory.value]
   } else if (selectedAgentIndex.value !== null) {
     chatHistoryCache.value[`agent_${selectedAgentIndex.value}`] = [...chatHistory.value]
   }
 }
 
-const selectReportAgentChat = () => {
-  // 保存当前对话记录
+const sitWithScribe = () => {
   saveChatHistory()
-  
-  activeTab.value = 'chat'
+  mode.value = 'chat'
   chatTarget.value = 'report_agent'
   selectedAgent.value = null
   selectedAgentIndex.value = null
-  showAgentDropdown.value = false
-  
-  // 恢复 Report Agent 的对话记录
-  chatHistory.value = chatHistoryCache.value['report_agent'] || []
+  chatHistory.value = chatHistoryCache.value.report_agent || []
+  addLog(t('step5.symposium.ledger.sat', { name: t('step5.symposium.scribe') }))
+  revealTable()
+  focusInput()
 }
 
-const selectSurveyTab = () => {
-  activeTab.value = 'survey'
-  selectedAgent.value = null
-  selectedAgentIndex.value = null
-  showAgentDropdown.value = false
-}
-
-const toggleAgentDropdown = () => {
-  showAgentDropdown.value = !showAgentDropdown.value
-  if (showAgentDropdown.value) {
-    activeTab.value = 'chat'
-    chatTarget.value = 'agent'
-  }
-}
-
-const selectAgent = (agent, idx) => {
-  // 保存当前对话记录
+const sitWith = (citizen, idx) => {
   saveChatHistory()
-  
-  selectedAgent.value = agent
+  mode.value = 'chat'
+  selectedAgent.value = profiles.value[idx]
   selectedAgentIndex.value = idx
   chatTarget.value = 'agent'
-  showAgentDropdown.value = false
-  
-  // 恢复该 Agent 的对话记录
   chatHistory.value = chatHistoryCache.value[`agent_${idx}`] || []
-  addLog(t('log.selectChatTarget', { name: agent.username }))
+  addLog(t('step5.symposium.ledger.sat', { name: citizen.name }))
+  if (!cityAwake.value) checkCity()
+  revealTable()
+  focusInput()
+}
+
+const focusInput = () => {
+  nextTick(() => {
+    const el = chatInputRef.value
+    if (el && !el.disabled) el.focus({ preventScroll: true })
+  })
+}
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+// On a phone the table stands below the couches; sitting down carries the
+// visitor to it, so the dialogue is where they look, not a scroll away.
+const revealTable = () => {
+  if (!isNarrow.value) return
+  nextTick(() => {
+    const el = rootRef.value ? rootRef.value.querySelector('.table') : null
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    }
+  })
+}
+
+// Unfold the couches; keyboard visitors land on the first newly shown citizen.
+const toggleCouches = () => {
+  const opening = !couchesOpen.value
+  couchesOpen.value = opening
+  nextTick(() => {
+    const root = rootRef.value
+    if (!root) return
+    const cards = root.querySelectorAll('.couch-list .couch')
+    const target = opening ? cards[COUCH_PEEK] : cards[0]
+    if (target) target.focus({ preventScroll: !opening })
+  })
+}
+
+const toggleCrowdMode = () => {
+  if (mode.value === 'crowd') {
+    mode.value = 'chat'
+    focusInput()
+  } else {
+    saveChatHistory()
+    mode.value = 'crowd'
+    if (!cityAwake.value) checkCity()
+  }
 }
 
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
   try {
-    return new Date(timestamp).toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit'
-    })
+    return new Date(timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }
 }
 
+const growInput = () => {
+  const el = chatInputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+}
+
+// What the Scribe and the citizens write comes as Markdown.
 const renderMarkdown = (content) => {
   if (!content) return ''
-  
+
   let processedContent = content.replace(/^##\s+.+\n+/, '')
   let html = processedContent.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
   html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
@@ -565,8 +550,7 @@ const renderMarkdown = (content) => {
   html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>')
   html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>')
   html = html.replace(/^> (.+)$/gm, '<blockquote class="md-quote">$1</blockquote>')
-  
-  // 处理列表 - 支持子列表
+
   html = html.replace(/^(\s*)- (.+)$/gm, (match, indent, text) => {
     const level = Math.floor(indent.length / 2)
     return `<li class="md-li" data-level="${level}">${text}</li>`
@@ -575,21 +559,16 @@ const renderMarkdown = (content) => {
     const level = Math.floor(indent.length / 2)
     return `<li class="md-oli" data-level="${level}">${text}</li>`
   })
-  
-  // 包装无序列表
+
   html = html.replace(/(<li class="md-li"[^>]*>.*?<\/li>\s*)+/g, '<ul class="md-ul">$&</ul>')
-  // 包装有序列表
   html = html.replace(/(<li class="md-oli"[^>]*>.*?<\/li>\s*)+/g, '<ol class="md-ol">$&</ol>')
-  
-  // 清理列表项之间的所有空白
+
   html = html.replace(/<\/li>\s+<li/g, '</li><li')
-  // 清理列表开始标签后的空白
   html = html.replace(/<ul class="md-ul">\s+/g, '<ul class="md-ul">')
   html = html.replace(/<ol class="md-ol">\s+/g, '<ol class="md-ol">')
-  // 清理列表结束标签前的空白
   html = html.replace(/\s+<\/ul>/g, '</ul>')
   html = html.replace(/\s+<\/ol>/g, '</ol>')
-  
+
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
   html = html.replace(/_(.+?)_/g, '<em>$1</em>')
@@ -602,17 +581,13 @@ const renderMarkdown = (content) => {
   html = html.replace(/(<\/h[2-5]>)<\/p>/g, '$1')
   html = html.replace(/<p class="md-p">(<ul|<ol|<blockquote|<pre|<hr)/g, '$1')
   html = html.replace(/(<\/ul>|<\/ol>|<\/blockquote>|<\/pre>)<\/p>/g, '$1')
-  // 清理块级元素前后的 <br> 标签
   html = html.replace(/<br>\s*(<ul|<ol|<blockquote)/g, '$1')
   html = html.replace(/(<\/ul>|<\/ol>|<\/blockquote>)\s*<br>/g, '$1')
-  // 清理 <p><br> 紧跟块级元素的情况（多余空行导致）
   html = html.replace(/<p class="md-p">(<br>\s*)+(<ul|<ol|<blockquote|<pre|<hr)/g, '$2')
-  // 清理连续的 <br> 标签
   html = html.replace(/(<br>\s*){2,}/g, '<br>')
-  // 清理块级元素后紧跟的段落开始标签前的 <br>
   html = html.replace(/(<\/ol>|<\/ul>|<\/blockquote>)<br>(<p|<div)/g, '$1$2')
 
-  // 修复非连续有序列表的编号：当单项 <ol> 被段落内容隔开时，保持编号递增
+  // Ordered lists split by prose keep counting.
   const tokens = html.split(/(<ol class="md-ol">(?:<li class="md-oli"[^>]*>[\s\S]*?<\/li>)+<\/ol>)/g)
   let olCounter = 0
   let inSequence = false
@@ -641,130 +616,124 @@ const renderMarkdown = (content) => {
   return html
 }
 
-// Chat Methods
+// The Socratic chips insert a question at the end of what is written; they never send.
+const insertSocraticPrompt = (q) => {
+  if (isChatInputDisabled.value) return
+  const current = chatInput.value.replace(/\s+$/, '')
+  chatInput.value = current ? `${current}\n${q}` : q
+  nextTick(() => {
+    const el = chatInputRef.value
+    if (!el) return
+    growInput()
+    el.focus()
+    const end = el.value.length
+    el.setSelectionRange(end, end)
+    el.scrollTop = el.scrollHeight
+  })
+}
+
+// Asking
 const sendMessage = async () => {
-  if (!chatInput.value.trim() || isSending.value) return
-  
+  if (!chatInput.value.trim() || isChatInputDisabled.value) return
+
   const message = chatInput.value.trim()
   chatInput.value = ''
-  
-  // Add user message
-  chatHistory.value.push({
-    role: 'user',
-    content: message,
-    timestamp: new Date().toISOString()
-  })
-  
-  scrollToBottom()
+  nextTick(growInput)
+
+  chatHistory.value.push({ role: 'user', content: message, timestamp: new Date().toISOString() })
   isSending.value = true
-  
+  setStatus('working', workingText.value)
+  scrollToEnd()
+
   try {
     if (chatTarget.value === 'report_agent') {
-      await sendToReportAgent(message)
+      await sendToScribe(message)
     } else {
-      await sendToAgent(message)
+      await sendToCitizen(message)
     }
+    setStatus('ready')
   } catch (err) {
-    addLog(t('log.sendFailed', { error: err.message }))
+    addLog(t('step5.symposium.ledger.failed', { error: err.message }))
     chatHistory.value.push({
       role: 'assistant',
-      content: t('step5.errorOccurred', { error: err.message }),
+      content: t('step5.symposium.trouble', { error: err.message }),
       timestamp: new Date().toISOString()
     })
+    setStatus('error')
   } finally {
     isSending.value = false
-    scrollToBottom()
-    // 自动保存对话记录到缓存
     saveChatHistory()
+    scrollToEnd()
+    focusInput()
   }
 }
 
-const sendToReportAgent = async (message) => {
-  addLog(t('log.sendToReportAgent', { message: message.substring(0, 50) }))
-  
-  // Build chat history for API
+const sendToScribe = async (message) => {
+  addLog(t('step5.symposium.ledger.asked', { name: t('step5.symposium.scribe'), q: message.substring(0, 60) }))
+
   const historyForApi = chatHistory.value
     .slice(0, -1)
-    .slice(-10) // Keep last 10 messages
-    .map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }))
-  
+    .slice(-10)
+    .map((msg) => ({ role: msg.role, content: msg.content }))
+
   const res = await chatWithReport({
     simulation_id: props.simulationId,
-    message: message,
+    message,
     chat_history: historyForApi
   })
-  
+
   if (res.success && res.data) {
     chatHistory.value.push({
       role: 'assistant',
       content: res.data.response || res.data.answer || t('step5.noResponse'),
       timestamp: new Date().toISOString()
     })
-    addLog(t('log.reportAgentReplied'))
+    addLog(t('step5.symposium.ledger.answered', { name: t('step5.symposium.scribe') }))
   } else {
     throw new Error(res.error || t('step5.requestFailed'))
   }
 }
 
-const sendToAgent = async (message) => {
-  if (!selectedAgent.value || selectedAgentIndex.value === null) {
-    throw new Error(t('step5.selectAgentFirst'))
+const sendToCitizen = async (message) => {
+  if (!selectedAgent.value || selectedAgentIndex.value === null || !companion.value) {
+    throw new Error(t('step5.symposium.needSeat'))
   }
-  
-  addLog(t('log.sendToAgent', { name: selectedAgent.value.username, message: message.substring(0, 50) }))
-  
-  // Build prompt with chat history
+  const name = companion.value.name
+  addLog(t('step5.symposium.ledger.asked', { name, q: message.substring(0, 60) }))
+
+  // The citizen is reminded of the conversation so far.
   let prompt = message
   if (chatHistory.value.length > 1) {
     const historyContext = chatHistory.value
       .slice(0, -1)
       .slice(-6)
-      .map(msg => `${msg.role === 'user' ? '提问者' : '你'}：${msg.content}`)
+      .map((msg) => `${msg.role === 'user' ? 'Questioner' : 'You'}: ${msg.content}`)
       .join('\n')
-    prompt = `以下是我们之前的对话：\n${historyContext}\n\n现在我的新问题是：${message}`
+    prompt = `Earlier in our conversation:\n${historyContext}\n\nNow my next question is: ${message}`
   }
-  
+
   const res = await interviewAgents({
     simulation_id: props.simulationId,
-    interviews: [{
-      agent_id: selectedAgentIndex.value,
-      prompt: prompt
-    }]
+    interviews: [{ agent_id: selectedAgentIndex.value, prompt }]
   })
-  
+
   if (res.success && res.data) {
-    // 正确的数据路径: res.data.result.results 是一个对象字典
-    // 格式: {"twitter_0": {...}, "reddit_0": {...}} 或单平台 {"reddit_0": {...}}
+    // Results come as a dictionary keyed by platform and seat: { reddit_0: {...}, twitter_0: {...} }
     const resultData = res.data.result || res.data
     const resultsDict = resultData.results || resultData
-    
-    // 将对象字典转换为数组，优先获取 reddit 平台的回复
     let responseContent = null
     const agentId = selectedAgentIndex.value
-    
+
     if (typeof resultsDict === 'object' && !Array.isArray(resultsDict)) {
-      // 优先使用 reddit 平台回复，其次 twitter
-      const redditKey = `reddit_${agentId}`
-      const twitterKey = `twitter_${agentId}`
-      const agentResult = resultsDict[redditKey] || resultsDict[twitterKey] || Object.values(resultsDict)[0]
-      if (agentResult) {
-        responseContent = agentResult.response || agentResult.answer
-      }
+      const agentResult = resultsDict[`reddit_${agentId}`] || resultsDict[`twitter_${agentId}`] || Object.values(resultsDict)[0]
+      if (agentResult) responseContent = agentResult.response || agentResult.answer
     } else if (Array.isArray(resultsDict) && resultsDict.length > 0) {
-      // 兼容数组格式
       responseContent = resultsDict[0].response || resultsDict[0].answer
     }
-    
+
     if (responseContent) {
-      chatHistory.value.push({
-        role: 'assistant',
-        content: responseContent,
-        timestamp: new Date().toISOString()
-      })
-      addLog(t('log.agentReplied', { name: selectedAgent.value.username }))
+      chatHistory.value.push({ role: 'assistant', content: responseContent, timestamp: new Date().toISOString() })
+      addLog(t('step5.symposium.ledger.answered', { name }))
     } else {
       throw new Error(t('step5.noResponse'))
     }
@@ -773,29 +742,24 @@ const sendToAgent = async (message) => {
   }
 }
 
-const scrollToBottom = () => {
+const scrollToEnd = () => {
   nextTick(() => {
-    if (chatMessages.value) {
-      chatMessages.value.scrollTop = chatMessages.value.scrollHeight
-    }
+    const lines = document.querySelectorAll('.symposium .dialogue > .line')
+    const last = lines[lines.length - 1]
+    if (last && typeof last.scrollIntoView === 'function') last.scrollIntoView({ block: 'nearest' })
   })
 }
 
-// Survey Methods
+// The crowd
 const toggleAgentSelection = (idx) => {
-  const newSet = new Set(selectedAgents.value)
-  if (newSet.has(idx)) {
-    newSet.delete(idx)
-  } else {
-    newSet.add(idx)
-  }
-  selectedAgents.value = newSet
+  const next = new Set(selectedAgents.value)
+  if (next.has(idx)) next.delete(idx)
+  else next.add(idx)
+  selectedAgents.value = next
 }
 
 const selectAllAgents = () => {
-  const newSet = new Set()
-  profiles.value.forEach((_, idx) => newSet.add(idx))
-  selectedAgents.value = newSet
+  selectedAgents.value = new Set(profiles.value.map((_, idx) => idx))
 }
 
 const clearAgentSelection = () => {
@@ -803,1782 +767,1036 @@ const clearAgentSelection = () => {
 }
 
 const submitSurvey = async () => {
-  if (selectedAgents.value.size === 0 || !surveyQuestion.value.trim()) return
-  
+  if (!canAskCrowd.value) return
+
   isSurveying.value = true
-  addLog(t('log.sendSurvey', { count: selectedAgents.value.size }))
-  
+  setStatus('working', t('step5.symposium.crowdAnswering'))
+  addLog(t('step5.symposium.ledger.crowdAsked', { n: selectedAgents.value.size }))
+
   try {
-    const interviews = Array.from(selectedAgents.value).map(idx => ({
-      agent_id: idx,
-      prompt: surveyQuestion.value.trim()
-    }))
-    
+    const questionText = surveyQuestion.value.trim()
+    const interviews = Array.from(selectedAgents.value).map((idx) => ({ agent_id: idx, prompt: questionText }))
+
     const res = await interviewAgents({
       simulation_id: props.simulationId,
-      interviews: interviews
+      interviews
     })
-    
+
     if (res.success && res.data) {
-      // 正确的数据路径: res.data.result.results 是一个对象字典
-      // 格式: {"twitter_0": {...}, "reddit_0": {...}, "twitter_1": {...}, ...}
       const resultData = res.data.result || res.data
       const resultsDict = resultData.results || resultData
-      
-      // 将对象字典转换为数组格式
-      const surveyResultsList = []
-      
+      const list = []
+
       for (const interview of interviews) {
         const agentIdx = interview.agent_id
-        const agent = profiles.value[agentIdx]
-        
-        // 优先使用 reddit 平台回复，其次 twitter
-        let responseContent = t('step5.noResponse')
+        const citizen = citizens.value[agentIdx]
+        let responseContent = t('step5.symposium.noAnswer')
 
         if (typeof resultsDict === 'object' && !Array.isArray(resultsDict)) {
-          const redditKey = `reddit_${agentIdx}`
-          const twitterKey = `twitter_${agentIdx}`
-          const agentResult = resultsDict[redditKey] || resultsDict[twitterKey]
-          if (agentResult) {
-            responseContent = agentResult.response || agentResult.answer || t('step5.noResponse')
-          }
+          const agentResult = resultsDict[`reddit_${agentIdx}`] || resultsDict[`twitter_${agentIdx}`]
+          if (agentResult) responseContent = agentResult.response || agentResult.answer || t('step5.symposium.noAnswer')
         } else if (Array.isArray(resultsDict)) {
-          // 兼容数组格式
-          const matchedResult = resultsDict.find(r => r.agent_id === agentIdx)
-          if (matchedResult) {
-            responseContent = matchedResult.response || matchedResult.answer || t('step5.noResponse')
-          }
+          const matched = resultsDict.find((r) => r.agent_id === agentIdx)
+          if (matched) responseContent = matched.response || matched.answer || t('step5.symposium.noAnswer')
         }
-        
-        surveyResultsList.push({
+
+        list.push({
           agent_id: agentIdx,
-          agent_name: agent?.username || `Agent ${agentIdx}`,
-          profession: agent?.profession,
-          question: surveyQuestion.value.trim(),
+          name: citizen ? citizen.name : `Citizen ${agentIdx + 1}`,
+          initial: citizen ? citizen.initial : 'Α',
+          role: citizen ? citizen.role : '',
+          color: citizen ? citizen.color : ROLE_COLOR_VAR.people,
+          question: questionText,
           answer: responseContent
         })
       }
-      
-      surveyResults.value = surveyResultsList
-      addLog(t('log.receivedReplies', { count: surveyResults.value.length }))
+
+      surveyResults.value = list
+      addLog(t('step5.symposium.ledger.crowdAnswered', { n: list.length }))
+      setStatus('ready')
     } else {
       throw new Error(res.error || t('step5.requestFailed'))
     }
   } catch (err) {
-    addLog(t('log.surveySendFailed', { error: err.message }))
+    addLog(t('step5.symposium.ledger.failed', { error: err.message }))
+    setStatus('error')
   } finally {
     isSurveying.value = false
   }
 }
 
-// Load Report Data
+// The Chronicle
 const loadReportData = async () => {
   if (!props.reportId) return
-  
   try {
-    addLog(t('log.loadReportData', { id: props.reportId }))
-    
-    // Get report info
     const reportRes = await getReport(props.reportId)
     if (reportRes.success && reportRes.data) {
-      // Load agent logs to get report outline and sections
+      const record = reportRes.data
+      question.value = record.simulation_requirement || ''
       await loadAgentLogs()
+      // The finished record carries the chapters too, should the Scribe's notes be missing.
+      if (!reportOutline.value && record.outline) {
+        reportOutline.value = record.outline
+        ;(record.outline.sections || []).forEach((s, i) => {
+          if (s.content && !generatedSections.value[i + 1]) generatedSections.value[i + 1] = s.content
+        })
+      }
+      if (reportOutline.value) addLog(t('step5.symposium.ledger.chronicle'))
+    } else {
+      addLog(t('step5.symposium.ledger.chronicleMissing', { error: reportRes.error || t('common.unknownError') }))
     }
   } catch (err) {
-    addLog(t('log.loadReportFailed', { error: err.message }))
+    addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
   }
 }
 
 const loadAgentLogs = async () => {
   if (!props.reportId) return
-  
   try {
     const res = await getAgentLog(props.reportId, 0)
     if (res.success && res.data) {
       const logs = res.data.logs || []
-      
-      logs.forEach(log => {
+      logs.forEach((log) => {
         if (log.action === 'planning_complete' && log.details?.outline) {
           reportOutline.value = log.details.outline
         }
-        
         if (log.action === 'section_complete' && log.section_index < 100 && log.details?.content) {
           generatedSections.value[log.section_index] = log.details.content
         }
       })
-      
-      addLog(t('log.reportDataLoaded'))
     }
   } catch (err) {
-    addLog(t('log.loadReportLogFailed', { error: err.message }))
+    addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
   }
 }
 
 const loadProfiles = async () => {
   if (!props.simulationId) return
-  
   try {
     const res = await getSimulationProfilesRealtime(props.simulationId)
     if (res.success && res.data) {
       profiles.value = res.data.profiles || []
-      addLog(t('log.loadedProfiles', { count: profiles.value.length }))
+      addLog(t('step5.symposium.ledger.profiles', { n: profiles.value.length }))
     }
   } catch (err) {
-    addLog(t('log.loadProfilesFailed', { error: err.message }))
+    addLog(t('step5.symposium.ledger.profilesMissing', { error: err.message }))
   }
 }
 
-// Click outside to close dropdown
-const handleClickOutside = (e) => {
-  const dropdown = document.querySelector('.agent-dropdown')
-  if (dropdown && !dropdown.contains(e.target)) {
-    showAgentDropdown.value = false
+// Whether the citizens can be questioned tonight: only while the city is awake.
+let lastCityCheck = 0
+let cityKnown = false
+const checkCity = async () => {
+  if (!props.simulationId) return
+  const now = Date.now()
+  if (now - lastCityCheck < 15000) return
+  lastCityCheck = now
+  try {
+    const res = await getEnvStatus({ simulation_id: props.simulationId })
+    const awake = !!(res.success && res.data && res.data.env_alive)
+    if (!cityKnown || awake !== cityAwake.value) {
+      addLog(t(awake ? 'step5.symposium.ledger.awake' : 'step5.symposium.ledger.asleep'))
+    }
+    cityAwake.value = awake
+    cityKnown = true
+  } catch {
+    // Leave the room as it was; the ask itself will say if it fails.
   }
+}
+
+// The drawer
+let previousOverflow = ''
+const openChronicle = () => {
+  chronicleOpen.value = true
+  try {
+    previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  } catch { /* nothing to lock */ }
+  nextTick(() => chronicleClose.value?.focus())
+}
+
+// Tab cycles inside the open Chronicle; the room behind it waits.
+const trapFocus = (e) => {
+  const root = e.currentTarget
+  if (!root) return
+  const focusable = Array.from(root.querySelectorAll('button, [href], textarea, input, select, [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled)
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+const closeChronicle = () => {
+  chronicleOpen.value = false
+  try { document.body.style.overflow = previousOverflow } catch { /* nothing to restore */ }
+  nextTick(() => chronicleToggle.value?.focus())
 }
 
 // Lifecycle
 onMounted(() => {
-  addLog(t('log.step5Init'))
+  if (narrowQuery) {
+    if (narrowQuery.addEventListener) narrowQuery.addEventListener('change', onNarrowChange)
+    else if (narrowQuery.addListener) narrowQuery.addListener(onNarrowChange)
+  }
   loadReportData()
   loadProfiles()
-  document.addEventListener('click', handleClickOutside)
+  checkCity()
 })
 
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
-
-watch(() => props.reportId, (newId) => {
-  if (newId) {
-    loadReportData()
+onBeforeUnmount(() => {
+  if (narrowQuery) {
+    if (narrowQuery.removeEventListener) narrowQuery.removeEventListener('change', onNarrowChange)
+    else if (narrowQuery.removeListener) narrowQuery.removeListener(onNarrowChange)
   }
-}, { immediate: true })
+  if (chronicleOpen.value) {
+    try { document.body.style.overflow = previousOverflow } catch { /* nothing to restore */ }
+  }
+})
 
-watch(() => props.simulationId, (newId) => {
-  if (newId) {
+watch(() => props.reportId, (newId, oldId) => {
+  if (newId && newId !== oldId) loadReportData()
+})
+
+watch(() => props.simulationId, (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    lastCityCheck = 0
     loadProfiles()
+    checkCity()
   }
-}, { immediate: true })
+})
 </script>
 
 <style scoped>
-.interaction-panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #F8F9FA;
-  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
-  overflow: hidden;
-}
-
-/* Utility Classes */
-.mono {
-  font-family: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
-}
-
-/* Main Split Layout */
-.main-split-layout {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-}
-
-/* Left Panel - Report Style (与 Step4Report.vue 完全一致) */
-.left-panel.report-style {
-  width: 45%;
-  min-width: 450px;
-  background: #FFFFFF;
-  border-right: 1px solid #E5E7EB;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 30px 50px 60px 50px;
-}
-
-.left-panel::-webkit-scrollbar {
-  width: 6px;
-}
-
-.left-panel::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.left-panel::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 3px;
-  transition: background 0.3s ease;
-}
-
-.left-panel:hover::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-}
-
-.left-panel::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-/* Report Header */
-.report-content-wrapper {
-  max-width: 800px;
+.symposium {
+  width: 100%;
+  max-width: 1360px;
   margin: 0 auto;
-  width: 100%;
+  padding: 28px var(--p-gutter) 48px;
+  box-sizing: border-box;
+  font-family: var(--p-font-body);
+  color: var(--p-ink-2);
+  min-width: 0;
 }
 
-.report-header-block {
-  margin-bottom: 30px;
-}
-
-.report-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.report-tag {
-  background: #000000;
-  color: #FFFFFF;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 8px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.report-id {
-  font-size: 11px;
-  color: #9CA3AF;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-
-.main-title {
-  font-family: 'Times New Roman', Times, serif;
-  font-size: 36px;
-  font-weight: 700;
-  color: #111827;
-  line-height: 1.2;
-  margin: 0 0 16px 0;
-  letter-spacing: -0.02em;
-}
-
-.sub-title {
-  font-family: 'Times New Roman', Times, serif;
-  font-size: 16px;
-  color: #6B7280;
-  font-style: italic;
-  line-height: 1.6;
-  margin: 0 0 30px 0;
-  font-weight: 400;
-}
-
-.header-divider {
-  height: 1px;
-  background: #E5E7EB;
-  width: 100%;
-}
-
-/* Sections List */
-.sections-list {
-  display: flex;
-  flex-direction: column;
-  gap: 32px;
-}
-
-.report-section-item {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.section-header-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  transition: background-color 0.2s ease;
-  padding: 8px 12px;
-  margin: -8px -12px;
-  border-radius: 8px;
-}
-
-.section-header-row.clickable {
-  cursor: pointer;
-}
-
-.section-header-row.clickable:hover {
-  background-color: #F9FAFB;
-}
-
-.collapse-icon {
-  margin-left: auto;
-  color: #9CA3AF;
-  transition: transform 0.3s ease;
-  flex-shrink: 0;
-  align-self: center;
-}
-
-.collapse-icon.is-collapsed {
-  transform: rotate(-90deg);
-}
-
-.section-number {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 16px;
-  color: #E5E7EB;
-  font-weight: 500;
-  transition: color 0.3s ease;
-}
-
-.section-title {
-  font-family: 'Times New Roman', Times, serif;
-  font-size: 24px;
-  font-weight: 600;
-  color: #111827;
-  margin: 0;
-  transition: color 0.3s ease;
-}
-
-/* States */
-.report-section-item.is-pending .section-number {
-  color: #E5E7EB;
-}
-.report-section-item.is-pending .section-title {
-  color: #D1D5DB;
-}
-
-.report-section-item.is-active .section-number,
-.report-section-item.is-completed .section-number {
-  color: #9CA3AF;
-}
-
-.report-section-item.is-active .section-title,
-.report-section-item.is-completed .section-title {
-  color: #111827;
-}
-
-.section-body {
-  padding-left: 28px;
-  overflow: hidden;
-}
-
-/* Generated Content */
-.generated-content {
-  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.8;
-  color: #374151;
-}
-
-.generated-content :deep(p) {
-  margin-bottom: 1em;
-}
-
-.generated-content :deep(.md-h2),
-.generated-content :deep(.md-h3),
-.generated-content :deep(.md-h4) {
-  font-family: 'Times New Roman', Times, serif;
-  color: #111827;
-  margin-top: 1.5em;
-  margin-bottom: 0.8em;
-  font-weight: 700;
-}
-
-.generated-content :deep(.md-h2) { font-size: 20px; border-bottom: 1px solid #F3F4F6; padding-bottom: 8px; }
-.generated-content :deep(.md-h3) { font-size: 18px; }
-.generated-content :deep(.md-h4) { font-size: 16px; }
-
-.generated-content :deep(.md-ul),
-.generated-content :deep(.md-ol) {
-  padding-left: 20px;
-  margin-bottom: 1em;
-}
-
-.generated-content :deep(.md-li) {
-  margin-bottom: 0.5em;
-}
-
-.generated-content :deep(.md-quote) {
-  border-left: 3px solid #E5E7EB;
-  padding-left: 16px;
-  margin: 1.5em 0;
-  color: #6B7280;
-  font-style: italic;
-  font-family: 'Times New Roman', Times, serif;
-}
-
-.generated-content :deep(.code-block) {
-  background: #F9FAFB;
-  padding: 12px;
-  border-radius: 6px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  overflow-x: auto;
-  margin: 1em 0;
-  border: 1px solid #E5E7EB;
-}
-
-.generated-content :deep(strong) {
-  font-weight: 600;
-  color: #111827;
-}
-
-/* Loading State */
-.loading-state {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #6B7280;
-  font-size: 14px;
-  margin-top: 4px;
-}
-
-.loading-icon {
-  width: 18px;
-  height: 18px;
-  animation: spin 1s linear infinite;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.loading-text {
-  font-family: 'Times New Roman', Times, serif;
-  font-size: 15px;
-  color: #4B5563;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Content Styles Override */
-.generated-content :deep(.md-h2) {
-  font-family: 'Times New Roman', Times, serif;
-  font-size: 18px;
-  margin-top: 0;
-}
-
-/* Waiting Placeholder */
-.waiting-placeholder {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 20px;
-  padding: 40px;
-  color: #9CA3AF;
-}
-
-.waiting-animation {
-  position: relative;
-  width: 48px;
-  height: 48px;
-}
-
-.waiting-ring {
+.sr-only {
   position: absolute;
-  width: 100%;
-  height: 100%;
-  border: 2px solid #E5E7EB;
-  border-radius: 50%;
-  animation: ripple 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-
-.waiting-ring:nth-child(2) {
-  animation-delay: 0.4s;
-}
-
-.waiting-ring:nth-child(3) {
-  animation-delay: 0.8s;
-}
-
-@keyframes ripple {
-  0% { transform: scale(0.5); opacity: 1; }
-  100% { transform: scale(2); opacity: 0; }
-}
-
-.waiting-text {
-  font-size: 14px;
-}
-
-/* Right Panel - Interaction */
-.right-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #FFFFFF;
-  overflow: hidden;
-}
-
-/* Action Bar - Professional Design */
-.action-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
-  border-bottom: 1px solid #E5E7EB;
-  background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%);
-  gap: 16px;
-}
-
-.action-bar-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 160px;
-}
-
-.action-bar-icon {
-  color: #1F2937;
-  flex-shrink: 0;
-}
-
-.action-bar-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.action-bar-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1F2937;
-  letter-spacing: -0.01em;
-}
-
-.action-bar-subtitle {
-  font-size: 11px;
-  color: #9CA3AF;
-}
-
-.action-bar-subtitle.mono {
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-}
-
-.action-bar-tabs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  justify-content: flex-end;
-}
-
-.tab-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #6B7280;
-  background: #F3F4F6;
-  border: 1px solid transparent;
-  border-radius: 20px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.tab-pill:hover {
-  background: #E5E7EB;
-  color: #374151;
-}
-
-.tab-pill.active {
-  background: #1F2937;
-  color: #FFFFFF;
-  box-shadow: 0 2px 8px rgba(31, 41, 55, 0.15);
-}
-
-.tab-pill svg {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.tab-pill.active svg {
-  opacity: 1;
-}
-
-.tab-divider {
   width: 1px;
-  height: 24px;
-  background: #E5E7EB;
-  margin: 0 6px;
-}
-
-.agent-pill {
-  width: 200px;
-  justify-content: space-between;
-}
-
-.agent-pill span {
-  flex: 1;
+  height: 1px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip: rect(0 0 0 0);
   white-space: nowrap;
-  text-align: left;
 }
 
-.survey-pill {
-  background: #ECFDF5;
-  color: #047857;
-}
-
-.survey-pill:hover {
-  background: #D1FAE5;
-  color: #065F46;
-}
-
-.survey-pill.active {
-  background: #047857;
-  color: #FFFFFF;
-  box-shadow: 0 2px 8px rgba(4, 120, 87, 0.2);
-}
-
-/* Interaction Header */
-.interaction-header {
-  padding: 16px 24px;
-  border-bottom: 1px solid #E5E7EB;
-  background: #FAFAFA;
-}
-
-.tab-switcher {
+/* The room band */
+.room-band {
   display: flex;
-  gap: 8px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--p-line);
+  min-width: 0;
 }
 
-.tab-btn {
+.room-copy { min-width: 0; }
+
+.room-title {
+  margin: 6px 0 4px;
+  font-family: var(--p-font-display);
+  font-size: var(--t-2xl);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--p-ink);
+}
+
+.room-line {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-md);
+  color: var(--p-ink-3);
+}
+
+.room-actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #6B7280;
-  background: transparent;
-  border: 1px solid #E5E7EB;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tab-btn:hover {
-  background: #F9FAFB;
-  border-color: #D1D5DB;
-}
-
-.tab-btn.active {
-  background: #1F2937;
-  color: #FFFFFF;
-  border-color: #1F2937;
-}
-
-.tab-btn svg {
+  flex-wrap: wrap;
+  gap: 10px;
   flex-shrink: 0;
 }
 
-/* Chat Container */
-.chat-container {
-  flex: 1;
+.room-actions .p-button[aria-pressed='true'] {
+  border-color: var(--p-gold);
+  color: var(--p-gold);
+}
+
+/* The room: couches along the wall, the table in the middle */
+.room {
+  display: grid;
+  grid-template-columns: minmax(0, 6fr) minmax(0, 7fr);
+  gap: 40px;
+  padding-top: 26px;
+  align-items: start;
+}
+
+.couches {
+  position: sticky;
+  top: calc(var(--p-header-h) + 14px);
+  max-height: calc(100vh - var(--p-header-h) - var(--p-way-h) - 28px);
+  overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-}
-
-/* Report Agent Tools Card */
-.report-agent-tools-card {
-  border-bottom: 1px solid #E5E7EB;
-  background: linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%);
-}
-
-.tools-card-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 20px;
-}
-
-.tools-card-avatar {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  min-height: 44px;
-  background: linear-gradient(135deg, #1F2937 0%, #374151 100%);
-  color: #FFFFFF;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  font-weight: 600;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(31, 41, 55, 0.2);
-}
-
-.tools-card-info {
-  flex: 1;
+  gap: 10px;
   min-width: 0;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--p-line-strong) transparent;
 }
 
-.tools-card-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1F2937;
-  margin-bottom: 2px;
+.couches-hint {
+  margin: 0 0 6px;
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  color: var(--p-ink-4);
 }
 
-.tools-card-subtitle {
-  font-size: 12px;
-  color: #6B7280;
-}
-
-.tools-card-toggle {
-  width: 28px;
-  height: 28px;
-  background: #FFFFFF;
-  border: 1px solid #E5E7EB;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6B7280;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-}
-
-.tools-card-toggle:hover {
-  background: #F9FAFB;
-  border-color: #D1D5DB;
-}
-
-.tools-card-toggle svg {
-  transition: transform 0.3s ease;
-}
-
-.tools-card-toggle svg.is-expanded {
-  transform: rotate(180deg);
-}
-
-.tools-card-body {
-  padding: 0 20px 16px 20px;
-}
-
-.tools-grid {
+.couch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
   gap: 10px;
 }
 
-.tool-item {
-  display: flex;
-  gap: 10px;
-  padding: 12px;
-  background: #FFFFFF;
-  border-radius: 10px;
-  border: 1px solid #E5E7EB;
-  transition: all 0.2s ease;
-}
-
-.tool-item:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.tool-icon-wrapper {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.tool-purple .tool-icon-wrapper {
-  background: rgba(139, 92, 246, 0.1);
-  color: #8B5CF6;
-}
-
-.tool-blue .tool-icon-wrapper {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3B82F6;
-}
-
-.tool-orange .tool-icon-wrapper {
-  background: rgba(249, 115, 22, 0.1);
-  color: #F97316;
-}
-
-.tool-green .tool-icon-wrapper {
-  background: rgba(34, 197, 94, 0.1);
-  color: #22C55E;
-}
-
-.tool-content {
-  flex: 1;
+.couch {
+  --role: var(--p-gold);
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 16px 16px 16px 14px;
+  background: var(--p-surface);
+  border: 1px solid var(--p-line);
+  border-left: 2px solid var(--role);
+  color: var(--p-ink-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
   min-width: 0;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
-.tool-name {
-  font-size: 12px;
+.couch:hover { border-color: var(--p-line-strong); background: var(--p-surface-2); }
+.couch.seated,
+.couch.chosen { border-color: var(--p-gold); background: var(--p-surface-2); }
+.couch:disabled { cursor: default; opacity: 0.7; }
+.couch.away .couch-coin { opacity: 0.6; }
+.couch.away .couch-name { color: var(--p-ink-3); }
+
+.couch.head {
+  grid-template-columns: auto minmax(0, 1fr);
+  border-left-color: var(--p-gold);
+  background: linear-gradient(90deg, var(--p-terracotta-tint), transparent 60%), var(--p-surface);
+}
+
+.couch-coin {
+  --p-gold: var(--role);
+  width: 40px;
+  height: 40px;
+  font-size: var(--t-lg);
+  border-color: var(--role);
+  color: var(--role);
+}
+
+
+.couch-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+.couch-name {
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
   font-weight: 600;
-  color: #1F2937;
-  margin-bottom: 4px;
+  line-height: 1.1;
+  color: var(--p-ink);
+  overflow-wrap: anywhere;
 }
 
-.tool-desc {
-  font-size: 11px;
-  color: #6B7280;
-  line-height: 1.4;
+.couch-role {
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
+  line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-/* Agent Profile Card */
-.agent-profile-card {
-  border-bottom: 1px solid #E5E7EB;
-  background: linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%);
+.couch-line {
+  margin-top: 4px;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  color: var(--p-ink-3);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.profile-card-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 20px;
+.couch.head .couch-line { -webkit-line-clamp: 3; color: var(--p-ink-2); }
+
+.couch-badge {
+  margin-bottom: 3px;
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  color: var(--p-gold);
 }
 
-.profile-card-avatar {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  min-height: 44px;
-  background: linear-gradient(135deg, #1F2937 0%, #374151 100%);
-  color: #FFFFFF;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  font-weight: 600;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(31, 41, 55, 0.2);
-}
+.couch-badge.quiet { color: var(--p-ink-3); }
 
-.profile-card-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.profile-card-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1F2937;
-  margin-bottom: 2px;
-}
-
-.profile-card-meta {
-  display: flex;
-  align-items: center;
+/* The fold on phones: how many are still on the couches, and the one button that shows them. */
+.couches-more {
+  display: none;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
-  color: #6B7280;
+  padding-top: 6px;
 }
 
-.profile-card-handle {
-  color: #9CA3AF;
+.couches-hidden {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  color: var(--p-ink-3);
 }
 
-.profile-card-profession {
-  padding: 2px 8px;
-  background: #E5E7EB;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
+/* The Scribe's coin: gold, with the sigma cut into it. Declared after the
+   size variants so it wins wherever it appears. */
+.p-coin.scribe-coin {
+  border-color: var(--p-gold);
+  color: #1f1a16;
+  background: var(--p-gold);
+  font-family: var(--p-font-inscription);
+  font-weight: 700;
 }
 
-.profile-card-toggle {
-  width: 28px;
-  height: 28px;
-  background: #FFFFFF;
-  border: 1px solid #E5E7EB;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6B7280;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-}
-
-.profile-card-toggle:hover {
-  background: #F9FAFB;
-  border-color: #D1D5DB;
-}
-
-.profile-card-toggle svg {
-  transition: transform 0.3s ease;
-}
-
-.profile-card-toggle svg.is-expanded {
-  transform: rotate(180deg);
-}
-
-.profile-card-body {
-  padding: 0 20px 16px 20px;
+/* The table */
+.table {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  scroll-margin-top: calc(var(--p-header-h) + 12px);
 }
 
-.profile-card-label {
-  font-size: 11px;
+.table-band {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  padding-bottom: 18px;
+}
+
+.band-coin {
+  --role: var(--p-gold);
+  width: 56px;
+  height: 56px;
+  font-size: var(--t-xl);
+  border-color: var(--role);
+  color: var(--role);
+}
+
+.band-text { min-width: 0; }
+
+.band-name {
+  margin: 4px 0 2px;
+  font-family: var(--p-font-display);
+  font-size: var(--t-xl);
   font-weight: 600;
-  color: #9CA3AF;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 6px;
+  line-height: 1.05;
+  color: var(--p-ink);
 }
 
-.profile-card-bio {
-  background: #FFFFFF;
-  padding: 12px 14px;
-  border-radius: 8px;
-  border: 1px solid #E5E7EB;
-}
-
-.profile-card-bio p {
+.band-role {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #4B5563;
+  font-size: var(--t-sm);
+  color: var(--p-ink-3);
 }
 
-/* Target Selector */
-.target-selector {
-  padding: 16px 24px;
-  border-bottom: 1px solid #E5E7EB;
+.band-line {
+  margin: 8px 0 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-md);
+  line-height: 1.5;
+  color: var(--p-ink-2);
+  max-width: 48em;
 }
 
-.selector-label {
-  font-size: 11px;
+/* The Greek key under the seated card: gold, twice the tile, faint enough to be a
+   rule rather than a row of glyphs on the night ground. */
+.table-rule {
+  width: 144px;
+  height: 24px;
+  margin-bottom: 8px;
+  background-image: var(--p-meander);
+  background-size: 48px 24px;
+  background-repeat: repeat-x;
+  background-position: left center;
+  opacity: 0.35;
+}
+
+/* The dialogue */
+.dialogue {
+  list-style: none;
+  margin: 0;
+  padding: 18px 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.dialogue-empty {
+  padding: 22px 0 14px;
+  text-align: center;
+}
+
+.dialogue-empty p {
+  margin: 0 auto;
+  max-width: 30em;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-lg);
+  color: var(--p-ink-3);
+}
+
+.line { display: flex; min-width: 0; }
+
+.line.asked {
+  flex-direction: column;
+  align-items: flex-end;
+  padding-left: 14%;
+}
+
+.asked-text {
+  max-width: 100%;
+  padding: 14px 18px;
+  background: var(--p-surface-3);
+  border: 1px solid var(--p-line);
+  font-family: var(--p-font-body);
+  font-size: var(--t-md);
+  line-height: 1.55;
+  color: var(--p-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.line.answered {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  padding-right: 6%;
+}
+
+.line-coin {
+  --role: var(--p-gold);
+  width: 40px;
+  height: 40px;
+  font-size: var(--t-lg);
+  border-color: var(--role);
+  color: var(--role);
+}
+
+.answered-body { min-width: 0; }
+
+.line-meta {
+  display: block;
+  margin: 0 0 6px;
+  font-size: var(--t-xs);
+  color: var(--p-ink-4);
+}
+
+.line.asked .line-meta { margin: 6px 4px 0; }
+
+.line-who {
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
   font-weight: 600;
-  color: #9CA3AF;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--p-ink);
+  margin-right: 8px;
+}
+
+.line.asked .line-who { font-size: var(--t-sm); font-family: var(--p-font-body); color: var(--p-ink-3); }
+
+.answered-text {
+  font-family: var(--p-font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--p-ink-2);
+  max-width: 62ch;
+}
+
+.answered-text :deep(p) { margin: 0 0 1em; }
+.answered-text :deep(p:last-child) { margin-bottom: 0; }
+.answered-text :deep(.md-h2),
+.answered-text :deep(.md-h3),
+.answered-text :deep(.md-h4),
+.answered-text :deep(.md-h5) {
+  font-family: var(--p-font-display);
+  font-weight: 600;
+  color: var(--p-ink);
+  margin: 1.2em 0 0.5em;
+}
+.answered-text :deep(.md-h2) { font-size: var(--t-xl); }
+.answered-text :deep(.md-h3) { font-size: var(--t-lg); }
+.answered-text :deep(.md-h4),
+.answered-text :deep(.md-h5) { font-size: var(--t-md); }
+.answered-text :deep(.md-ul),
+.answered-text :deep(.md-ol) { padding-left: 1.4em; margin: 0 0 1em; }
+.answered-text :deep(li) { margin-bottom: 0.4em; }
+.answered-text :deep(.md-quote) {
+  margin: 1em 0;
+  padding-left: 16px;
+  border-left: 2px solid var(--p-gold);
+  font-style: italic;
+  color: var(--p-ink-3);
+}
+.answered-text :deep(strong) { color: var(--p-ink); font-weight: 600; }
+.answered-text :deep(.code-block),
+.answered-text :deep(.inline-code) {
+  font-family: var(--p-font-mono);
+  font-size: var(--t-xs);
+  background: var(--p-surface-2);
+  border: 1px solid var(--p-line);
+}
+.answered-text :deep(.code-block) { padding: 10px; overflow-x: auto; }
+.answered-text :deep(.inline-code) { padding: 1px 4px; }
+.answered-text :deep(.md-hr) { border: 0; border-top: 1px solid var(--p-line); margin: 1.2em 0; }
+
+/* Thinking */
+.ellipsis { display: inline-flex; gap: 5px; padding: 6px 0; }
+.ellipsis i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--p-ink-4);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+.ellipsis i:nth-child(2) { animation-delay: 0.2s; }
+.ellipsis i:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* The prompt row and the question */
+.prompt {
+  padding: 14px 0 12px;
+}
+
+.prompt.stuck {
+  position: sticky;
+  bottom: var(--p-way-h);
+  z-index: 5;
+  background: linear-gradient(180deg, transparent, var(--p-bg) 18px);
+}
+
+.asleep-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--p-line);
+  background: var(--p-surface);
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  color: var(--p-ink-2);
+}
+
+.socratic-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
-.selector-options {
-  display: flex;
-  gap: 12px;
-}
+.socratic-label { margin-right: 4px; color: var(--p-ink-4); }
 
-.target-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #374151;
-  background: #F9FAFB;
-  border: 1px solid #E5E7EB;
-  border-radius: 6px;
+.socratic-chip {
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--p-line-strong);
+  color: var(--p-ink-2);
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: border-color 0.2s ease, color 0.2s ease;
 }
 
-.target-option:hover {
-  border-color: #D1D5DB;
-}
+.socratic-chip:hover:not(:disabled) { border-color: var(--p-gold); color: var(--p-gold); }
+.socratic-chip:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.target-option.active {
-  background: #1F2937;
-  color: #FFFFFF;
-  border-color: #1F2937;
-}
-
-/* Agent Dropdown */
-.agent-dropdown {
-  position: relative;
-}
-
-.dropdown-arrow {
-  margin-left: 4px;
-  transition: transform 0.2s ease;
-  opacity: 0.6;
-}
-
-.dropdown-arrow.open {
-  transform: rotate(180deg);
-}
-
-.dropdown-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 240px;
-  background: #FFFFFF;
-  border: 1px solid #E5E7EB;
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
-  max-height: 320px;
-  overflow-y: auto;
-  z-index: 100;
-}
-
-.dropdown-header {
-  padding: 12px 16px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #9CA3AF;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid #F3F4F6;
-}
-
-.dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  border-left: 3px solid transparent;
-}
-
-.dropdown-item:hover {
-  background: #F9FAFB;
-  border-left-color: #1F2937;
-}
-
-.dropdown-item:first-of-type {
-  margin-top: 4px;
-}
-
-.dropdown-item:last-child {
-  margin-bottom: 4px;
-}
-
-.agent-avatar {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  min-height: 32px;
-  background: linear-gradient(135deg, #1F2937 0%, #374151 100%);
-  color: #FFFFFF;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-  box-shadow: 0 2px 4px rgba(31, 41, 55, 0.1);
-}
-
-.agent-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1F2937;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-role {
-  font-size: 11px;
-  color: #9CA3AF;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Chat Messages */
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.chat-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  color: #9CA3AF;
-}
-
-.empty-icon {
-  opacity: 0.3;
-}
-
-.empty-text {
-  font-size: 14px;
-  text-align: center;
-  max-width: 280px;
-  line-height: 1.6;
-}
-
-.chat-message {
-  display: flex;
-  gap: 12px;
-}
-
-.chat-message.user {
-  flex-direction: row-reverse;
-}
-
-.message-avatar {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.chat-message.user .message-avatar {
-  background: #1F2937;
-  color: #FFFFFF;
-}
-
-.chat-message.assistant .message-avatar {
-  background: #F3F4F6;
-  color: #374151;
-}
-
-.message-content {
-  max-width: 70%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.chat-message.user .message-content {
-  align-items: flex-end;
-}
-
-.message-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.chat-message.user .message-header {
-  flex-direction: row-reverse;
-}
-
-.sender-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.message-time {
-  font-size: 11px;
-  color: #9CA3AF;
-}
-
-.message-text {
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.chat-message.user .message-text {
-  background: #1F2937;
-  color: #FFFFFF;
-  border-bottom-right-radius: 4px;
-}
-
-.chat-message.assistant .message-text {
-  background: #F3F4F6;
-  color: #374151;
-  border-bottom-left-radius: 4px;
-}
-
-.message-text :deep(.md-p) {
-  margin: 0;
-}
-
-.message-text :deep(.md-p:last-child) {
-  margin-bottom: 0;
-}
-
-/* 修复有序列表编号 - 使用 CSS 计数器让多个 ol 连续编号 */
-.message-text {
-  counter-reset: list-counter;
-}
-
-.message-text :deep(.md-ol) {
-  list-style: none;
-  padding-left: 0;
-  margin: 8px 0;
-}
-
-.message-text :deep(.md-oli) {
-  counter-increment: list-counter;
-  display: flex;
-  gap: 8px;
-  margin: 4px 0;
-}
-
-.message-text :deep(.md-oli)::before {
-  content: counter(list-counter) ".";
-  font-weight: 600;
-  color: #374151;
-  min-width: 20px;
-  flex-shrink: 0;
-}
-
-/* 无序列表样式 */
-.message-text :deep(.md-ul) {
-  padding-left: 20px;
-  margin: 8px 0;
-}
-
-.message-text :deep(.md-li) {
-  margin: 4px 0;
-}
-
-/* Typing Indicator */
-.typing-indicator {
-  display: flex;
-  gap: 4px;
-  padding: 10px 14px;
-  background: #F3F4F6;
-  border-radius: 12px;
-  border-bottom-left-radius: 4px;
-}
-
-.typing-indicator span {
-  width: 8px;
-  height: 8px;
-  background: #9CA3AF;
-  border-radius: 50%;
-  animation: typing 1.4s infinite ease-in-out;
-}
-
-.typing-indicator span:nth-child(1) { animation-delay: 0s; }
-.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes typing {
-  0%, 60%, 100% { transform: translateY(0); }
-  30% { transform: translateY(-8px); }
-}
-
-/* Chat Input */
-.chat-input-area {
-  padding: 16px 24px;
-  border-top: 1px solid #E5E7EB;
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-}
-
-.chat-input {
-  flex: 1;
-  padding: 12px 16px;
-  font-size: 14px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  resize: none;
-  font-family: inherit;
-  line-height: 1.5;
-  transition: border-color 0.2s ease;
-}
-
-.chat-input:focus {
-  outline: none;
-  border-color: #1F2937;
-}
-
-.chat-input:disabled {
-  background: #F9FAFB;
-  cursor: not-allowed;
-}
-
-.send-btn {
-  width: 44px;
-  height: 44px;
-  background: #1F2937;
-  color: #FFFFFF;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s ease;
-}
-
-.send-btn:hover:not(:disabled) {
-  background: #374151;
-}
-
-.send-btn:disabled {
-  background: #E5E7EB;
-  color: #9CA3AF;
-  cursor: not-allowed;
-}
-
-/* Survey Container */
-.survey-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.survey-setup {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 24px;
-  border-bottom: 1px solid #E5E7EB;
-  overflow: hidden;
-}
-
-.setup-section {
-  margin-bottom: 24px;
-}
-
-.setup-section:first-child {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.setup-section:last-child {
-  margin-bottom: 0;
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.setup-section .section-header .section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.selection-count {
-  font-size: 12px;
-  color: #9CA3AF;
-}
-
-/* Agents Grid */
-.agents-grid {
+.ask {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px;
-  align-content: start;
+  align-items: end;
 }
 
-.agent-checkbox {
+.ask-input {
+  width: 100%;
+  min-height: 48px;
+  max-height: 200px;
+  padding: 13px 16px;
+  box-sizing: border-box;
+  background: var(--p-surface);
+  border: 1px solid var(--p-line-strong);
+  color: var(--p-ink);
+  font-family: var(--p-font-body);
+  font-size: var(--t-md);
+  line-height: 1.4;
+  resize: none;
+}
+
+.ask-input::placeholder { color: var(--p-ink-4); }
+.ask-input { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--p-line-strong) transparent; }
+.ask-input:focus { outline: 2px solid var(--p-gold); outline-offset: 2px; }
+.ask-input:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.ask-send { min-width: 92px; }
+
+/* The crowd */
+.crowd-head { padding-bottom: 14px; }
+
+.crowd-pick {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: #F9FAFB;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 0 6px;
 }
 
-.agent-checkbox:hover {
-  border-color: #D1D5DB;
+.crowd-count {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-md);
+  color: var(--p-ink-2);
 }
 
-.agent-checkbox.checked {
-  background: #F0FDF4;
-  border-color: #10B981;
-}
+.crowd-links { display: flex; gap: 4px; }
 
-.agent-checkbox input {
-  display: none;
-}
-
-.checkbox-avatar {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  background: #E5E7EB;
-  color: #374151;
-  border-radius: 50%;
+.faces {
+  list-style: none;
+  margin: 8px 0 16px;
+  padding: 0;
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.face {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.agent-checkbox.checked .checkbox-avatar {
-  background: #10B981;
-  color: #FFFFFF;
-}
-
-.checkbox-info {
-  flex: 1;
+  gap: 8px;
   min-width: 0;
 }
 
-.checkbox-name {
-  display: block;
-  font-size: 12px;
+.face-coin {
+  --role: var(--p-gold);
+  width: 30px;
+  height: 30px;
+  font-size: var(--t-sm);
+  border-color: var(--role);
+  color: var(--role);
+}
+
+.face-name {
+  font-family: var(--p-font-display);
+  font-size: var(--t-md);
   font-weight: 600;
-  color: #1F2937;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--p-ink);
 }
 
-.checkbox-role {
-  display: block;
-  font-size: 10px;
-  color: #9CA3AF;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.crowd-ask { grid-template-columns: minmax(0, 1fr); }
 
-.checkbox-indicator {
-  width: 20px;
-  height: 20px;
-  border: 2px solid #E5E7EB;
-  border-radius: 4px;
+.crowd-submit {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 0.2s ease;
+  gap: 8px 16px;
 }
 
-.agent-checkbox.checked .checkbox-indicator {
-  background: #10B981;
-  border-color: #10B981;
-  color: #FFFFFF;
+.ask-reason {
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  color: var(--p-ink-3);
 }
 
-.checkbox-indicator svg {
-  opacity: 0;
-  transform: scale(0.5);
-  transition: all 0.2s ease;
+.answers {
+  margin-top: 34px;
+  padding-top: 22px;
+  border-top: 1px solid var(--p-line);
 }
 
-.agent-checkbox.checked .checkbox-indicator svg {
-  opacity: 1;
-  transform: scale(1);
+.answers-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 6px; }
+
+.answers-question {
+  margin: 0 0 22px;
+  padding-left: 16px;
+  border-left: 2px solid var(--p-gold);
+  font-family: var(--p-font-body);
+  font-size: var(--t-md);
+  color: var(--p-ink);
+  white-space: pre-wrap;
 }
 
-.selection-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.action-link {
-  font-size: 12px;
-  color: #6B7280;
-  background: none;
-  border: none;
-  cursor: pointer;
+.reply-list {
+  list-style: none;
+  margin: 0;
   padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 18px;
 }
 
-.action-link:hover {
-  color: #1F2937;
-  text-decoration: underline;
+.reply {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 18px;
+  background: var(--p-surface);
+  border: 1px solid var(--p-line);
+  min-width: 0;
 }
 
-.action-divider {
-  color: #E5E7EB;
+.reply .answered-text { font-size: var(--t-md); }
+
+/* The Chronicle drawer */
+.drawer-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
 }
 
-/* Survey Input */
-.survey-input {
-  width: 100%;
-  padding: 14px 16px;
-  font-size: 14px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  resize: none;
-  font-family: inherit;
-  line-height: 1.5;
-  transition: border-color 0.2s ease;
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 7, 10, 0.72);
 }
 
-.survey-input:focus {
-  outline: none;
-  border-color: #1F2937;
+.chronicle {
+  position: relative;
+  width: min(760px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--p-shadow-2);
+  min-width: 0;
 }
 
-.survey-submit-btn {
-  width: 100%;
-  padding: 14px 24px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #FFFFFF;
-  background: #1F2937;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.2s ease;
+.chronicle-bar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 20px;
-}
-
-.survey-submit-btn:hover:not(:disabled) {
-  background: #374151;
-}
-
-.survey-submit-btn:disabled {
-  background: #E5E7EB;
-  color: #9CA3AF;
-  cursor: not-allowed;
-}
-
-.loading-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #FFFFFF;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Survey Results */
-.survey-results {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-}
-
-.results-header {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.results-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1F2937;
-}
-
-.results-count {
-  font-size: 12px;
-  color: #9CA3AF;
-}
-
-.results-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.result-card {
-  background: #F9FAFB;
-  border: 1px solid #E5E7EB;
-  border-radius: 12px;
-  padding: 20px;
-}
-
-.result-header {
-  display: flex;
-  align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  padding: 12px 20px 12px 28px;
+  border-bottom: 1px solid var(--p-line);
+  background: var(--p-surface-2);
 }
 
-.result-avatar {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
-  background: #1F2937;
-  color: #FFFFFF;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
+.chronicle-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 36px clamp(20px, 5vw, 56px) 64px;
+}
+
+.chronicle-title {
+  margin: 0 0 14px;
+  font-family: var(--p-font-display);
+  font-size: var(--t-2xl);
   font-weight: 600;
-  flex-shrink: 0;
+  line-height: 1.08;
+  color: var(--p-ink);
+  text-wrap: balance;
 }
 
-.result-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.chronicle-summary {
+  margin: 0 0 22px;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-lg);
+  line-height: 1.5;
+  color: var(--p-ink-3);
 }
 
-.result-name {
-  font-size: 14px;
+.chronicle-question { margin: 0 0 22px; }
+.chronicle-question p {
+  margin: 6px 0 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-md);
+  line-height: 1.6;
+  color: var(--p-ink-2);
+}
+
+.chronicle-rule { width: 144px; margin: 0 0 30px; }
+
+.chapter { margin-bottom: 40px; }
+
+.chapter-title {
+  margin: 6px 0 14px;
+  font-family: var(--p-font-display);
+  font-size: var(--t-xl);
   font-weight: 600;
-  color: #1F2937;
+  line-height: 1.15;
+  color: var(--p-ink);
 }
 
-.result-role {
-  font-size: 12px;
-  color: #9CA3AF;
+.chapter-body {
+  font-family: var(--p-font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: var(--p-ink-2);
+  max-width: 64ch;
 }
 
-.result-question {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 12px 14px;
-  background: #FFFFFF;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  font-size: 13px;
-  color: #6B7280;
-}
-
-.result-question svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.result-answer {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #374151;
-}
-
-/* Markdown Styles */
-:deep(.md-p) {
-  margin: 0 0 12px 0;
-}
-
-:deep(.md-h2) {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1F2937;
-  margin: 24px 0 12px 0;
-}
-
-:deep(.md-h3) {
-  font-size: 16px;
+.chapter-body :deep(p) { margin: 0 0 1em; }
+.chapter-body :deep(.md-h2),
+.chapter-body :deep(.md-h3),
+.chapter-body :deep(.md-h4),
+.chapter-body :deep(.md-h5) {
+  font-family: var(--p-font-display);
   font-weight: 600;
-  color: #374151;
-  margin: 20px 0 10px 0;
+  color: var(--p-ink);
+  margin: 1.4em 0 0.5em;
+}
+.chapter-body :deep(.md-h3) { font-size: var(--t-lg); }
+.chapter-body :deep(.md-h4),
+.chapter-body :deep(.md-h5) { font-size: var(--t-md); }
+.chapter-body :deep(.md-quote) {
+  margin: 1.2em 0;
+  padding-left: 18px;
+  border-left: 2px solid var(--p-terracotta);
+  font-style: italic;
+  color: var(--p-ink-3);
+}
+.chapter-body :deep(.md-ul),
+.chapter-body :deep(.md-ol) { padding-left: 1.4em; margin: 0 0 1em; }
+.chapter-body :deep(strong) { color: var(--p-ink); font-weight: 600; }
+.chapter-body :deep(.md-hr) { border: 0; border-top: 1px solid var(--p-line); margin: 1.4em 0; }
+.chapter-body :deep(.code-block),
+.chapter-body :deep(.inline-code) {
+  font-family: var(--p-font-mono);
+  font-size: var(--t-xs);
+  background: var(--p-surface-2);
+  border: 1px solid var(--p-line);
 }
 
-:deep(.md-h4) {
-  font-size: 14px;
-  font-weight: 600;
-  color: #4B5563;
-  margin: 16px 0 8px 0;
+.chapter-pending,
+.chronicle-waiting {
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  color: var(--p-ink-3);
 }
 
-:deep(.md-h5) {
-  font-size: 13px;
-  font-weight: 600;
-  color: #6B7280;
-  margin: 12px 0 6px 0;
+.chronicle-link { margin-top: 8px; text-decoration: none; }
+
+.drawer-enter-active,
+.drawer-leave-active { transition: opacity 0.3s ease; }
+.drawer-enter-active .chronicle,
+.drawer-leave-active .chronicle { transition: transform 0.35s ease; }
+.drawer-enter-from,
+.drawer-leave-to { opacity: 0; }
+.drawer-enter-from .chronicle,
+.drawer-leave-to .chronicle { transform: translateX(40px); }
+
+/* Phones and narrow rooms: one column; the couches stand in a short column that
+   folds after the Scribe and six citizens, every card keeping its quote. */
+@media (max-width: 1023px) {
+  .symposium { padding-top: 22px; }
+
+  .room-band { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .room-actions { width: 100%; }
+  .room-actions .p-button { flex: 1 1 auto; min-width: 0; }
+
+  .room { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+
+  .couches {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .couch-list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+  .couch-list li { min-width: 0; }
+  .couch-list .couch { height: 100%; box-sizing: border-box; }
+
+  .couches-more { display: flex; }
+  .couches-more .p-button { align-self: stretch; }
+
+  .line.asked { padding-left: 8%; }
+  .line.answered { padding-right: 0; }
+
+  /* The Socratic questions become one row along the table edge, so the prompt stays short. */
+  .socratic-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 4px;
+    margin-inline: -16px;
+    padding-inline: 16px;
+    scrollbar-width: none;
+  }
+  .socratic-row::-webkit-scrollbar { display: none; }
+  .socratic-label { flex: 0 0 auto; }
+  .socratic-chip { flex: 0 0 auto; white-space: nowrap; }
 }
 
-:deep(.md-ul), :deep(.md-ol) {
-  margin: 12px 0;
-  padding-left: 24px;
+@media (max-width: 599px) {
+  .symposium { padding-inline: 16px; }
+  .room-title { font-size: var(--t-xl); }
+  .couch { padding: 12px 12px 12px 12px; gap: 12px; }
+  .couch-coin { width: 36px; height: 36px; font-size: var(--t-md); }
+  .couch-role { -webkit-line-clamp: 1; }
+  .couch.head .couch-line { -webkit-line-clamp: 2; }
+  .couches { gap: 8px; }
+  .couch-list { gap: 8px; }
+  .band-coin { width: 46px; height: 46px; font-size: var(--t-lg); }
+  .ask-send { min-width: 72px; padding-inline: 14px; }
+  .chronicle-bar { padding: 10px 12px 10px 16px; }
+  .chronicle-page { padding: 28px 16px 56px; }
 }
 
-:deep(.md-li), :deep(.md-oli) {
-  margin: 6px 0;
-}
-
-/* 聊天/问卷区域的引用样式 */
-.chat-messages :deep(.md-quote),
-.result-answer :deep(.md-quote) {
-  margin: 12px 0;
-  padding: 12px 16px;
-  background: #F9FAFB;
-  border-left: 3px solid #1F2937;
-  color: #4B5563;
-}
-
-:deep(.code-block) {
-  margin: 12px 0;
-  padding: 12px 16px;
-  background: #1F2937;
-  border-radius: 6px;
-  overflow-x: auto;
-}
-
-:deep(.code-block code) {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  color: #E5E7EB;
-}
-
-:deep(.inline-code) {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  background: #F3F4F6;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #1F2937;
-}
-
-:deep(.md-hr) {
-  border: none;
-  border-top: 1px solid #E5E7EB;
-  margin: 24px 0;
-}
-</style>
-
-<style>
-/* English locale: smaller report title */
-html[lang="en"] .report-header-block .main-title {
-  font-size: 28px;
+@media (prefers-reduced-motion: reduce) {
+  .ellipsis i { animation: none; opacity: 0.7; }
+  .couch { transition: none; }
 }
 </style>

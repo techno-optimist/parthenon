@@ -1,272 +1,215 @@
 <template>
-  <div class="main-view">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
-      </div>
-      
-      <div class="header-center">
-        <div class="view-switcher">
-          <button 
-            v-for="mode in ['graph', 'split', 'workbench']" 
-            :key="mode"
-            class="switch-btn"
-            :class="{ active: viewMode === mode }"
-            @click="viewMode = mode"
-          >
-            {{ { graph: $t('main.layoutGraph'), split: $t('main.layoutSplit'), workbench: $t('main.layoutWorkbench') }[mode] }}
-          </button>
-        </div>
-      </div>
+  <ActShell
+    :act="2"
+    :status="shellStatus"
+    :lede="$t('parthenon.gathering.lede')"
+    :logs="systemLogs"
+    :links="links"
+  >
+    <template #web>
+      <GraphPanel
+        :graphData="graphData"
+        :loading="graphLoading"
+        :currentPhase="2"
+        @refresh="refreshGraph"
+      />
+    </template>
 
-      <div class="header-right">
-        <LanguageSwitcher />
-        <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step 2/5</span>
-          <span class="step-name">{{ $tm('main.stepNames')[1] }}</span>
-        </div>
-        <div class="step-divider"></div>
-        <span class="status-indicator" :class="statusClass">
-          <span class="dot"></span>
-          {{ statusText }}
-        </span>
+    <!-- A swarm already in the square: offer to watch it or stop it, never stop it silently. -->
+    <div v-if="liveRun" class="live-notice" :class="{ closing: closingLive }" role="status">
+      <span class="live-dot" aria-hidden="true"></span>
+      <p v-if="closingLive" class="live-text">{{ $t('parthenon.gathering.live.closing') }}</p>
+      <p v-else class="live-text">{{ $t('parthenon.gathering.live.text', { round: liveRun.current_round || 0, total: liveRun.total_rounds || '?' }) }}</p>
+      <div v-if="!closingLive" class="live-actions">
+        <button type="button" class="p-button small" @click="watchLiveRun">{{ $t('parthenon.gathering.live.watch') }}</button>
+        <button type="button" class="p-button secondary small" :disabled="stoppingLive" @click="stopLiveRun">
+          {{ stoppingLive ? $t('parthenon.gathering.live.stopping') : $t('parthenon.gathering.live.stop') }}
+        </button>
       </div>
-    </header>
+    </div>
 
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
-        <GraphPanel 
-          :graphData="graphData"
-          :loading="graphLoading"
-          :currentPhase="2"
-          @refresh="refreshGraph"
-          @toggle-maximize="toggleMaximize('graph')"
-        />
-      </div>
-
-      <!-- Right Panel: Step2 环境搭建 -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
-        <Step2EnvSetup
-          :simulationId="currentSimulationId"
-          :projectData="projectData"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @go-back="handleGoBack"
-          @next-step="handleNextStep"
-          @add-log="addLog"
-          @update-status="updateStatus"
-        />
-      </div>
-    </main>
-  </div>
+    <Step2EnvSetup
+      :simulationId="currentSimulationId"
+      :projectData="projectData"
+      :graphData="graphData"
+      @go-back="handleGoBack"
+      @next-step="handleNextStep"
+      @add-log="addLog"
+      @update-status="updateStatus"
+    />
+  </ActShell>
 </template>
 
 <script setup>
+// Act Β΄, The Gathering: the Pnyx slope filling. This view owns the record of
+// the gathering (which project, which Web) and the ledger; the stage itself is
+// Step2EnvSetup.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import ActShell from '../components/ActShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { getProject, getGraphData } from '../api/graph'
-import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
-import { useI18n } from 'vue-i18n'
+import { getSimulation, stopSimulation, getRunStatus } from '../api/simulation'
+import { RUN_LENGTHS, stripIds } from '../parthenon/vocabulary.js'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
-// Props
-const props = defineProps({
+defineProps({
   simulationId: String
 })
 
-// Layout State
-const viewMode = ref('split')
-
-// Data State
 const currentSimulationId = ref(route.params.simulationId)
+const projectId = ref(null)
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
 
-// --- Computed Layout Styles ---
-const leftPanelStyle = computed(() => {
-  if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
+// Where the Way can take the visitor back to.
+const links = computed(() => (projectId.value ? { 1: { name: 'Process', params: { projectId: projectId.value } } } : {}))
+
+const shellStatus = computed(() => {
+  if (liveRun.value) return 'live'
+  if (currentStatus.value === 'error') return 'error'
+  if (currentStatus.value === 'completed') return 'done'
+  return 'working'
 })
 
-const rightPanelStyle = computed(() => {
-  if (viewMode.value === 'workbench') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
-// --- Status Computed ---
-const statusClass = computed(() => {
-  return currentStatus.value
-})
-
-const statusText = computed(() => {
-  if (currentStatus.value === 'error') return 'Error'
-  if (currentStatus.value === 'completed') return 'Ready'
-  return 'Preparing'
-})
-
-// --- Helpers ---
-const addLog = (msg) => {
-  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + new Date().getMilliseconds().toString().padStart(3, '0')
-  systemLogs.value.push({ time, msg })
-  if (systemLogs.value.length > 100) {
-    systemLogs.value.shift()
-  }
+// The ledger
+const addLog = (message) => {
+  const now = new Date()
+  const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  systemLogs.value.push({ time, message })
+  if (systemLogs.value.length > 120) systemLogs.value.shift()
 }
 
 const updateStatus = (status) => {
   currentStatus.value = status
 }
 
-// --- Layout Methods ---
-const toggleMaximize = (target) => {
-  if (viewMode.value === target) {
-    viewMode.value = 'split'
-  } else {
-    viewMode.value = target
-  }
-}
-
 const handleGoBack = () => {
-  // 返回到 process 页面
-  if (projectData.value?.project_id) {
-    router.push({ name: 'Process', params: { projectId: projectData.value.project_id } })
+  if (projectId.value) {
+    router.push({ name: 'Process', params: { projectId: projectId.value } })
   } else {
     router.push('/')
   }
 }
 
 const handleNextStep = (params = {}) => {
-  addLog(t('log.enterStep3'))
-
-  // 记录模拟轮数配置
-  if (params.maxRounds) {
-    addLog(t('log.customRoundsConfig', { rounds: params.maxRounds }))
-  } else {
-    addLog(t('log.useAutoRounds'))
-  }
-  
-  // 构建路由参数
+  const length = RUN_LENGTHS.find((l) => l.rounds === params.maxRounds)
+  addLog(t('parthenon.gathering.ledger.toAgora', {
+    length: length ? t(`parthenon.gathering.length.names.${length.id}`) : t('parthenon.gathering.length.names.day'),
+    rounds: params.maxRounds || '?'
+  }))
   const routeParams = {
     name: 'SimulationRun',
     params: { simulationId: currentSimulationId.value }
   }
-  
-  // 如果有自定义轮数，通过 query 参数传递
-  if (params.maxRounds) {
-    routeParams.query = { maxRounds: params.maxRounds }
-  }
-  
-  // 跳转到 Step 3 页面
+  if (params.maxRounds) routeParams.query = { maxRounds: params.maxRounds }
   router.push(routeParams)
 }
 
-// --- Data Logic ---
+// A live run is only shown here, with a choice to watch it or stop it.
+const liveRun = ref(null)
+const stoppingLive = ref(false)
+const closingLive = ref(false)
+let gone = false
 
-/**
- * 检查并关闭正在运行的模拟
- * 当用户从 Step 3 返回到 Step 2 时，默认用户要退出模拟
- */
-const checkAndStopRunningSimulation = async () => {
+const LIVE_STATES = ['starting', 'running']
+
+const checkLiveRun = async () => {
   if (!currentSimulationId.value) return
-  
   try {
-    // 先检查模拟环境是否存活
-    const envStatusRes = await getEnvStatus({ simulation_id: currentSimulationId.value })
-    
-    if (envStatusRes.success && envStatusRes.data?.env_alive) {
-      addLog(t('log.detectedSimEnvRunning'))
-      
-      // 尝试优雅关闭模拟环境
-      try {
-        const closeRes = await closeSimulationEnv({ 
-          simulation_id: currentSimulationId.value,
-          timeout: 10  // 10秒超时
-        })
-        
-        if (closeRes.success) {
-          addLog(t('log.simEnvClosed'))
-        } else {
-          addLog(t('log.closeSimEnvFailedWithError', { error: closeRes.error || t('common.unknownError') }))
-          // 如果优雅关闭失败，尝试强制停止
-          await forceStopSimulation()
-        }
-      } catch (closeErr) {
-        addLog(t('log.closeSimEnvException', { error: closeErr.message }))
-        // 如果优雅关闭异常，尝试强制停止
-        await forceStopSimulation()
-      }
-    } else {
-      // 环境未运行，但可能进程还在，检查模拟状态
-      const simRes = await getSimulation(currentSimulationId.value)
-      if (simRes.success && simRes.data?.status === 'running') {
-        addLog(t('log.detectedSimRunning'))
-        await forceStopSimulation()
-      }
-    }
+    const res = await getRunStatus(currentSimulationId.value)
+    const data = res?.success ? res.data : null
+    liveRun.value = data && LIVE_STATES.includes(data.runner_status) ? data : null
+    if (liveRun.value) addLog(t('parthenon.gathering.ledger.liveFound'))
   } catch (err) {
-    // 检查环境状态失败不影响后续流程
-    console.warn('检查模拟状态失败:', err)
+    console.warn('Could not read the run status:', err)
   }
 }
 
-/**
- * 强制停止模拟
- */
-const forceStopSimulation = async () => {
-  try {
-    const stopRes = await stopSimulation({ simulation_id: currentSimulationId.value })
-    if (stopRes.success) {
-      addLog(t('log.simForceStopSuccess'))
-    } else {
-      addLog(t('log.forceStopSimFailed', { error: stopRes.error || t('common.unknownError') }))
+const watchLiveRun = () => {
+  router.push({ name: 'SimulationRun', params: { simulationId: currentSimulationId.value } })
+}
+
+// The engine answers a stop whose last writing outlives its wait with a
+// pending reply that the API wrapper surfaces as a failure. Rather than
+// reporting trouble for a square that is closing on its own, look again a
+// few times and only then say it could not be stopped.
+const CLOSING_CHECKS = 5
+const CLOSING_EVERY_MS = 3000
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const waitForTheDoors = async () => {
+  for (let i = 0; i < CLOSING_CHECKS; i += 1) {
+    await pause(CLOSING_EVERY_MS)
+    if (gone) return false
+    try {
+      const res = await getRunStatus(currentSimulationId.value)
+      const data = res?.success ? res.data : null
+      if (!data || !['starting', 'running', 'stopping'].includes(data.runner_status)) return true
+    } catch {
+      // look again
     }
+  }
+  return false
+}
+
+const stopLiveRun = async () => {
+  if (!currentSimulationId.value || stoppingLive.value) return
+  stoppingLive.value = true
+  try {
+    const res = await stopSimulation({ simulation_id: currentSimulationId.value })
+    if (!res.success) throw new Error(res.error || t('common.unknownError'))
+    addLog(t('parthenon.gathering.ledger.stopped'))
+    liveRun.value = null
   } catch (err) {
-    addLog(t('log.forceStopSimException', { error: err.message }))
+    closingLive.value = true
+    addLog(t('parthenon.gathering.ledger.stopPending'))
+    const closed = await waitForTheDoors()
+    closingLive.value = false
+    if (gone) return
+    if (closed) {
+      addLog(t('parthenon.gathering.ledger.stopped'))
+      liveRun.value = null
+    } else {
+      addLog(t('parthenon.gathering.ledger.stopFailed', { error: stripIds(err.message || t('common.unknownError')) }))
+    }
+  } finally {
+    stoppingLive.value = false
   }
 }
+
+onUnmounted(() => {
+  gone = true
+})
 
 const loadSimulationData = async () => {
   try {
-    addLog(t('log.loadingSimData', { id: currentSimulationId.value }))
-
-    // 获取 simulation 信息
+    addLog(t('parthenon.gathering.ledger.readingRecord'))
     const simRes = await getSimulation(currentSimulationId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
-
-      // 获取 project 信息
       if (simData.project_id) {
+        projectId.value = simData.project_id
         const projRes = await getProject(simData.project_id)
         if (projRes.success && projRes.data) {
           projectData.value = projRes.data
-          addLog(t('log.projectLoadSuccess', { id: projRes.data.project_id }))
-          
-          // 获取 graph 数据
-          if (projRes.data.graph_id) {
-            await loadGraph(projRes.data.graph_id)
-          }
+          addLog(t('parthenon.gathering.ledger.recordRead'))
+          if (projRes.data.graph_id) await loadGraph(projRes.data.graph_id)
         }
       }
     } else {
-      addLog(t('log.loadSimDataFailed', { error: simRes.error || t('common.unknownError') }))
+      addLog(t('parthenon.gathering.ledger.recordMissing', { error: simRes.error || t('common.unknownError') }))
     }
   } catch (err) {
-    addLog(t('log.loadException', { error: err.message }))
+    addLog(t('parthenon.gathering.ledger.recordMissing', { error: err.message }))
   }
 }
 
@@ -276,164 +219,84 @@ const loadGraph = async (graphId) => {
     const res = await getGraphData(graphId)
     if (res.success) {
       graphData.value = res.data
-      addLog(t('log.graphDataLoadSuccess'))
+      addLog(t('parthenon.gathering.ledger.webRead', {
+        nodes: res.data?.node_count ?? res.data?.nodes?.length ?? 0,
+        edges: res.data?.edge_count ?? res.data?.edges?.length ?? 0
+      }))
     }
   } catch (err) {
-    addLog(t('log.graphLoadFailed', { error: err.message }))
+    addLog(t('parthenon.gathering.ledger.webFailed', { error: err.message }))
   } finally {
     graphLoading.value = false
   }
 }
 
 const refreshGraph = () => {
-  if (projectData.value?.graph_id) {
-    loadGraph(projectData.value.graph_id)
-  }
+  if (projectData.value?.graph_id) loadGraph(projectData.value.graph_id)
 }
 
+// Written during setup so it comes before the stage's own first line.
+addLog(t('parthenon.gathering.ledger.opened'))
+
 onMounted(async () => {
-  addLog(t('log.simViewInit'))
-  
-  // 检查并关闭正在运行的模拟（用户从 Step 3 返回时）
-  await checkAndStopRunningSimulation()
-  
-  // 加载模拟数据
+  await checkLiveRun()
   loadSimulationData()
 })
 </script>
 
 <style scoped>
-.main-view {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: #FFF;
-  overflow: hidden;
-  font-family: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
+/* ActShell's .web-pane sets display:flex, which beats the UA [hidden] rule, so a
+   closed Web still showed as a sheet on phones. Local guard until the shell fixes it. */
+:deep(.web-pane[hidden]) {
+  display: none !important;
 }
 
-/* Header */
-.app-header {
-  height: 60px;
-  border-bottom: 1px solid #EAEAEA;
+.live-notice {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  background: #FFF;
-  z-index: 100;
-  position: relative;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0;
+  padding: 12px var(--p-gutter);
+  background: var(--p-terracotta-tint);
+  border-bottom: 1px solid var(--p-gold);
+  color: var(--p-ink);
+  min-width: 0;
 }
 
-.brand {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 800;
-  font-size: 18px;
-  letter-spacing: 1px;
-  cursor: pointer;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.view-switcher {
-  display: flex;
-  background: #F5F5F5;
-  padding: 4px;
-  border-radius: 6px;
-  gap: 4px;
-}
-
-.switch-btn {
-  border: none;
-  background: transparent;
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.switch-btn.active {
-  background: #FFF;
-  color: #000;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.workflow-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-}
-
-.step-num {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  color: #999;
-}
-
-.step-name {
-  font-weight: 700;
-  color: #000;
-}
-
-.step-divider {
-  width: 1px;
-  height: 14px;
-  background-color: #E0E0E0;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #666;
-  font-weight: 500;
-}
-
-.dot {
+.live-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: #CCC;
+  border-radius: var(--p-radius-coin);
+  background: var(--p-gold);
+  box-shadow: 0 0 0 4px var(--p-terracotta-tint);
+  flex-shrink: 0;
 }
 
-.status-indicator.processing .dot { background: #FF5722; animation: pulse 1s infinite; }
-.status-indicator.completed .dot { background: #4CAF50; }
-.status-indicator.error .dot { background: #F44336; }
+.live-notice.closing .live-dot {
+  background: var(--p-ink-3);
+}
 
-@keyframes pulse { 50% { opacity: 0.5; } }
+.live-text {
+  flex: 1 1 240px;
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  min-width: 0;
+}
 
-/* Content */
-.content-area {
-  flex: 1;
+.live-actions {
   display: flex;
-  position: relative;
-  overflow: hidden;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.panel-wrapper {
-  height: 100%;
-  overflow: hidden;
-  transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease, transform 0.3s ease;
-  will-change: width, opacity, transform;
-}
+@media (max-width: 899px) {
+  .live-notice { padding-inline: 16px; }
 
-.panel-wrapper.left {
-  border-right: 1px solid #EAEAEA;
+  /* ActShell's nowrap act title runs under the Web toggle at 390px. Local guard. */
+  :deep(.act-subject) { overflow: hidden; }
+  :deep(.act-name) { overflow: hidden; text-overflow: ellipsis; }
 }
 </style>
-

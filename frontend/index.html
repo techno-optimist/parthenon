@@ -1,15 +1,52 @@
 <!doctype html>
-<html lang="zh">
+<html lang="en">
   <head>
-    <script>document.documentElement.lang = localStorage.getItem('locale') || 'zh'</script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0B0E13" />
+    <script>
+      (function () {
+        var root = document.documentElement
+        var locale = 'en'
+        try { locale = localStorage.getItem('locale') || 'en' } catch (e) {}
+        root.lang = locale
+        // One night in Athens: every route is dark before first paint.
+        root.classList.add('theme-night')
+        // Fetch the home hero plate early: the portrait crop on a phone, the
+        // wide still elsewhere (the same choice CinematicHero's <picture> makes).
+        if (location.pathname === '/') {
+          var portrait = window.matchMedia && window.matchMedia('(max-width: 699px)').matches
+          var hero = document.createElement('link')
+          hero.rel = 'preload'
+          hero.as = 'image'
+          if (portrait) {
+            hero.href = '/media/hero/acropolis-399bc-portrait-1280.jpg'
+          } else {
+            hero.href = '/media/hero/acropolis-399bc-2560.jpg'
+            hero.setAttribute('imagesrcset', '/media/hero/acropolis-399bc-1280.jpg 1280w, /media/hero/acropolis-399bc-2560.jpg 2560w')
+            hero.setAttribute('imagesizes', '(max-aspect-ratio: 2560/1086) 236vh, 100vw')
+          }
+          hero.setAttribute('fetchpriority', 'high')
+          document.head.appendChild(hero)
+        }
+      })()
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@100..800&family=Noto+Sans+SC:wght@300;400;500;700;800;900&family=Space+Grotesk:wght@300..700&display=swap" rel="stylesheet">
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="MiroFish - 社交媒体舆论模拟系统" />
-    <title>MiroFish - 预测万物</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Cinzel:wght@500..700&family=Geist:wght@300..700&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // The Chinese serif only when the visitor reads in Chinese.
+      (function () {
+        if (document.documentElement.lang !== 'zh') return
+        var l = document.createElement('link')
+        l.rel = 'stylesheet'
+        l.href = 'https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600&display=swap'
+        document.head.appendChild(l)
+      })()
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/parthenon.svg" />
+    <meta name="description" content="Parthenon: sit on the steps, listen to the philosophers, and let a swarm of citizens argue about what they said." />
+    <title>Parthenon</title>
   </head>
   <body>
     <div id="app"></div>

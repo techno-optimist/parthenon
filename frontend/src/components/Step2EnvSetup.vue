@@ -1,839 +1,629 @@
 <template>
-  <div class="env-setup-panel">
-    <div class="scroll-container">
-      <!-- Step 01: 模拟实例 -->
-      <div class="step-card" :class="{ 'active': phase === 0, 'completed': phase > 0 }">
-        <div class="card-header">
-          <div class="step-info">
-            <span class="step-num">01</span>
-            <span class="step-title">{{ $t('step2.simInstanceInit') }}</span>
-          </div>
-          <div class="step-status">
-            <span v-if="phase > 0" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else class="badge processing">{{ $t('step2.initializing') }}</span>
-          </div>
-        </div>
-        
-        <div class="card-content">
-          <p class="api-note">POST /api/simulation/create</p>
-          <p class="description">
-            {{ $t('step2.simInstanceDesc') }}
-          </p>
+  <section class="gathering">
+    <!-- The summons: how many have come, and what the Scribe is doing. -->
+    <header class="summons">
+      <span class="p-eyebrow">{{ $t('parthenon.gathering.place') }}</span>
+      <h2 class="summons-title" aria-live="polite">{{ countLine }}</h2>
+      <p class="summons-lede">{{ stateLine }}</p>
+    </header>
 
-          <div v-if="simulationId" class="info-card">
-            <div class="info-row">
-              <span class="info-label">Project ID</span>
-              <span class="info-value mono">{{ projectData?.project_id }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Graph ID</span>
-              <span class="info-value mono">{{ projectData?.graph_id }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Simulation ID</span>
-              <span class="info-value mono">{{ simulationId }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Task ID</span>
-              <span class="info-value mono">{{ taskId || $t('step2.asyncTaskDone') }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Step 02: 生成 Agent 人设 -->
-      <div class="step-card" :class="{ 'active': phase === 1, 'completed': phase > 1 }">
-        <div class="card-header">
-          <div class="step-info">
-            <span class="step-num">02</span>
-            <span class="step-title">{{ $t('step2.generateAgentPersona') }}</span>
-          </div>
-          <div class="step-status">
-            <span v-if="phase > 1" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else-if="phase === 1" class="badge processing">{{ prepareProgress }}%</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
-          </div>
-        </div>
-
-        <div class="card-content">
-          <p class="api-note">POST /api/simulation/prepare</p>
-          <p class="description">
-            {{ $t('step2.generateAgentPersonaDesc') }}
-          </p>
-
-          <!-- Profiles Stats -->
-          <div v-if="profiles.length > 0" class="stats-grid">
-            <div class="stat-card">
-              <span class="stat-value">{{ profiles.length }}</span>
-              <span class="stat-label">{{ $t('step2.currentAgentCount') }}</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-value">{{ expectedTotal || '-' }}</span>
-              <span class="stat-label">{{ $t('step2.expectedAgentTotal') }}</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-value">{{ totalTopicsCount }}</span>
-              <span class="stat-label">{{ $t('step2.relatedTopicsCount') }}</span>
-            </div>
-          </div>
-
-          <!-- Profiles List Preview -->
-          <div v-if="profiles.length > 0" class="profiles-preview">
-            <div class="preview-header">
-              <span class="preview-title">{{ $t('step2.generatedAgentPersonas') }}</span>
-            </div>
-            <div class="profiles-list">
-              <div 
-                v-for="(profile, idx) in profiles" 
-                :key="idx" 
-                class="profile-card"
-                @click="selectProfile(profile)"
-              >
-                <div class="profile-header">
-                  <span class="profile-realname">{{ profile.username || 'Unknown' }}</span>
-                  <span class="profile-username">@{{ profile.name || `agent_${idx}` }}</span>
-                </div>
-                <div class="profile-meta">
-                  <span class="profile-profession">{{ profile.profession || $t('step2.unknownProfession') }}</span>
-                </div>
-                <p class="profile-bio">{{ profile.bio || $t('step2.noBio') }}</p>
-                <div v-if="profile.interested_topics?.length" class="profile-topics">
-                  <span 
-                    v-for="topic in profile.interested_topics.slice(0, 3)" 
-                    :key="topic" 
-                    class="topic-tag"
-                  >{{ topic }}</span>
-                  <span v-if="profile.interested_topics.length > 3" class="topic-more">
-                    +{{ profile.interested_topics.length - 3 }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Step 03: 生成双平台模拟配置 -->
-      <div class="step-card" :class="{ 'active': phase === 2, 'completed': phase > 2 }">
-        <div class="card-header">
-          <div class="step-info">
-            <span class="step-num">03</span>
-            <span class="step-title">{{ $t('step2.dualPlatformConfig') }}</span>
-          </div>
-          <div class="step-status">
-            <span v-if="phase > 2" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else-if="phase === 2" class="badge processing">{{ $t('step2.generating') }}</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
-          </div>
-        </div>
-
-        <div class="card-content">
-          <p class="api-note">POST /api/simulation/prepare</p>
-          <p class="description">
-            {{ $t('step2.dualPlatformConfigDesc') }}
-          </p>
-          
-          <!-- Config Preview -->
-          <div v-if="simulationConfig" class="config-detail-panel">
-            <!-- 时间配置 -->
-            <div class="config-block">
-              <div class="config-grid">
-                <div class="config-item">
-                  <span class="config-item-label">{{ $t('step2.simulationDuration') }}</span>
-                  <span class="config-item-value">{{ simulationConfig.time_config?.total_simulation_hours || '-' }} {{ $t('common.hours') }}</span>
-                </div>
-                <div class="config-item">
-                  <span class="config-item-label">{{ $t('step2.roundDuration') }}</span>
-                  <span class="config-item-value">{{ simulationConfig.time_config?.minutes_per_round || '-' }} {{ $t('common.minutes') }}</span>
-                </div>
-                <div class="config-item">
-                  <span class="config-item-label">{{ $t('step2.totalRounds') }}</span>
-                  <span class="config-item-value">{{ Math.floor((simulationConfig.time_config?.total_simulation_hours * 60 / simulationConfig.time_config?.minutes_per_round)) || '-' }} {{ $t('common.rounds') }}</span>
-                </div>
-                <div class="config-item">
-                  <span class="config-item-label">{{ $t('step2.activePerHour') }}</span>
-                  <span class="config-item-value">{{ simulationConfig.time_config?.agents_per_hour_min }}-{{ simulationConfig.time_config?.agents_per_hour_max }}</span>
-                </div>
-              </div>
-              <div class="time-periods">
-                <div class="period-item">
-                  <span class="period-label">{{ $t('step2.peakHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.peak_hours?.join(':00, ') }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.peak_activity_multiplier }}</span>
-                </div>
-                <div class="period-item">
-                  <span class="period-label">{{ $t('step2.workHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.work_hours?.[0] }}:00-{{ simulationConfig.time_config?.work_hours?.slice(-1)[0] }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.work_activity_multiplier }}</span>
-                </div>
-                <div class="period-item">
-                  <span class="period-label">{{ $t('step2.morningHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.morning_hours?.[0] }}:00-{{ simulationConfig.time_config?.morning_hours?.slice(-1)[0] }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.morning_activity_multiplier }}</span>
-                </div>
-                <div class="period-item">
-                  <span class="period-label">{{ $t('step2.offPeakHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.off_peak_hours?.[0] }}:00-{{ simulationConfig.time_config?.off_peak_hours?.slice(-1)[0] }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.off_peak_activity_multiplier }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Agent 配置 -->
-            <div class="config-block">
-              <div class="config-block-header">
-                <span class="config-block-title">{{ $t('step2.agentConfig') }}</span>
-                <span class="config-block-badge">{{ simulationConfig.agent_configs?.length || 0 }} {{ $t('common.items') }}</span>
-              </div>
-              <div class="agents-cards">
-                <div 
-                  v-for="agent in simulationConfig.agent_configs" 
-                  :key="agent.agent_id" 
-                  class="agent-card"
-                >
-                  <!-- 卡片头部 -->
-                  <div class="agent-card-header">
-                    <div class="agent-identity">
-                      <span class="agent-id">Agent {{ agent.agent_id }}</span>
-                      <span class="agent-name">{{ agent.entity_name }}</span>
-                    </div>
-                    <div class="agent-tags">
-                      <span class="agent-type">{{ agent.entity_type }}</span>
-                      <span class="agent-stance" :class="'stance-' + agent.stance">{{ agent.stance }}</span>
-                    </div>
-                  </div>
-                  
-                  <!-- 活跃时间轴 -->
-                  <div class="agent-timeline">
-                    <span class="timeline-label">{{ $t('step2.activeTimePeriod') }}</span>
-                    <div class="mini-timeline">
-                      <div 
-                        v-for="hour in 24" 
-                        :key="hour - 1" 
-                        class="timeline-hour"
-                        :class="{ 'active': agent.active_hours?.includes(hour - 1) }"
-                        :title="`${hour - 1}:00`"
-                      ></div>
-                    </div>
-                    <div class="timeline-marks">
-                      <span>0</span>
-                      <span>6</span>
-                      <span>12</span>
-                      <span>18</span>
-                      <span>24</span>
-                    </div>
-                  </div>
-
-                  <!-- 行为参数 -->
-                  <div class="agent-params">
-                    <div class="param-group">
-                      <div class="param-item">
-                        <span class="param-label">{{ $t('step2.postsPerHour') }}</span>
-                        <span class="param-value">{{ agent.posts_per_hour }}</span>
-                      </div>
-                      <div class="param-item">
-                        <span class="param-label">{{ $t('step2.commentsPerHour') }}</span>
-                        <span class="param-value">{{ agent.comments_per_hour }}</span>
-                      </div>
-                      <div class="param-item">
-                        <span class="param-label">{{ $t('step2.responseDelay') }}</span>
-                        <span class="param-value">{{ agent.response_delay_min }}-{{ agent.response_delay_max }}min</span>
-                      </div>
-                    </div>
-                    <div class="param-group">
-                      <div class="param-item">
-                        <span class="param-label">{{ $t('step2.activityLevel') }}</span>
-                        <span class="param-value with-bar">
-                          <span class="mini-bar" :style="{ width: (agent.activity_level * 100) + '%' }"></span>
-                          {{ (agent.activity_level * 100).toFixed(0) }}%
-                        </span>
-                      </div>
-                      <div class="param-item">
-                        <span class="param-label">{{ $t('step2.sentimentBias') }}</span>
-                        <span class="param-value" :class="agent.sentiment_bias > 0 ? 'positive' : agent.sentiment_bias < 0 ? 'negative' : 'neutral'">
-                          {{ agent.sentiment_bias > 0 ? '+' : '' }}{{ agent.sentiment_bias?.toFixed(1) }}
-                        </span>
-                      </div>
-                      <div class="param-item">
-                        <span class="param-label">{{ $t('step2.influenceWeight') }}</span>
-                        <span class="param-value highlight">{{ agent.influence_weight?.toFixed(1) }}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 平台配置 -->
-            <div class="config-block">
-              <div class="config-block-header">
-                <span class="config-block-title">{{ $t('step2.recommendAlgoConfig') }}</span>
-              </div>
-              <div class="platforms-grid">
-                <div v-if="simulationConfig.twitter_config" class="platform-card">
-                  <div class="platform-card-header">
-                    <span class="platform-name">{{ $t('step2.platform1Name') }}</span>
-                  </div>
-                  <div class="platform-params">
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.recencyWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.recency_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.popularityWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.popularity_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.relevanceWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.relevance_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.viralThreshold') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.viral_threshold }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.echoChamberStrength') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.echo_chamber_strength }}</span>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="simulationConfig.reddit_config" class="platform-card">
-                  <div class="platform-card-header">
-                    <span class="platform-name">{{ $t('step2.platform2Name') }}</span>
-                  </div>
-                  <div class="platform-params">
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.recencyWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.recency_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.popularityWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.popularity_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.relevanceWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.relevance_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.viralThreshold') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.viral_threshold }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.echoChamberStrength') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.echo_chamber_strength }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- LLM 配置推理 -->
-            <div v-if="simulationConfig.generation_reasoning" class="config-block">
-              <div class="config-block-header">
-                <span class="config-block-title">{{ $t('step2.llmConfigReasoning') }}</span>
-              </div>
-              <div class="reasoning-content">
-                <div 
-                  v-for="(reason, idx) in simulationConfig.generation_reasoning.split('|').slice(0, 2)" 
-                  :key="idx" 
-                  class="reasoning-item"
-                >
-                  <p class="reasoning-text">{{ reason.trim() }}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Step 04: 初始激活编排 -->
-      <div class="step-card" :class="{ 'active': phase === 3, 'completed': phase > 3 }">
-        <div class="card-header">
-          <div class="step-info">
-            <span class="step-num">04</span>
-            <span class="step-title">{{ $t('step2.initialActivation') }}</span>
-          </div>
-          <div class="step-status">
-            <span v-if="phase > 3" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else-if="phase === 3" class="badge processing">{{ $t('step2.orchestrating') }}</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
-          </div>
-        </div>
-
-        <div class="card-content">
-          <p class="api-note">POST /api/simulation/prepare</p>
-          <p class="description">
-            {{ $t('step2.initialActivationDesc') }}
-          </p>
-
-          <div v-if="simulationConfig?.event_config" class="orchestration-content">
-            <!-- 叙事方向 -->
-            <div class="narrative-box">
-              <span class="box-label narrative-label">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="special-icon">
-                  <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="url(#paint0_linear)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M16.24 7.76L14.12 14.12L7.76 16.24L9.88 9.88L16.24 7.76Z" fill="url(#paint0_linear)" stroke="url(#paint0_linear)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  <defs>
-                    <linearGradient id="paint0_linear" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
-                      <stop stop-color="#FF5722"/>
-                      <stop offset="1" stop-color="#FF9800"/>
-                    </linearGradient>
-                  </defs>
-                </svg>
-                {{ $t('step2.narrativeDirection') }}
-              </span>
-              <p class="narrative-text">{{ simulationConfig.event_config.narrative_direction }}</p>
-            </div>
-
-            <!-- 热点话题 -->
-            <div class="topics-section">
-              <span class="box-label">{{ $t('step2.initialHotTopics') }}</span>
-              <div class="hot-topics-grid">
-                <span v-for="topic in simulationConfig.event_config.hot_topics" :key="topic" class="hot-topic-tag">
-                  # {{ topic }}
-                </span>
-              </div>
-            </div>
-
-            <!-- 初始帖子流 -->
-            <div class="initial-posts-section">
-              <span class="box-label">{{ $t('step2.initialActivationSeq', { count: simulationConfig.event_config.initial_posts.length }) }}</span>
-              <div class="posts-timeline">
-                <div v-for="(post, idx) in simulationConfig.event_config.initial_posts" :key="idx" class="timeline-item">
-                  <div class="timeline-marker"></div>
-                  <div class="timeline-content">
-                    <div class="post-header">
-                      <span class="post-role">{{ post.poster_type }}</span>
-                      <span class="post-agent-info">
-                        <span class="post-id">Agent {{ post.poster_agent_id }}</span>
-                        <span class="post-username">@{{ getAgentUsername(post.poster_agent_id) }}</span>
-                      </span>
-                    </div>
-                    <p class="post-text">{{ post.content }}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Step 05: 准备完成 -->
-      <div class="step-card" :class="{ 'active': phase === 4 }">
-        <div class="card-header">
-          <div class="step-info">
-            <span class="step-num">05</span>
-            <span class="step-title">{{ $t('step2.setupComplete') }}</span>
-          </div>
-          <div class="step-status">
-            <span v-if="phase >= 4" class="badge processing">{{ $t('step1.inProgress') }}</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
-          </div>
-        </div>
-
-        <div class="card-content">
-          <p class="api-note">POST /api/simulation/start</p>
-          <p class="description">{{ $t('step2.setupCompleteDesc') }}</p>
-          
-          <!-- 模拟轮数配置 - 只有在配置生成完成且轮数计算出来后才显示 -->
-          <div v-if="simulationConfig && autoGeneratedRounds" class="rounds-config-section">
-            <div class="rounds-header">
-              <div class="header-left">
-                <span class="section-title">{{ $t('step2.roundsConfig') }}</span>
-                <span class="section-desc">{{ $t('step2.roundsConfigDesc', { hours: simulationConfig?.time_config?.total_simulation_hours || '-', minutesPerRound: simulationConfig?.time_config?.minutes_per_round || '-' }) }}</span>
-              </div>
-              <label class="switch-control">
-                <input type="checkbox" v-model="useCustomRounds">
-                <span class="switch-track"></span>
-                <span class="switch-label">{{ $t('step2.customToggle') }}</span>
-              </label>
-            </div>
-            
-            <Transition name="fade" mode="out-in">
-              <div v-if="useCustomRounds" class="rounds-content custom" key="custom">
-                <div class="slider-display">
-                  <div class="slider-main-value">
-                    <span class="val-num">{{ customMaxRounds }}</span>
-                    <span class="val-unit">{{ $t('step2.roundsUnit') }}</span>
-                  </div>
-                  <div class="slider-meta-info">
-                    <span>{{ $t('step2.estimatedDuration', { minutes: Math.round(customMaxRounds * 0.6) }) }}</span>
-                  </div>
-                </div>
-
-                <div class="range-wrapper">
-                  <input 
-                    type="range" 
-                    v-model.number="customMaxRounds" 
-                    min="10" 
-                    :max="autoGeneratedRounds"
-                    step="5"
-                    class="minimal-slider"
-                    :style="{ '--percent': ((customMaxRounds - 10) / (autoGeneratedRounds - 10)) * 100 + '%' }"
-                  />
-                  <div class="range-marks">
-                    <span>10</span>
-                    <span 
-                      class="mark-recommend" 
-                      :class="{ active: customMaxRounds === 40 }"
-                      @click="customMaxRounds = 40"
-                      :style="{ position: 'absolute', left: `calc(${(40 - 10) / (autoGeneratedRounds - 10) * 100}% - 30px)` }"
-                    >{{ $t('step2.recommendedRounds', { rounds: 40 }) }}</span>
-                    <span>{{ autoGeneratedRounds }}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div v-else class="rounds-content auto" key="auto">
-                <div class="auto-info-card">
-                  <div class="auto-value">
-                    <span class="val-num">{{ autoGeneratedRounds }}</span>
-                    <span class="val-unit">{{ $t('step2.roundsUnit') }}</span>
-                  </div>
-                  <div class="auto-content">
-                    <div class="auto-meta-row">
-                      <span class="duration-badge">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <circle cx="12" cy="12" r="10"></circle>
-                          <polyline points="12 6 12 12 16 14"></polyline>
-                        </svg>
-                        {{ $t('step2.estimatedDurationFull', { minutes: Math.round(autoGeneratedRounds * 0.6) }) }}
-                      </span>
-                    </div>
-                    <div class="auto-desc">
-                      <p class="highlight-tip" @click="useCustomRounds = true">{{ $t('step2.customTip') }} ➝</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Transition>
-          </div>
-
-          <div class="action-group dual">
-            <button 
-              class="action-btn secondary"
-              @click="$emit('go-back')"
-            >
-              ← {{ $t('step2.backToGraphBuild') }}
-            </button>
-            <button 
-              class="action-btn primary"
-              :disabled="phase < 4"
-              @click="handleStartSimulation"
-            >
-              {{ $t('step2.startDualWorldSim') }} ➝
-            </button>
-          </div>
-        </div>
-      </div>
+    <!-- Trouble, in the city's voice, with the cause behind a disclosure. -->
+    <div v-if="troubleMessage" class="trouble" role="alert">
+      <p class="trouble-title">{{ $t('parthenon.gathering.trouble') }}</p>
+      <details class="trouble-why">
+        <summary>{{ $t('parthenon.gathering.troubleWhy') }}</summary>
+        <p>{{ troubleMessage }}</p>
+      </details>
+      <button type="button" class="p-button secondary small" @click="callAgain">{{ $t('parthenon.gathering.tryAgain') }}</button>
     </div>
 
-    <!-- Profile Detail Modal -->
-    <Transition name="modal">
-      <div v-if="selectedProfile" class="profile-modal-overlay" @click.self="selectedProfile = null">
-        <div class="profile-modal">
-          <div class="modal-header">
-          <div class="modal-header-info">
-            <div class="modal-name-row">
-              <span class="modal-realname">{{ selectedProfile.username }}</span>
-              <span class="modal-username">@{{ selectedProfile.name }}</span>
-            </div>
-            <span class="modal-profession">{{ selectedProfile.profession }}</span>
+    <!-- The slope: citizens arrive one by one; the seats still empty are drawn faint. -->
+    <ol v-if="citizens.length || emptySeats" class="slope" :aria-label="$t('parthenon.gathering.citizens')">
+      <li v-for="(c, i) in citizens" :key="c.key" class="seat" :style="{ '--i': Math.min(i, 24) }">
+        <button type="button" class="citizen" :aria-label="$t('parthenon.gathering.openCard', { name: c.name })" @click="openCard(c, $event)">
+          <span class="p-coin" :style="{ color: c.color, borderColor: c.color }" aria-hidden="true">{{ c.initial }}</span>
+          <span class="citizen-body">
+            <span class="citizen-name">{{ c.name }}</span>
+            <span class="citizen-role">{{ c.role }}</span>
+            <span class="citizen-line">{{ c.line }}</span>
+          </span>
+        </button>
+      </li>
+      <li v-for="n in emptySeats" :key="'empty-' + n" class="seat empty" aria-hidden="true">
+        <span class="p-coin"></span>
+        <span class="citizen-body"><span class="ghost-line long"></span><span class="ghost-line"></span></span>
+      </li>
+    </ol>
+
+    <!-- The city's hours, in words. -->
+    <section v-if="hours" class="block hours">
+      <span class="p-eyebrow">{{ $t('parthenon.gathering.hours.eyebrow') }}</span>
+      <h3 class="block-title">{{ $t('parthenon.gathering.hours.title') }}</h3>
+      <p class="prose">{{ hours.day }}</p>
+      <p class="prose">{{ hours.awake }}</p>
+      <p v-if="hours.loudest" class="prose">{{ hours.loudest }}</p>
+    </section>
+
+    <!-- The first words: what the city is already saying. -->
+    <section v-if="openings.length || topics.length" class="block saying">
+      <span class="p-eyebrow">{{ $t('parthenon.gathering.saying.eyebrow') }}</span>
+      <h3 class="block-title">{{ $t('parthenon.gathering.saying.title') }}</h3>
+      <ul v-if="topics.length" class="topics" :aria-label="$t('parthenon.gathering.saying.topics')">
+        <li v-for="topic in topics" :key="topic" class="topic">{{ topic }}</li>
+      </ul>
+      <ol v-if="openings.length" class="openings">
+        <li v-for="(o, i) in shownOpenings" :key="i" class="opening" :style="{ '--i': i }">
+          <span class="p-coin small" :style="{ color: o.color, borderColor: o.color }" aria-hidden="true">{{ o.initial }}</span>
+          <div class="opening-body">
+            <span class="opening-who">{{ o.name }}<span v-if="o.role" class="opening-role"> · {{ o.role }}</span></span>
+            <p class="opening-text">{{ o.text }}</p>
           </div>
-          <button class="close-btn" @click="selectedProfile = null">×</button>
+        </li>
+      </ol>
+      <button v-if="openings.length > 4" type="button" class="p-button ghost small" :aria-expanded="showAllOpenings" @click="showAllOpenings = !showAllOpenings">
+        {{ showAllOpenings ? $t('parthenon.gathering.saying.less') : $t('parthenon.gathering.saying.more', { n: openings.length - 4 }) }}
+      </button>
+    </section>
+
+    <!-- How long the city talks: story-sized lengths, honest minutes. -->
+    <section v-if="simulationConfig" class="block length">
+      <span class="p-eyebrow">{{ $t('parthenon.gathering.length.eyebrow') }}</span>
+      <h3 class="block-title" id="length-title">{{ lengthTitle }}</h3>
+      <p class="prose muted" aria-live="polite">{{ lengthHint }}</p>
+      <div class="lengths" role="radiogroup" aria-labelledby="length-title">
+        <button
+          v-for="l in lengths"
+          :key="l.id"
+          type="button"
+          role="radio"
+          class="length-option"
+          :aria-checked="chosenLength === l.id"
+          :aria-disabled="l.beyond || undefined"
+          :tabindex="chosenLength === l.id ? 0 : -1"
+          @click="chooseLength(l)"
+          @keydown="onLengthKey($event, l)"
+        >
+          <span class="length-name">{{ l.name }}</span>
+          <span class="length-meta">{{ l.hoursLabel }}</span>
+          <span class="length-meta">{{ l.minutesLabel }}</span>
+          <span v-if="l.beyond" class="length-note">{{ $t('parthenon.gathering.length.beyond') }}</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- The doors. -->
+    <footer class="doors">
+      <button type="button" class="p-button ghost" @click="$emit('go-back')">{{ $t('parthenon.gathering.back') }}</button>
+      <div class="door-main">
+        <span v-if="troubleMessage" class="door-reason">{{ $t('parthenon.gathering.openTrouble') }}</span>
+        <span v-else-if="phase < 4" class="door-reason">{{ $t('parthenon.gathering.openWait') }}</span>
+        <button type="button" class="p-button" :disabled="phase < 4 || !!troubleMessage" @click="handleStartSimulation">{{ $t('parthenon.gathering.open') }}</button>
+      </div>
+    </footer>
+
+    <!-- A citizen's card, on parchment, held up in the dark. -->
+    <Teleport to="body">
+      <Transition name="card">
+        <div v-if="selected" class="veil" @click.self="closeCard">
+          <div
+            ref="cardEl"
+            class="card p-paper"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="citizen-card-name"
+            @keydown="onCardKey"
+          >
+            <button ref="closeBtn" type="button" class="card-close" :aria-label="$t('parthenon.gathering.card.close')" @click="closeCard">
+              <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 4l12 12M16 4L4 16" /></svg>
+            </button>
+            <div class="card-head">
+              <span class="p-coin big" :style="{ color: selected.color, borderColor: selected.color }" aria-hidden="true">{{ selected.initial }}</span>
+              <div class="card-id">
+                <span class="p-eyebrow">{{ $t('parthenon.gathering.card.eyebrow') }}<template v-if="selected.role"> · {{ selected.role }}</template></span>
+                <h3 id="citizen-card-name" class="card-name">{{ selected.name }}</h3>
+                <p v-if="selected.profession" class="card-profession">{{ selected.profession }}</p>
+              </div>
+            </div>
+            <div class="p-meander" aria-hidden="true"></div>
+            <section class="card-section">
+              <h4 class="p-eyebrow">{{ $t('parthenon.gathering.card.past') }}</h4>
+              <p class="card-prose">{{ selected.past || $t('parthenon.gathering.card.nothing') }}</p>
+            </section>
+            <section v-if="selected.topics.length" class="card-section">
+              <h4 class="p-eyebrow">{{ $t('parthenon.gathering.card.cares') }}</h4>
+              <ul class="card-topics">
+                <li v-for="topic in selected.topics" :key="topic" class="topic">{{ topic }}</li>
+              </ul>
+            </section>
+          </div>
         </div>
-        
-        <div class="modal-body">
-          <!-- 基本信息 -->
-          <div class="modal-info-grid">
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalAge') }}</span>
-              <span class="info-value">{{ selectedProfile.age || '-' }} {{ $t('step2.yearsOld') }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalGender') }}</span>
-              <span class="info-value">{{ { male: $t('step2.genderMale'), female: $t('step2.genderFemale'), other: $t('step2.genderOther') }[selectedProfile.gender] || selectedProfile.gender }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalCountry') }}</span>
-              <span class="info-value">{{ selectedProfile.country || '-' }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalMbti') }}</span>
-              <span class="info-value mbti">{{ selectedProfile.mbti || '-' }}</span>
-            </div>
-          </div>
-
-          <!-- 简介 -->
-          <div class="modal-section">
-            <span class="section-label">{{ $t('step2.profileModalBio') }}</span>
-            <p class="section-bio">{{ selectedProfile.bio || $t('step2.noBio') }}</p>
-          </div>
-
-          <!-- 关注话题 -->
-          <div class="modal-section" v-if="selectedProfile.interested_topics?.length">
-            <span class="section-label">{{ $t('step2.profileModalTopics') }}</span>
-            <div class="topics-grid">
-              <span 
-                v-for="topic in selectedProfile.interested_topics" 
-                :key="topic" 
-                class="topic-item"
-              >{{ topic }}</span>
-            </div>
-          </div>
-
-          <!-- 详细人设 -->
-          <div class="modal-section" v-if="selectedProfile.persona">
-            <span class="section-label">{{ $t('step2.profileModalPersona') }}</span>
-            
-            <!-- 人设维度概览 -->
-            <div class="persona-dimensions">
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimExperience') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimExperienceDesc') }}</span>
-              </div>
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimBehavior') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimBehaviorDesc') }}</span>
-              </div>
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimMemory') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimMemoryDesc') }}</span>
-              </div>
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimSocial') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimSocialDesc') }}</span>
-              </div>
-            </div>
-
-            <div class="persona-content">
-              <p class="section-persona">{{ selectedProfile.persona }}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      </div>
-    </Transition>
-
-    <!-- Bottom Info / Logs -->
-    <div class="system-logs">
-      <div class="log-header">
-        <span class="log-title">SYSTEM DASHBOARD</span>
-        <span class="log-id">{{ simulationId || 'NO_SIMULATION' }}</span>
-      </div>
-      <div class="log-content" ref="logContent">
-        <div class="log-line" v-for="(log, idx) in systemLogs" :key="idx">
-          <span class="log-time">{{ log.time }}</span>
-          <span class="log-msg">{{ log.msg }}</span>
-        </div>
-      </div>
-    </div>
-  </div>
+      </Transition>
+    </Teleport>
+  </section>
 </template>
 
 <script setup>
+// Act Β΄, the stage: the Pnyx slope filling with citizens called from the Web of
+// Athens. The engine's preparation (profiles, then the time and event
+// configuration) is polled exactly as before; what changes is that every word a
+// visitor reads is the city's, and the wiring goes to the scribe's ledger.
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import {
   prepareSimulation,
   getPrepareStatus,
   getSimulationProfilesRealtime,
-  getSimulationConfig,
   getSimulationConfigRealtime
 } from '../api/simulation'
+import pendingUpload from '../store/pendingUpload'
+import { entityTypeName, roleColorVar, citizenName, stripIds, RUN_LENGTHS } from '../parthenon/vocabulary.js'
 
 const { t } = useI18n()
+const route = useRoute()
 
 const props = defineProps({
-  simulationId: String,  // 从父组件传入
+  simulationId: String,
   projectData: Object,
-  graphData: Object,
-  systemLogs: Array
+  graphData: Object
 })
 
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
 
+// The length chosen on the steps rides here three ways: on the route, in this
+// tab's storage (which the home page writes and this act binds to the first
+// gathering that reads it, so an older gathering opened later ignores it) and
+// on the pending record. Whichever is found seeds the choice below.
+const RUN_LENGTH_KEY = 'parthenon.runLength'
+const lengthById = (id) => RUN_LENGTHS.find((l) => l.id === id) || null
+const lengthByRounds = (rounds) => RUN_LENGTHS.find((l) => l.rounds === Number(rounds)) || null
+
+const readCarriedLength = () => {
+  const fromRoute = lengthByRounds(route.query.maxRounds)
+  if (fromRoute) return fromRoute
+  try {
+    const raw = sessionStorage.getItem(RUN_LENGTH_KEY)
+    if (raw) {
+      const record = JSON.parse(raw) || {}
+      const found = lengthById(record.id) || lengthByRounds(record.rounds)
+      const ours = !record.simulationId || record.simulationId === props.simulationId
+      if (found && ours) {
+        if (!record.simulationId && props.simulationId) {
+          sessionStorage.setItem(RUN_LENGTH_KEY, JSON.stringify({ ...record, simulationId: props.simulationId }))
+        }
+        return found
+      }
+    }
+  } catch {
+    // storage blocked or unreadable; the record may still carry it
+  }
+  return lengthByRounds(pendingUpload.maxRounds)
+}
+
+const carriedLength = readCarriedLength()
+
 // State
-const phase = ref(0) // 0: 初始化, 1: 生成人设, 2: 生成配置, 3: 完成
+const phase = ref(0) // 0 reading, 1 citizens arriving, 2 hours being set, 4 complete
 const taskId = ref(null)
-const prepareProgress = ref(0)
 const currentStage = ref('')
-const progressMessage = ref('')
 const profiles = ref([])
-const entityTypes = ref([])
 const expectedTotal = ref(null)
 const simulationConfig = ref(null)
-const selectedProfile = ref(null)
-const showProfilesDetail = ref(true)
+const troubleMessage = ref('')
+const selected = ref(null)
+const showAllOpenings = ref(false)
+const chosenLength = ref(carriedLength?.id || 'day')
 
-// 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
 let lastLoggedProfileCount = 0
 let lastLoggedConfigStage = ''
-
-// 模拟轮数配置
-const useCustomRounds = ref(false) // 默认使用自动配置轮数
-const customMaxRounds = ref(40)   // 默认推荐40轮
-
-// Watch stage to update phase
-watch(currentStage, (newStage) => {
-  if (newStage === '生成Agent人设' || newStage === 'generating_profiles') {
-    phase.value = 1
-  } else if (newStage === '生成模拟配置' || newStage === 'generating_config') {
-    phase.value = 2
-    // 进入配置生成阶段，开始轮询配置
-    if (!configTimer) {
-      addLog(t('log.startGeneratingConfig'))
-      startConfigPolling()
-    }
-  } else if (newStage === '准备模拟脚本' || newStage === 'copying_scripts') {
-    phase.value = 2 // 仍属于配置阶段
-  }
-})
-
-// 从配置中计算自动生成的轮数（不使用硬编码默认值）
-const autoGeneratedRounds = computed(() => {
-  if (!simulationConfig.value?.time_config) {
-    return null // 配置未生成时返回 null
-  }
-  const totalHours = simulationConfig.value.time_config.total_simulation_hours
-  const minutesPerRound = simulationConfig.value.time_config.minutes_per_round
-  if (!totalHours || !minutesPerRound) {
-    return null // 配置数据不完整时返回 null
-  }
-  const calculatedRounds = Math.floor((totalHours * 60) / minutesPerRound)
-  // 确保最大轮数不小于40（推荐值），避免滑动条范围异常
-  return Math.max(calculatedRounds, 40)
-})
-
-// Polling timer
 let pollTimer = null
 let profilesTimer = null
 let configTimer = null
 
-// Computed
-const displayProfiles = computed(() => {
-  if (showProfilesDetail.value) {
-    return profiles.value
+const addLog = (msg) => emit('add-log', msg)
+
+// Engine words that reach the ledger are softened on the way.
+const cityWords = (text) =>
+  stripIds(text)
+    .replace(/\bagents\b/gi, 'citizens')
+    .replace(/\bagent\b/gi, 'citizen')
+    .replace(/\bprofiles?\b/gi, (m) => (m.toLowerCase().endsWith('s') ? 'pasts' : 'past'))
+    .replace(/\bLLM\b/g, 'the Scribe')
+
+// --- Who is who -------------------------------------------------------------
+
+// The Web of Athens knows each name's kind; the engine's citizen list does not.
+const typeByName = computed(() => {
+  const map = new Map()
+  const put = (name, type) => {
+    if (!name || !type) return
+    map.set(String(name).trim().toLowerCase(), type)
   }
-  return profiles.value.slice(0, 6)
+  for (const node of props.graphData?.nodes || []) {
+    const labels = (node.labels || []).filter((l) => l !== 'Entity')
+    put(node.name, labels[labels.length - 1] || (node.labels?.includes('Entity') ? 'Person' : ''))
+  }
+  for (const a of simulationConfig.value?.agent_configs || []) put(a.entity_name, a.entity_type)
+  return map
 })
 
-// 根据agent_id获取对应的username
-const getAgentUsername = (agentId) => {
-  if (profiles.value && profiles.value.length > agentId && agentId >= 0) {
-    const profile = profiles.value[agentId]
-    return profile?.username || `agent_${agentId}`
-  }
-  return `agent_${agentId}`
+const typeFor = (name) => typeByName.value.get(String(name || '').trim().toLowerCase()) || ''
+
+// A role is one family word, the way the Agora writes it: the entity type
+// when the Web knows one, otherwise the profession cut at the first comma,
+// "of", "at" or "and", in lower case unless it starts with a proper noun
+// or an acronym ("AI researcher" keeps its case, "Head teacher of the only
+// local school" becomes "head teacher").
+const familyCase = (label) => {
+  const first = label.split(/\s+/)[0] || ''
+  if (/^[A-Z][a-z'-]*$/.test(first)) return label.charAt(0).toLowerCase() + label.slice(1)
+  return label
 }
 
-// 计算所有人设的关联话题总数
-const totalTopicsCount = computed(() => {
-  return profiles.value.reduce((sum, p) => {
-    return sum + (p.interested_topics?.length || 0)
-  }, 0)
+const shortProfession = (profession) => {
+  const raw = String(profession || '').trim()
+  if (!raw) return ''
+  const first = raw.split(/[;,(]|\s+(?:and|of|at|for|who)\s+/)[0].trim()
+  const cut = first.length > 56 ? first.slice(0, 56).replace(/\s+\S*$/, '') : first
+  return familyCase(cut)
+}
+
+const roleLabel = (type, profession) => {
+  const named = entityTypeName(type)
+  if (named && named !== 'citizen') return named
+  return shortProfession(profession) || named || t('parthenon.gathering.citizen')
+}
+
+// The first sentence of a bio, without stopping at "Dr." or "Mrs.".
+const ABBREVIATION = /\b(Dr|Mr|Mrs|Ms|St|Fr|Prof|Sr|Jr|vs|etc|No)\.$/i
+const firstSentence = (text) => {
+  const raw = String(text || '').trim()
+  if (!raw) return ''
+  let sentence = ''
+  for (const part of raw.split(/(?<=[.!?])\s+/)) {
+    sentence = sentence ? `${sentence} ${part}` : part
+    if (!ABBREVIATION.test(sentence)) break
+  }
+  return sentence.length > 160 ? sentence.slice(0, 160).replace(/\s+\S*$/, '') : sentence
+}
+
+const initialOf = (name) => {
+  const word = String(name || '').replace(/^(dr\.?|father|mrs?\.?|ms\.?|the)\s+/i, '').trim()
+  return (word || name || '?').charAt(0).toUpperCase()
+}
+
+const citizens = computed(() =>
+  profiles.value.map((p, idx) => {
+    const name = citizenName(p.name, p.username) || t('parthenon.gathering.citizen')
+    const type = typeFor(p.name)
+    return {
+      key: p.username || p.user_id || `${name}-${idx}`,
+      name,
+      initial: initialOf(name),
+      color: roleColorVar(type || p.profession),
+      role: roleLabel(type, p.profession),
+      profession: String(p.profession || '').trim(),
+      line: firstSentence(p.bio),
+      past: String(p.persona || p.bio || '').trim(),
+      topics: Array.isArray(p.interested_topics) ? p.interested_topics.filter(Boolean) : []
+    }
+  })
+)
+
+const emptySeats = computed(() => {
+  const expected = Number(expectedTotal.value) || 0
+  if (phase.value >= 4 || !expected) return 0
+  return Math.max(0, Math.min(40, expected - profiles.value.length))
 })
 
-// Methods
-const addLog = (msg) => {
-  emit('add-log', msg)
+// --- Words at the top --------------------------------------------------------
+
+const countLine = computed(() => {
+  const n = profiles.value.length
+  const total = Number(expectedTotal.value) || 0
+  if (!n) return t('parthenon.gathering.nobodyYet')
+  if (total && n >= total) return t('parthenon.gathering.arrivedAll', { total })
+  if (total) return t('parthenon.gathering.arrived', { n, total })
+  return t('parthenon.gathering.arrivedSome', { n })
+})
+
+const stateLine = computed(() => {
+  if (troubleMessage.value) return t('parthenon.gathering.stateTrouble')
+  if (phase.value >= 4) return t('parthenon.gathering.hoursSet')
+  if (phase.value >= 2) return t('parthenon.gathering.settingHours')
+  if (!profiles.value.length && phase.value === 0) return t('parthenon.gathering.reading')
+  if (!profiles.value.length) return `${t('parthenon.gathering.summoning')} ${t('parthenon.gathering.firstTakeAMinute')}`
+  return t('parthenon.gathering.summoning')
+})
+
+// --- The city's hours --------------------------------------------------------
+
+const hour12 = (h) => {
+  const x = ((h % 24) + 24) % 24
+  return x === 0 ? 12 : x > 12 ? x - 12 : x
+}
+
+const clockWord = (h) => {
+  const x = ((h % 24) + 24) % 24
+  if (x === 0) return t('parthenon.gathering.clock.midnight')
+  if (x === 12) return t('parthenon.gathering.clock.noon')
+  if (x < 12) return t('parthenon.gathering.clock.morning', { h: hour12(x) })
+  if (x < 18) return t('parthenon.gathering.clock.afternoon', { h: hour12(x) })
+  if (x < 21) return t('parthenon.gathering.clock.evening', { h: hour12(x) })
+  return t('parthenon.gathering.clock.night', { h: hour12(x) })
+}
+
+const partOfDay = (h) => {
+  const x = ((h % 24) + 24) % 24
+  if (x === 0) return t('parthenon.gathering.clock.midnight')
+  if (x < 5) return t('parthenon.gathering.parts.small')
+  if (x < 8) return t('parthenon.gathering.parts.dawn')
+  if (x < 12) return t('parthenon.gathering.parts.morning')
+  if (x < 14) return t('parthenon.gathering.parts.midday')
+  if (x < 18) return t('parthenon.gathering.parts.afternoon')
+  if (x < 21) return t('parthenon.gathering.parts.evening')
+  return t('parthenon.gathering.parts.late')
+}
+
+const joinNames = (names) => {
+  if (names.length <= 1) return names.join('')
+  return `${names.slice(0, -1).join(', ')} ${t('parthenon.gathering.hours.and')} ${names[names.length - 1]}`
+}
+
+const hours = computed(() => {
+  const tc = simulationConfig.value?.time_config
+  if (!tc) return null
+  const offPeak = new Set((tc.off_peak_hours || []).map(Number))
+  const dayHours = Array.from({ length: 24 }, (_, h) => h).filter((h) => !offPeak.has(h))
+  const start = dayHours.length ? Math.min(...dayHours) : 6
+  const end = dayHours.length ? Math.max(...dayHours) + 1 : 22
+  const peak = (tc.peak_hours || []).map(Number)
+  const peakFrom = peak.length ? Math.min(...peak) : 18
+  const peakTo = peak.length ? Math.max(...peak) + 1 : 22
+  const peakPhrase = t('parthenon.gathering.hours.peakSpan', {
+    part: partOfDay(peakFrom),
+    from: hour12(peakFrom),
+    to: clockWord(peakTo)
+  })
+  const loud = (simulationConfig.value?.agent_configs || [])
+    .map((a) => ({ name: citizenName(a.entity_name), rate: (Number(a.posts_per_hour) || 0) + (Number(a.comments_per_hour) || 0) }))
+    .filter((a) => a.name)
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 3)
+    .map((a) => a.name)
+  return {
+    day: t('parthenon.gathering.hours.day', { start: partOfDay(start), end: partOfDay(end), peak: peakPhrase }),
+    awake: t('parthenon.gathering.hours.awake', { max: tc.agents_per_hour_max ?? '?', min: tc.agents_per_hour_min ?? '?' }),
+    loudest: loud.length ? t('parthenon.gathering.hours.loudest', { names: joinNames(loud) }) : ''
+  }
+})
+
+// --- The first words ---------------------------------------------------------
+
+const topics = computed(() => (simulationConfig.value?.event_config?.hot_topics || []).filter(Boolean))
+
+const openings = computed(() =>
+  (simulationConfig.value?.event_config?.initial_posts || []).map((post) => {
+    const profile = profiles.value[post.poster_agent_id]
+    const name = profile ? citizenName(profile.name, profile.username) : t('parthenon.gathering.saying.someone')
+    const type = post.poster_type || typeFor(profile?.name)
+    return {
+      name,
+      initial: initialOf(name),
+      color: roleColorVar(type || profile?.profession),
+      role: roleLabel(type, profile?.profession),
+      text: String(post.content || '').trim()
+    }
+  })
+)
+
+const shownOpenings = computed(() => (showAllOpenings.value ? openings.value : openings.value.slice(0, 4)))
+
+// --- How long the city talks ------------------------------------------------
+
+const autoGeneratedRounds = computed(() => {
+  const tc = simulationConfig.value?.time_config
+  if (!tc?.total_simulation_hours || !tc?.minutes_per_round) return null
+  return Math.floor((tc.total_simulation_hours * 60) / tc.minutes_per_round)
+})
+
+const lengths = computed(() =>
+  RUN_LENGTHS.map((l) => ({
+    ...l,
+    name: t(`parthenon.gathering.length.names.${l.id}`),
+    hoursLabel: t('parthenon.gathering.length.hours', { hours: l.hours }),
+    minutesLabel: /hour/i.test(l.minutes)
+      ? t('parthenon.gathering.length.aboutHours', { minutes: l.minutes })
+      : t('parthenon.gathering.length.about', { minutes: l.minutes }),
+    beyond: !!autoGeneratedRounds.value && l.rounds > autoGeneratedRounds.value
+  }))
+)
+
+// When a length was chosen on the steps this section confirms it rather than
+// asking again; the sentence follows the choice if it is changed here or if
+// the Scribe planned a shorter city than was asked for.
+const inSentence = (id) => t(`parthenon.gathering.length.inSentence.${id}`)
+
+const lengthTitle = computed(() =>
+  carriedLength ? t('parthenon.gathering.length.titleCarried') : t('parthenon.gathering.length.title')
+)
+
+const lengthHint = computed(() => {
+  if (!carriedLength) return t('parthenon.gathering.length.hint')
+  const name = inSentence(carriedLength.id)
+  if (chosenLength.value === carriedLength.id) return t('parthenon.gathering.length.carried', { name })
+  return t('parthenon.gathering.length.carriedChanged', { name, now: inSentence(chosenLength.value) })
+})
+
+const chooseLength = (l) => {
+  if (l.beyond) return
+  chosenLength.value = l.id
+}
+
+const onLengthKey = (e, l) => {
+  const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp']
+  if (!keys.includes(e.key)) return
+  e.preventDefault()
+  const open = lengths.value.filter((x) => !x.beyond)
+  const idx = open.findIndex((x) => x.id === l.id)
+  const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1
+  const next = open[(idx + step + open.length) % open.length]
+  if (next) {
+    chosenLength.value = next.id
+    nextTick(() => document.querySelector('.length-option[aria-checked="true"]')?.focus())
+  }
+}
+
+// When the config is known, make sure the chosen length is one the city can hold.
+watch(lengths, (list) => {
+  const current = list.find((l) => l.id === chosenLength.value)
+  if (current && !current.beyond) return
+  const open = list.filter((l) => !l.beyond)
+  if (open.length) chosenLength.value = open[open.length - 1].id
+})
+
+const handleStartSimulation = () => {
+  const chosen = RUN_LENGTHS.find((l) => l.id === chosenLength.value) || RUN_LENGTHS[1]
+  emit('next-step', { maxRounds: chosen.rounds })
+}
+
+// --- The citizen's card ------------------------------------------------------
+
+const cardEl = ref(null)
+const closeBtn = ref(null)
+let returnFocusTo = null
+
+const openCard = (citizen, event) => {
+  returnFocusTo = event?.currentTarget || null
+  selected.value = citizen
+  nextTick(() => closeBtn.value?.focus())
+}
+
+const closeCard = () => {
+  selected.value = null
+  nextTick(() => returnFocusTo?.focus?.())
+}
+
+const onCardKey = (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    closeCard()
+    return
+  }
+  if (e.key !== 'Tab' || !cardEl.value) return
+  const focusable = cardEl.value.querySelectorAll('button, [href], [tabindex]:not([tabindex="-1"])')
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+// --- The engine's preparation, polled as before -----------------------------
+
+const stageLabel = (key) => {
+  const map = {
+    reading: 'stageReading',
+    generating_profiles: 'stageProfiles',
+    generating_config: 'stageConfig',
+    copying_scripts: 'stageScripts'
+  }
+  return map[key] ? t(`parthenon.gathering.ledger.${map[key]}`) : ''
+}
+
+watch(currentStage, (stage) => {
+  if (stage === 'generating_profiles') {
+    phase.value = Math.max(phase.value, 1)
+  } else if (stage === 'generating_config' || stage === 'copying_scripts') {
+    phase.value = Math.max(phase.value, 2)
+    if (!configTimer) {
+      addLog(t('parthenon.gathering.ledger.settingHours'))
+      startConfigPolling()
+    }
+  }
+})
+
+const stageFromDetail = (detail, message) => {
+  if (detail?.current_stage) return detail.current_stage
+  const name = String(detail?.current_stage_name || message || '')
+  if (/profile|人设/i.test(name)) return 'generating_profiles'
+  if (/script|脚本/i.test(name)) return 'copying_scripts'
+  if (/config|配置/i.test(name)) return 'generating_config'
+  if (/read|entit|实体|读取/i.test(name)) return 'reading'
+  return ''
 }
 
 const handlePrepareFailure = (message) => {
   stopPolling()
   stopProfilesPolling()
   stopConfigPolling()
-  addLog(t('log.prepareFailedWithError', { error: message || t('common.unknownError') }))
+  const why = cityWords(message || t('common.unknownError'))
+  troubleMessage.value = why
+  addLog(t('parthenon.gathering.ledger.failed', { error: why }))
   emit('update-status', 'error')
 }
 
-// 处理开始模拟按钮点击
-const handleStartSimulation = () => {
-  // 构建传递给父组件的参数
-  const params = {}
-  
-  if (useCustomRounds.value) {
-    // 用户自定义轮数，传递 max_rounds 参数
-    params.maxRounds = customMaxRounds.value
-    addLog(t('log.startSimCustomRounds', { rounds: customMaxRounds.value }))
-  } else {
-    // 用户选择保持自动生成的轮数，不传递 max_rounds 参数
-    addLog(t('log.startSimAutoRounds', { rounds: autoGeneratedRounds.value }))
-  }
-  
-  emit('next-step', params)
-}
-
-const truncateBio = (bio) => {
-  if (bio.length > 80) {
-    return bio.substring(0, 80) + '...'
-  }
-  return bio
-}
-
-const selectProfile = (profile) => {
-  selectedProfile.value = profile
-}
-
-// 自动开始准备模拟
 const startPrepareSimulation = async () => {
   if (!props.simulationId) {
-    addLog(t('log.errorMissingSimId'))
+    addLog(t('parthenon.gathering.ledger.noGathering'))
     emit('update-status', 'error')
     return
   }
-  
-  // 标记第一步完成，开始第二步
+
   phase.value = 1
-  addLog(t('log.simInstanceCreated', { id: props.simulationId }))
-  addLog(t('log.preparingSimEnv'))
+  addLog(t('parthenon.gathering.ledger.summoning'))
   emit('update-status', 'processing')
-  
+
   try {
     const res = await prepareSimulation({
       simulation_id: props.simulationId,
       use_llm_for_profiles: true,
       parallel_profile_count: 5
     })
-    
+
     if (res.success && res.data) {
       if (res.data.already_prepared) {
-        addLog(t('log.detectedExistingPrep'))
+        addLog(t('parthenon.gathering.ledger.alreadyGathered'))
         await loadPreparedData()
         return
       }
-      
+
       taskId.value = res.data.task_id
-      addLog(t('log.prepareTaskStarted'))
-      addLog(t('log.prepareTaskId', { taskId: res.data.task_id }))
-      
-      // 立即设置预期Agent总数（从prepare接口返回值获取）
+
       if (res.data.expected_entities_count) {
         expectedTotal.value = res.data.expected_entities_count
-        addLog(t('log.zepEntitiesFound', { count: res.data.expected_entities_count }))
-        if (res.data.entity_types && res.data.entity_types.length > 0) {
-          addLog(t('log.entityTypes', { types: res.data.entity_types.join(', ') }))
+        addLog(t('parthenon.gathering.ledger.namesFound', { count: res.data.expected_entities_count }))
+        if (res.data.entity_types?.length) {
+          const kinds = res.data.entity_types.map((x) => entityTypeName(x)).filter(Boolean)
+          if (kinds.length) addLog(t('parthenon.gathering.ledger.kinds', { types: kinds.join(', ') }))
         }
       }
-      
-      addLog(t('log.startPollingProgress'))
-      // 开始轮询进度
+
       startPolling()
-      // 开始实时获取 Profiles
       startProfilesPolling()
     } else {
-      addLog(t('log.prepareFailed', { error: res.error || t('common.unknownError') }))
-      emit('update-status', 'error')
+      handlePrepareFailure(res.error)
     }
   } catch (err) {
-    addLog(t('log.prepareException', { error: err.message }))
-    emit('update-status', 'error')
+    handlePrepareFailure(err.message)
   }
 }
 
+const callAgain = () => {
+  troubleMessage.value = ''
+  lastLoggedMessage = ''
+  lastLoggedConfigStage = ''
+  startPrepareSimulation()
+}
+
 const startPolling = () => {
-  pollTimer = setInterval(pollPrepareStatus, 2000)
+  if (!pollTimer) pollTimer = setInterval(pollPrepareStatus, 2000)
 }
 
 const stopPolling = () => {
@@ -844,7 +634,7 @@ const stopPolling = () => {
 }
 
 const startProfilesPolling = () => {
-  profilesTimer = setInterval(fetchProfilesRealtime, 3000)
+  if (!profilesTimer) profilesTimer = setInterval(fetchProfilesRealtime, 3000)
 }
 
 const stopProfilesPolling = () => {
@@ -856,52 +646,38 @@ const stopProfilesPolling = () => {
 
 const pollPrepareStatus = async () => {
   if (!taskId.value && !props.simulationId) return
-  
+
   try {
     const res = await getPrepareStatus({
       task_id: taskId.value,
       simulation_id: props.simulationId
     })
-    
+
     if (res.success && res.data) {
       const data = res.data
-      
-      // 更新进度
-      prepareProgress.value = data.progress || 0
-      progressMessage.value = data.message || ''
-      
-      // 解析阶段信息并输出详细日志
+
       if (data.progress_detail) {
-        currentStage.value = data.progress_detail.current_stage_name || ''
-        
-        // 输出详细进度日志（避免重复）
         const detail = data.progress_detail
+        currentStage.value = stageFromDetail(detail, data.message)
         const logKey = `${detail.current_stage}-${detail.current_item}-${detail.total_items}`
         if (logKey !== lastLoggedMessage && detail.item_description) {
           lastLoggedMessage = logKey
-          const stageInfo = `[${detail.stage_index}/${detail.total_stages}]`
+          const stage = stageLabel(currentStage.value) || cityWords(detail.current_stage_name || '')
           if (detail.total_items > 0) {
-            addLog(`${stageInfo} ${detail.current_stage_name}: ${detail.current_item}/${detail.total_items} - ${detail.item_description}`)
+            addLog(t('parthenon.gathering.ledger.stageCount', { stage, current: detail.current_item, total: detail.total_items }))
           } else {
-            addLog(`${stageInfo} ${detail.current_stage_name}: ${detail.item_description}`)
+            addLog(t('parthenon.gathering.ledger.stageNote', { stage, note: cityWords(detail.item_description) }))
           }
         }
       } else if (data.message) {
-        // 从消息中提取阶段
-        const match = data.message.match(/\[(\d+)\/(\d+)\]\s*([^:]+)/)
-        if (match) {
-          currentStage.value = match[3].trim()
-        }
-        // 输出消息日志（避免重复）
+        currentStage.value = stageFromDetail(null, data.message)
         if (data.message !== lastLoggedMessage) {
           lastLoggedMessage = data.message
-          addLog(data.message)
+          addLog(cityWords(data.message))
         }
       }
-      
-      // 检查是否完成
+
       if (data.status === 'completed' || data.status === 'ready' || data.already_prepared) {
-        addLog(t('log.prepareComplete'))
         stopPolling()
         stopProfilesPolling()
         await loadPreparedData()
@@ -910,57 +686,38 @@ const pollPrepareStatus = async () => {
       }
     }
   } catch (err) {
-    console.warn('轮询状态失败:', err)
+    console.warn('Could not read the preparation status:', err)
   }
 }
 
 const fetchProfilesRealtime = async () => {
   if (!props.simulationId) return
-  
+
   try {
     const res = await getSimulationProfilesRealtime(props.simulationId)
-    
+
     if (res.success && res.data) {
-      const prevCount = profiles.value.length
       profiles.value = res.data.profiles || []
-      // 只有当 API 返回有效值时才更新，避免覆盖已有的有效值
-      if (res.data.total_expected) {
-        expectedTotal.value = res.data.total_expected
-      }
-      
-      // 提取实体类型
-      const types = new Set()
-      profiles.value.forEach(p => {
-        if (p.entity_type) types.add(p.entity_type)
-      })
-      entityTypes.value = Array.from(types)
-      
-      // 输出 Profile 生成进度日志（仅当数量变化时）
+      if (res.data.total_expected) expectedTotal.value = res.data.total_expected
+
       const currentCount = profiles.value.length
       if (currentCount > 0 && currentCount !== lastLoggedProfileCount) {
         lastLoggedProfileCount = currentCount
         const total = expectedTotal.value || '?'
-        const latestProfile = profiles.value[currentCount - 1]
-        const profileName = latestProfile?.name || latestProfile?.username || `Agent_${currentCount}`
-        if (currentCount === 1) {
-          addLog(t('log.startGeneratingAgentProfiles'))
-        }
-        addLog(t('log.agentProfile', { current: currentCount, total: total, name: profileName, profession: latestProfile?.profession || t('step2.unknownProfession') }))
-
-        // 如果全部生成完成
+        const latest = profiles.value[currentCount - 1]
+        addLog(t('parthenon.gathering.ledger.arrivedOne', { name: citizenName(latest?.name, latest?.username), current: currentCount, total }))
         if (expectedTotal.value && currentCount >= expectedTotal.value) {
-          addLog(t('log.allProfilesComplete', { count: currentCount }))
+          addLog(t('parthenon.gathering.ledger.arrivedAll', { count: currentCount }))
         }
       }
     }
   } catch (err) {
-    console.warn('获取 Profiles 失败:', err)
+    console.warn('Could not read the citizens:', err)
   }
 }
 
-// 配置轮询
 const startConfigPolling = () => {
-  configTimer = setInterval(fetchConfigRealtime, 2000)
+  if (!configTimer) configTimer = setInterval(fetchConfigRealtime, 2000)
 }
 
 const stopConfigPolling = () => {
@@ -970,12 +727,38 @@ const stopConfigPolling = () => {
   }
 }
 
+const noteConfig = (config, summary) => {
+  simulationConfig.value = config
+  if (config.time_config?.total_simulation_hours) {
+    addLog(t('parthenon.gathering.ledger.hoursSet', { hours: config.time_config.total_simulation_hours }))
+  }
+  const posts = config.event_config?.initial_posts?.length ?? summary?.initial_posts_count ?? 0
+  const matters = config.event_config?.hot_topics?.length ?? summary?.hot_topics_count ?? 0
+  if (posts || matters) addLog(t('parthenon.gathering.ledger.firstWords', { posts, topics: matters }))
+  if (config.generation_reasoning) {
+    const heads = {
+      'Time Config': t('parthenon.gathering.ledger.reasonHours'),
+      'Event Config': t('parthenon.gathering.ledger.reasonWords'),
+      'Agent Config': t('parthenon.gathering.ledger.reasonCitizens'),
+      'Post Assignment': t('parthenon.gathering.ledger.reasonOpenings')
+    }
+    String(config.generation_reasoning)
+      .split('|')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const swapped = line.replace(/^(Time Config|Event Config|Agent Config|Post Assignment)\s*:/i, (m, head) => `${heads[head] || head}:`)
+        addLog(cityWords(swapped))
+      })
+  }
+}
+
 const fetchConfigRealtime = async () => {
   if (!props.simulationId) return
-  
+
   try {
     const res = await getSimulationConfigRealtime(props.simulationId)
-    
+
     if (res.success && res.data) {
       const data = res.data
 
@@ -983,63 +766,32 @@ const fetchConfigRealtime = async () => {
         handlePrepareFailure(data.error)
         return
       }
-      
-      // 输出配置生成阶段日志（避免重复）
+
       if (data.generation_stage && data.generation_stage !== lastLoggedConfigStage) {
         lastLoggedConfigStage = data.generation_stage
-        if (data.generation_stage === 'generating_profiles') {
-          addLog(t('log.generatingAgentProfileConfig'))
-        } else if (data.generation_stage === 'generating_config') {
-          addLog(t('log.generatingLLMConfig'))
-        }
+        if (data.generation_stage === 'generating_config') addLog(t('parthenon.gathering.ledger.settingHours'))
       }
-      
-      // 如果配置已生成
-      if (data.config_generated && data.config) {
-        simulationConfig.value = data.config
-        addLog(t('log.configComplete'))
 
-        // 显示详细配置摘要
-        if (data.summary) {
-          addLog(t('log.configSummaryAgents', { count: data.summary.total_agents }))
-          addLog(t('log.configSummaryHours', { hours: data.summary.simulation_hours }))
-          addLog(t('log.configSummaryPosts', { count: data.summary.initial_posts_count }))
-          addLog(t('log.configSummaryTopics', { count: data.summary.hot_topics_count }))
-          addLog(t('log.configSummaryPlatforms', { twitter: data.summary.has_twitter_config ? '✓' : '✗', reddit: data.summary.has_reddit_config ? '✓' : '✗' }))
-        }
-        
-        // 显示时间配置详情
-        if (data.config.time_config) {
-          const tc = data.config.time_config
-          addLog(t('log.timeConfigDetail', { minutes: tc.minutes_per_round, rounds: Math.floor((tc.total_simulation_hours * 60) / tc.minutes_per_round) }))
-        }
-        
-        // 显示事件配置
-        if (data.config.event_config?.narrative_direction) {
-          const narrative = data.config.event_config.narrative_direction
-          addLog(t('log.narrativeDirection', { direction: narrative.length > 50 ? narrative.substring(0, 50) + '...' : narrative }))
-        }
-        
+      if (data.config_generated && data.config) {
+        noteConfig(data.config, data.summary)
         stopConfigPolling()
         phase.value = 4
-        addLog(t('log.envSetupComplete'))
+        addLog(t('parthenon.gathering.ledger.ready'))
         emit('update-status', 'completed')
       }
     }
   } catch (err) {
-    console.warn('获取 Config 失败:', err)
+    console.warn('Could not read the city\'s hours:', err)
   }
 }
 
 const loadPreparedData = async () => {
-  phase.value = 2
-  addLog(t('log.loadingExistingConfig'))
+  phase.value = Math.max(phase.value, 2)
 
-  // 最后获取一次 Profiles
   await fetchProfilesRealtime()
-  addLog(t('log.loadedAgentProfiles', { count: profiles.value.length }))
+  if (profiles.value.length && !expectedTotal.value) expectedTotal.value = profiles.value.length
+  addLog(t('parthenon.gathering.ledger.cardsRead', { count: profiles.value.length }))
 
-  // 获取配置（使用实时接口）
   try {
     const res = await getSimulationConfigRealtime(props.simulationId)
     if (res.success && res.data) {
@@ -1051,47 +803,24 @@ const loadPreparedData = async () => {
       }
 
       if (configState.config_generated && configState.config) {
-        simulationConfig.value = configState.config
-        addLog(t('log.configLoadSuccess'))
-
-        // 显示详细配置摘要
-        if (configState.summary) {
-          addLog(t('log.configSummaryAgents', { count: configState.summary.total_agents }))
-          addLog(t('log.configSummaryHours', { hours: configState.summary.simulation_hours }))
-          addLog(t('log.configSummaryPostsAlt', { count: configState.summary.initial_posts_count }))
-        }
-
-        addLog(t('log.envSetupComplete'))
+        noteConfig(configState.config, configState.summary)
         phase.value = 4
+        addLog(t('parthenon.gathering.ledger.ready'))
         emit('update-status', 'completed')
       } else if (configState.is_generating) {
-        addLog(t('log.configGenerating'))
+        addLog(t('parthenon.gathering.ledger.hoursStillBeingSet'))
         startConfigPolling()
       } else {
-        handlePrepareFailure(t('log.configNotGenerating'))
+        handlePrepareFailure(t('parthenon.gathering.ledger.hoursMissing'))
       }
     }
   } catch (err) {
-    handlePrepareFailure(t('log.loadConfigFailed', { error: err.message }))
+    handlePrepareFailure(err.message)
   }
 }
 
-// Scroll log to bottom
-const logContent = ref(null)
-watch(() => props.systemLogs?.length, () => {
-  nextTick(() => {
-    if (logContent.value) {
-      logContent.value.scrollTop = logContent.value.scrollHeight
-    }
-  })
-})
-
 onMounted(() => {
-  // 自动开始准备流程
-  if (props.simulationId) {
-    addLog(t('log.step2Init'))
-    startPrepareSimulation()
-  }
+  if (props.simulationId) startPrepareSimulation()
 })
 
 onUnmounted(() => {
@@ -1102,1522 +831,534 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.env-setup-panel {
-  height: 100%;
+.gathering {
   display: flex;
   flex-direction: column;
-  background: #FAFAFA;
-  font-family: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
+  min-width: 0;
+  color: var(--p-ink-2);
+  font-family: var(--p-font-body);
 }
 
-.scroll-container {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
+/* The summons */
+.summons {
+  padding: 32px var(--p-gutter) 20px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-}
-
-/* Step Card */
-.step-card {
-  background: #FFF;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-  border: 1px solid #EAEAEA;
-  transition: all 0.3s ease;
-  position: relative;
-}
-
-.step-card.active {
-  border-color: #FF5722;
-  box-shadow: 0 4px 12px rgba(255, 87, 34, 0.08);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.step-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.step-num {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 20px;
-  font-weight: 700;
-  color: #E0E0E0;
-}
-
-.step-card.active .step-num,
-.step-card.completed .step-num {
-  color: #000;
-}
-
-.step-title {
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: 0.5px;
-}
-
-.badge {
-  font-size: 10px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.badge.success { background: #E8F5E9; color: #2E7D32; }
-.badge.processing { background: #FF5722; color: #FFF; }
-.badge.pending { background: #F5F5F5; color: #999; }
-.badge.accent { background: #E3F2FD; color: #1565C0; }
-
-.card-content {
-  /* No extra padding - uses step-card's padding */
-}
-
-.api-note {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #999;
-  margin-bottom: 8px;
-}
-
-.description {
-  font-size: 12px;
-  color: #666;
-  line-height: 1.5;
-  margin-bottom: 16px;
-}
-
-/* Action Section */
-.action-section {
-  margin-top: 16px;
-}
-
-.action-btn {
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
-  padding: 12px 24px;
-  font-size: 14px;
-  font-weight: 600;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  min-width: 0;
 }
 
-.action-btn.primary {
-  background: #000;
-  color: #FFF;
-}
-
-.action-btn.primary:hover:not(:disabled) {
-  opacity: 0.8;
-}
-
-.action-btn.secondary {
-  background: #F5F5F5;
-  color: #333;
-}
-
-.action-btn.secondary:hover:not(:disabled) {
-  background: #E5E5E5;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-group {
-  display: flex;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.action-group.dual {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-
-.action-group.dual .action-btn {
-  width: 100%;
-}
-
-/* Info Card */
-.info-card {
-  background: #F5F5F5;
-  border-radius: 6px;
-  padding: 16px;
-  margin-top: 16px;
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px dashed #E0E0E0;
-}
-
-.info-row:last-child {
-  border-bottom: none;
-}
-
-.info-label {
-  font-size: 12px;
-  color: #666;
-}
-
-.info-value {
-  font-size: 13px;
+.summons-title {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-size: var(--t-2xl);
   font-weight: 500;
+  line-height: 1.05;
+  color: var(--p-ink);
+  text-wrap: balance;
 }
 
-.info-value.mono {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+.summons-lede {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-md);
+  line-height: 1.5;
+  color: var(--p-ink-2);
+  max-width: 44em;
 }
 
-/* Stats Grid */
-.stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  background: #F9F9F9;
-  padding: 16px;
-  border-radius: 6px;
-}
-
-.stat-card {
-  text-align: center;
-}
-
-.stat-value {
-  display: block;
-  font-size: 20px;
-  font-weight: 700;
-  color: #000;
-  font-family: 'JetBrains Mono', monospace;
-}
-
-.stat-label {
-  font-size: 9px;
-  color: #999;
-  text-transform: uppercase;
-  margin-top: 4px;
-  display: block;
-}
-
-/* Profiles Preview */
-.profiles-preview {
-  margin-top: 20px;
-  border-top: 1px solid #E5E5E5;
-  padding-top: 16px;
-}
-
-.preview-header {
+/* Trouble */
+.trouble {
+  margin: 0 var(--p-gutter) 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--p-line);
+  border-left: 2px solid var(--p-error);
+  background: var(--p-surface);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
 }
 
-.preview-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.trouble-title {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  color: var(--p-ink);
 }
 
-.profiles-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  max-height: 320px;
-  overflow-y: auto;
-  padding-right: 4px;
+.trouble-why {
+  font-size: var(--t-sm);
+  color: var(--p-ink-3);
+  max-width: 60em;
 }
 
-.profiles-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.profiles-list::-webkit-scrollbar-thumb {
-  background: #DDD;
-  border-radius: 2px;
-}
-
-.profiles-list::-webkit-scrollbar-thumb:hover {
-  background: #CCC;
-}
-
-.profile-card {
-  background: #FAFAFA;
-  border: 1px solid #E5E5E5;
-  border-radius: 6px;
-  padding: 14px;
+.trouble-why summary {
   cursor: pointer;
-  transition: all 0.2s ease;
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  color: var(--p-ink-3);
 }
 
-.profile-card:hover {
-  border-color: #999;
-  background: #FFF;
+.trouble-why p {
+  margin: 8px 0 0;
+  font-family: var(--p-font-serif);
+  line-height: 1.5;
+  color: var(--p-ink-2);
+  overflow-wrap: anywhere;
 }
 
-.profile-header {
+/* The slope */
+.slope {
+  list-style: none;
+  margin: 0;
+  padding: 4px var(--p-gutter) 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.seat {
+  min-width: 0;
+  animation: arrive 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+@keyframes arrive {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.citizen {
+  width: 100%;
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px 16px;
+  background: var(--p-surface);
+  border: 1px solid var(--p-line);
+  border-radius: var(--p-radius);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.citizen:hover {
+  border-color: var(--p-gold);
+  background: var(--p-surface-2);
+}
+
+.citizen .p-coin {
+  background: color-mix(in srgb, currentColor 14%, var(--p-surface-3));
+}
+
+.citizen-body {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
-.profile-realname {
-  font-size: 14px;
-  font-weight: 700;
-  color: #000;
+.citizen-name {
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--p-ink);
+  overflow-wrap: anywhere;
 }
 
-.profile-username {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: #999;
+.citizen-role {
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
+  line-height: 1.4;
 }
 
-.profile-meta {
-  margin-bottom: 8px;
-}
-
-.profile-profession {
-  font-size: 11px;
-  color: #666;
-  background: #F0F0F0;
-  padding: 2px 8px;
-  border-radius: 3px;
-}
-
-.profile-bio {
-  font-size: 12px;
-  color: #444;
-  line-height: 1.6;
-  margin: 0 0 10px 0;
+.citizen-line {
+  margin-top: 6px;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--p-ink-2);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.profile-topics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.topic-tag {
-  font-size: 10px;
-  color: #1565C0;
-  background: #E3F2FD;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.topic-more {
-  font-size: 10px;
-  color: #999;
-  padding: 2px 6px;
-}
-
-/* Config Preview */
-/* Config Detail Panel */
-.config-detail-panel {
-  margin-top: 16px;
-}
-
-.config-block {
-  margin-top: 16px;
-  border-top: 1px solid #E5E5E5;
-  padding-top: 12px;
-}
-
-.config-block:first-child {
-  margin-top: 0;
-  border-top: none;
-  padding-top: 0;
-}
-
-.config-block-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.config-block-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.config-block-badge {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  background: #F1F5F9;
-  color: #475569;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-/* Config Grid */
-.config-grid {
+.seat.empty {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.config-item {
-  background: #F9F9F9;
-  padding: 12px 14px;
-  border-radius: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.config-item-label {
-  font-size: 11px;
-  color: #94A3B8;
-}
-
-.config-item-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 16px;
-  font-weight: 600;
-  color: #1E293B;
-}
-
-/* Time Periods */
-.time-periods {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.period-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: #F9F9F9;
-  border-radius: 6px;
-}
-
-.period-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #64748B;
-  min-width: 70px;
-}
-
-.period-hours {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: #475569;
-  flex: 1;
-}
-
-.period-multiplier {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 600;
-  color: #6366F1;
-  background: #EEF2FF;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-/* Agents Cards */
-.agents-cards {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  max-height: 400px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.agents-cards::-webkit-scrollbar {
-  width: 4px;
-}
-
-.agents-cards::-webkit-scrollbar-thumb {
-  background: #DDD;
-  border-radius: 2px;
-}
-
-.agents-cards::-webkit-scrollbar-thumb:hover {
-  background: #CCC;
-}
-
-.agent-card {
-  background: #F9F9F9;
-  border: 1px solid #E5E5E5;
-  border-radius: 6px;
-  padding: 14px;
-  transition: all 0.2s ease;
-}
-
-.agent-card:hover {
-  border-color: #999;
-  background: #FFF;
-}
-
-/* Agent Card Header */
-.agent-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #F1F5F9;
-}
-
-.agent-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.agent-id {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #94A3B8;
-}
-
-.agent-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1E293B;
-}
-
-.agent-tags {
-  display: flex;
-  gap: 6px;
-}
-
-.agent-type {
-  font-size: 10px;
-  color: #64748B;
-  background: #F1F5F9;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.agent-stance {
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.stance-neutral {
-  background: #F1F5F9;
-  color: #64748B;
-}
-
-.stance-supportive {
-  background: #DCFCE7;
-  color: #16A34A;
-}
-
-.stance-opposing {
-  background: #FEE2E2;
-  color: #DC2626;
-}
-
-.stance-observer {
-  background: #FEF3C7;
-  color: #D97706;
-}
-
-/* Agent Timeline */
-.agent-timeline {
-  margin-bottom: 14px;
-}
-
-.timeline-label {
-  display: block;
-  font-size: 10px;
-  color: #94A3B8;
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.mini-timeline {
-  display: flex;
-  gap: 2px;
-  height: 16px;
-  background: #F8FAFC;
-  border-radius: 4px;
-  padding: 3px;
-}
-
-.timeline-hour {
-  flex: 1;
-  background: #E2E8F0;
-  border-radius: 2px;
-  transition: all 0.2s;
-}
-
-.timeline-hour.active {
-  background: linear-gradient(180deg, #6366F1, #818CF8);
-}
-
-.timeline-marks {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 4px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  color: #94A3B8;
-}
-
-/* Agent Params */
-.agent-params {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.param-group {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.param-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.param-item .param-label {
-  font-size: 10px;
-  color: #94A3B8;
-}
-
-.param-item .param-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
-}
-
-.param-value.with-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.mini-bar {
-  height: 4px;
-  background: linear-gradient(90deg, #6366F1, #A855F7);
-  border-radius: 2px;
-  min-width: 4px;
-  max-width: 40px;
-}
-
-.param-value.positive {
-  color: #16A34A;
-}
-
-.param-value.negative {
-  color: #DC2626;
-}
-
-.param-value.neutral {
-  color: #64748B;
-}
-
-.param-value.highlight {
-  color: #6366F1;
-}
-
-/* Platforms Grid */
-.platforms-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.platform-card {
-  background: #F9F9F9;
-  padding: 14px;
-  border-radius: 6px;
-}
-
-.platform-card-header {
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #E5E5E5;
-}
-
-.platform-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #333;
-}
-
-.platform-params {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.param-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.param-label {
-  font-size: 12px;
-  color: #64748B;
-}
-
-.param-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  color: #1E293B;
-}
-
-/* Reasoning Content */
-.reasoning-content {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.reasoning-item {
-  padding: 12px 14px;
-  background: #F9F9F9;
-  border-radius: 6px;
-}
-
-.reasoning-text {
-  font-size: 13px;
-  color: #555;
-  line-height: 1.7;
-  margin: 0;
-}
-
-/* Profile Modal */
-.profile-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-}
-
-.profile-modal {
-  background: #FFF;
-  border-radius: 16px;
-  width: 90%;
-  max-width: 600px;
-  max-height: 85vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 24px;
-  background: #FFF;
-  border-bottom: 1px solid #F0F0F0;
-}
-
-.modal-header-info {
-  flex: 1;
-}
-
-.modal-name-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.modal-realname {
-  font-size: 20px;
-  font-weight: 700;
-  color: #000;
-}
-
-.modal-username {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  color: #999;
-}
-
-.modal-profession {
-  font-size: 12px;
-  color: #666;
-  background: #F5F5F5;
-  padding: 4px 10px;
-  border-radius: 4px;
-  display: inline-block;
-  font-weight: 500;
-}
-
-.close-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: none;
-  color: #999;
-  border-radius: 50%;
-  font-size: 24px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transition: color 0.2s;
-  padding: 0;
-}
-
-.close-btn:hover {
-  color: #333;
-}
-
-.modal-body {
-  padding: 24px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-/* 基本信息网格 */
-.modal-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 24px 16px;
-  margin-bottom: 32px;
-  padding: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px 16px;
+  border: 1px dashed var(--p-line);
+  opacity: 0.7;
+}
+
+.seat.empty .p-coin {
+  border-style: dashed;
   background: transparent;
-  border-radius: 0;
 }
 
-.info-item {
+.ghost-line {
+  display: block;
+  height: 10px;
+  width: 45%;
+  background: var(--p-surface-3);
+  margin-top: 6px;
+}
+
+.ghost-line.long { width: 70%; margin-top: 8px; }
+
+/* Blocks */
+.block {
+  padding: 28px var(--p-gutter);
+  border-top: 1px solid var(--p-line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.block-title {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-size: var(--t-xl);
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--p-ink);
+}
+
+.prose {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-md);
+  line-height: 1.6;
+  color: var(--p-ink-2);
+  max-width: 44em;
+}
+
+.prose.muted {
+  color: var(--p-ink-3);
+  font-size: var(--t-sm);
+  font-style: italic;
+}
+
+/* Topics */
+.topics {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.topic {
+  padding: 4px 10px;
+  border: 1px solid var(--p-line-strong);
+  font-size: var(--t-xs);
+  color: var(--p-ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* Openings */
+.openings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 60em;
+}
+
+.opening {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  animation: arrive 0.6s ease both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+.p-coin.small {
+  width: 30px;
+  height: 30px;
+  font-size: var(--t-md);
+}
+
+.p-coin.big {
+  width: 56px;
+  height: 56px;
+  font-size: var(--t-xl);
+}
+
+.opening-body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.info-label {
-  font-size: 11px;
-  color: #999;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.opening-who {
+  font-family: var(--p-font-display);
+  font-size: var(--t-md);
   font-weight: 600;
+  color: var(--p-ink);
 }
 
-.info-value {
-  font-size: 15px;
-  font-weight: 600;
-  color: #333;
+.opening-role {
+  font-family: var(--p-font-body);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  color: var(--p-ink-3);
 }
 
-.info-value.mbti {
-  font-family: 'JetBrains Mono', monospace;
-  color: #FF5722;
-}
-
-/* 模块区域 */
-.modal-section {
-  margin-bottom: 28px;
-}
-
-.section-label {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  color: #999;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
-}
-
-.section-bio {
-  font-size: 14px;
-  color: #333;
-  line-height: 1.6;
+.opening-text {
   margin: 0;
-  padding: 16px;
-  background: #F9F9F9;
-  border-radius: 6px;
-  border-left: 3px solid #E0E0E0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-md);
+  line-height: 1.6;
+  color: var(--p-ink-2);
 }
 
-/* 话题标签 */
-.topics-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+.saying > .p-button { align-self: flex-start; }
 
-.topic-item {
-  font-size: 11px;
-  color: #1565C0;
-  background: #E3F2FD;
-  padding: 4px 10px;
-  border-radius: 12px;
-  transition: all 0.2s;
-  border: none;
-}
-
-.topic-item:hover {
-  background: #BBDEFB;
-  color: #0D47A1;
-}
-
-/* 详细人设 */
-.persona-dimensions {
+/* Lengths */
+.lengths {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
 }
 
-.dimension-card {
-  background: #F8F9FA;
-  padding: 12px;
-  border-radius: 6px;
-  border-left: 3px solid #DDD;
-  transition: all 0.2s;
+.length-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  min-width: 0;
+  background: var(--p-surface);
+  border: 1px solid var(--p-line-strong);
+  border-radius: var(--p-radius);
+  color: var(--p-ink-2);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
-.dimension-card:hover {
-  background: #F0F0F0;
-  border-left-color: #999;
+.length-option:hover { border-color: var(--p-gold); }
+
+.length-option[aria-checked='true'] {
+  border-color: var(--p-gold);
+  background: var(--p-terracotta-tint);
+  box-shadow: inset 0 0 0 1px var(--p-gold);
 }
 
-.dim-title {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  color: #333;
-  margin-bottom: 4px;
+.length-option[aria-disabled='true'] {
+  cursor: not-allowed;
+  color: var(--p-ink-3);
+  border-style: dashed;
 }
 
-.dim-desc {
-  display: block;
-  font-size: 10px;
-  color: #888;
+.length-option[aria-disabled='true']:hover { border-color: var(--p-line-strong); }
+
+.length-name {
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--p-ink);
+}
+
+.length-option[aria-disabled='true'] .length-name { color: var(--p-ink-3); }
+
+.length-meta {
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
   line-height: 1.4;
 }
 
-.persona-content {
-  max-height: none;
-  overflow: visible;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
+.length-note {
+  margin-top: 4px;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
 }
 
-.persona-content::-webkit-scrollbar {
-  width: 4px;
-}
-
-.persona-content::-webkit-scrollbar-thumb {
-  background: #DDD;
-  border-radius: 2px;
-}
-
-.section-persona {
-  font-size: 13px;
-  color: #555;
-  line-height: 1.8;
-  margin: 0;
-  text-align: justify;
-}
-
-/* System Logs */
-.system-logs {
-  background: #000;
-  color: #DDD;
-  padding: 16px;
-  font-family: 'JetBrains Mono', monospace;
-  border-top: 1px solid #222;
-  flex-shrink: 0;
-}
-
-.log-header {
-  display: flex;
-  justify-content: space-between;
-  border-bottom: 1px solid #333;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  font-size: 10px;
-  color: #888;
-}
-
-.log-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  height: 80px; /* Approx 4 lines visible */
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.log-content::-webkit-scrollbar {
-  width: 4px;
-}
-
-.log-content::-webkit-scrollbar-thumb {
-  background: #333;
-  border-radius: 2px;
-}
-
-.log-line {
-  font-size: 11px;
-  display: flex;
-  gap: 12px;
-  line-height: 1.5;
-}
-
-.log-time {
-  color: #666;
-  min-width: 75px;
-}
-
-.log-msg {
-  color: #CCC;
-  word-break: break-all;
-}
-
-/* Spinner */
-.spinner-sm {
-  width: 16px;
-  height: 16px;
-  border: 2px solid #E5E5E5;
-  border-top-color: #FF5722;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-/* Orchestration Content */
-.orchestration-content {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  margin-top: 16px;
-}
-
-.box-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
-}
-
-.narrative-box {
-  background: #FFFFFF;
-  padding: 20px 24px;
-  border-radius: 12px;
-  border: 1px solid #EEF2F6;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.03);
-  transition: all 0.3s ease;
-}
-
-.narrative-box .box-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #666;
-  font-size: 13px;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
-  font-weight: 600;
-}
-
-.special-icon {
-  filter: drop-shadow(0 2px 4px rgba(255, 87, 34, 0.2));
-  transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.narrative-box:hover .special-icon {
-  transform: rotate(180deg);
-}
-
-.narrative-text {
-  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
-  font-size: 14px;
-  color: #334155;
-  line-height: 1.8;
-  margin: 0;
-  text-align: justify;
-  letter-spacing: 0.01em;
-}
-
-.topics-section {
-  background: #FFF;
-}
-
-.hot-topics-grid {
+/* The doors */
+.doors {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-.hot-topic-tag {
-  font-size: 12px;
-  color:rgba(255, 86, 34, 0.88);
-  background: #FFF3E0;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-weight: 500;
-}
-
-.hot-topic-more {
-  font-size: 11px;
-  color: #999;
-  padding: 4px 6px;
-}
-
-.initial-posts-section {
-  border-top: 1px solid #EAEAEA;
-  padding-top: 16px;
-}
-
-.posts-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-left: 8px;
-  border-left: 2px solid #F0F0F0;
-  margin-top: 12px;
-}
-
-.timeline-item {
-  position: relative;
-  padding-left: 20px;
-}
-
-.timeline-marker {
-  position: absolute;
-  left: 0;
-  top: 14px;
-  width: 12px;
-  height: 2px;
-  background: #DDD;
-}
-
-.timeline-content {
-  background: #F9F9F9;
-  padding: 12px;
-  border-radius: 6px;
-  border: 1px solid #EEE;
-}
-
-.post-header {
-  display: flex;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  gap: 12px 16px;
+  padding: 24px var(--p-gutter) 36px;
+  border-top: 1px solid var(--p-line);
+  min-width: 0;
 }
 
-.post-role {
-  font-size: 11px;
-  font-weight: 700;
-  color: #333;
-  text-transform: uppercase;
+.door-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  min-width: 0;
 }
 
-.post-agent-info {
+.door-reason {
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  color: var(--p-ink-3);
+}
+
+/* The card on parchment */
+.veil {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.post-id,
-.post-username {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #666;
-  line-height: 1;
-  vertical-align: baseline;
-}
-
-.post-username {
-  margin-right: 6px;
-}
-
-.post-text {
-  font-size: 12px;
-  color: #555;
-  line-height: 1.5;
-  margin: 0;
-}
-
-/* 模拟轮数配置样式 */
-.rounds-config-section {
-  margin: 24px 0;
-  padding-top: 24px;
-  border-top: 1px solid #EAEAEA;
-}
-
-.rounds-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1E293B;
-}
-
-.section-desc {
-  font-size: 12px;
-  color: #94A3B8;
-}
-
-.desc-highlight {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 600;
-  color: #1E293B;
-  background: #F1F5F9;
-  padding: 1px 6px;
-  border-radius: 4px;
-  margin: 0 2px;
-}
-
-/* Switch Control */
-.switch-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 4px 8px 4px 4px;
-  border-radius: 20px;
-  transition: background 0.2s;
-}
-
-.switch-control:hover {
-  background: #F8FAFC;
-}
-
-.switch-control input {
-  display: none;
-}
-
-.switch-track {
-  width: 36px;
-  height: 20px;
-  background: #E2E8F0;
-  border-radius: 10px;
-  position: relative;
-  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
-}
-
-.switch-track::after {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: 16px;
-  height: 16px;
-  background: #FFF;
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
-}
-
-.switch-control input:checked + .switch-track {
-  background: #000;
-}
-
-.switch-control input:checked + .switch-track::after {
-  transform: translateX(16px);
-}
-
-.switch-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #64748B;
-}
-
-.switch-control input:checked ~ .switch-label {
-  color: #1E293B;
-}
-
-/* Slider Content */
-.rounds-content {
-  animation: fadeIn 0.3s ease;
-}
-
-.slider-display {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 16px;
-}
-
-.slider-main-value {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.val-num {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 24px;
-  font-weight: 700;
-  color: #000;
-}
-
-.val-unit {
-  font-size: 12px;
-  color: #666;
-  font-weight: 500;
-}
-
-.slider-meta-info {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: #64748B;
-  background: #F1F5F9;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.range-wrapper {
-  position: relative;
-  padding: 0 2px;
-}
-
-.minimal-slider {
-  -webkit-appearance: none;
-  width: 100%;
-  height: 4px;
-  background: #E2E8F0;
-  border-radius: 2px;
-  outline: none;
-  background-image: linear-gradient(#000, #000);
-  background-size: var(--percent, 0%) 100%;
-  background-repeat: no-repeat;
-  cursor: pointer;
-}
-
-.minimal-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #FFF;
-  border: 2px solid #000;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-  transition: transform 0.1s;
-  margin-top: -6px; /* Center thumb */
-}
-
-.minimal-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.1);
-}
-
-.minimal-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 2px;
-}
-
-.range-marks {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 8px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #94A3B8;
-  position: relative;
-}
-
-.mark-recommend {
-  cursor: pointer;
-  transition: color 0.2s;
-  position: relative;
-}
-
-.mark-recommend:hover {
-  color: #000;
-}
-
-.mark-recommend.active {
-  color: #000;
-  font-weight: 600;
-}
-
-.mark-recommend::after {
-  content: '';
-  position: absolute;
-  top: -12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 1px;
-  height: 4px;
-  background: #CBD5E1;
-}
-
-/* Auto Info */
-.auto-info-card {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  background: #F8FAFC;
-  padding: 16px 20px;
-  border-radius: 8px;
-}
-
-.auto-value {
-  display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 4px;
-  padding-right: 24px;
-  border-right: 1px solid #E2E8F0;
-}
-
-.auto-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   justify-content: center;
+  padding: 16px;
+  background: rgba(11, 14, 19, 0.74);
+  backdrop-filter: blur(6px);
 }
 
-.auto-meta-row {
+.card {
+  position: relative;
+  width: min(100%, 640px);
+  max-height: min(86vh, 860px);
+  overflow: auto;
+  padding: 28px 28px 32px;
+  box-shadow: var(--p-shadow-2);
+  border-radius: var(--p-radius);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 18px;
 }
 
-.duration-badge {
+.card-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 500;
-  color: #64748B;
-  background: #FFFFFF;
-  border: 1px solid #E2E8F0;
-  padding: 3px 8px;
-  border-radius: 6px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
-}
-
-.auto-desc {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.auto-desc p {
-  margin: 0;
-  font-size: 13px;
-  color: #64748B;
-  line-height: 1.5;
-}
-
-.highlight-tip {
-  margin-top: 4px !important;
-  font-size: 12px !important;
-  color: #000 !important;
-  font-weight: 500;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--p-radius);
+  color: var(--p-ink-3);
   cursor: pointer;
 }
 
-.highlight-tip:hover {
-  text-decoration: underline;
+.card-close:hover { color: var(--p-ink); border-color: var(--p-line-strong); }
+
+.card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding-right: 40px;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+.card .p-coin {
+  background: color-mix(in srgb, currentColor 12%, var(--p-surface-2));
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
+.card-id {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.card-name {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-size: var(--t-2xl);
+  font-weight: 500;
+  line-height: 1.05;
+  color: var(--p-ink);
+  overflow-wrap: anywhere;
 }
 
-/* Modal Transition */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.3s ease;
+.card-profession {
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--p-ink-3);
 }
 
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
+.card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.modal-enter-active .profile-modal {
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+.card-section h4 { margin: 0; }
+
+.card-prose {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-md);
+  line-height: 1.65;
+  color: var(--p-ink-2);
+  white-space: pre-line;
 }
 
-.modal-leave-active .profile-modal {
-  transition: all 0.3s ease-in;
+.card-topics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
 }
 
-.modal-enter-from .profile-modal,
-.modal-leave-to .profile-modal {
-  transform: scale(0.95) translateY(10px);
-  opacity: 0;
+.card-enter-active,
+.card-leave-active { transition: opacity 0.25s ease; }
+
+.card-enter-from,
+.card-leave-to { opacity: 0; }
+
+/* With motion reduced every seat is taken at once: the global rule shortens
+   the animation but not its delay, and "both" would hold each card unseen
+   until its turn. */
+@media (prefers-reduced-motion: reduce) {
+  .seat,
+  .opening {
+    animation: none;
+  }
+
+  .citizen,
+  .length-option {
+    transition: none;
+  }
+}
+
+@media (max-width: 899px) {
+  .summons { padding: 24px 16px 16px; }
+  .trouble { margin-inline: 16px; }
+  .slope { padding-inline: 16px; grid-template-columns: minmax(0, 1fr); }
+  .block { padding-inline: 16px; }
+  .doors { padding-inline: 16px; }
+  .door-main { width: 100%; }
+  .door-main .p-button { flex: 1 1 auto; }
+  .veil { padding: 0; align-items: flex-end; }
+  .card { width: 100%; max-height: 90vh; padding: 24px 16px 32px; }
 }
 </style>

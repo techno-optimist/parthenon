@@ -1,0 +1,324 @@
+/*
+ * Parthenon: one night in Athens.
+ *
+ * The night palette is the ground of every screen. Marble and parchment are
+ * reserved for the objects held up in the dark (the scroll, a citizen card,
+ * the Chronicle page): scope them with .p-paper. Every component resolves
+ * its colours, type and spacing to these tokens.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Night */
+  --p-bg: #0b0e13;
+  --p-surface: #11151c;
+  --p-surface-2: #161b23;
+  --p-surface-3: #1d232d;
+  --p-line: rgba(242, 237, 228, 0.1);
+  --p-line-strong: rgba(242, 237, 228, 0.22);
+  --p-control-border: rgba(242, 237, 228, 0.38); /* controls need 3:1; hairlines do not */
+
+  /* Ink on night: ink-3 and ink-4 are text colours and clear WCAG AA on every surface. */
+  --p-ink: #f2ede4;
+  --p-ink-2: #d8d2c7;
+  --p-ink-3: #a7a197;
+  --p-ink-4: #8a847a;
+
+  /* Gold, ochre, olive grove, Aegean. --p-terracotta keeps its name so the
+     components written against the marble theme keep working; at night it is gold. */
+  --p-gold: #f0b660;
+  --gold: #f0b660;
+  --p-terracotta: #f0b660;
+  --p-terracotta-deep: #f6c77f;
+  --p-terracotta-tint: rgba(240, 182, 96, 0.12);
+  --p-ochre: #d9a25a;
+  --p-ochre-deep: #e8b874;
+  --p-ochre-tint: rgba(217, 162, 90, 0.12);
+  --p-olive: #a8b86a;
+  --p-olive-deep: #c3d08a;
+  --p-olive-tint: rgba(168, 184, 106, 0.14);
+  --p-aegean: #8fb8d8;
+  --p-aegean-tint: rgba(143, 184, 216, 0.14);
+  --p-error: #f08a7a;
+  --p-error-tint: rgba(240, 138, 122, 0.14);
+
+  /* Type */
+  --p-font-inscription: 'Cinzel', 'Cormorant Garamond', Georgia, serif;
+  --p-font-display: 'Cormorant Garamond', 'Spectral', Georgia, serif;
+  --p-font-body: 'Geist', 'Helvetica Neue', Arial, 'Noto Serif SC', sans-serif;
+  --p-font-serif: 'Spectral', Georgia, 'Noto Serif SC', serif;
+  --p-font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  /* The scale: seven steps. Labels sit on xs, body on md, act titles on 2xl. */
+  --t-xs: 0.75rem;
+  --t-sm: 0.875rem;
+  --t-md: 1rem;
+  --t-lg: 1.25rem;
+  --t-xl: 1.625rem;
+  --t-2xl: 2.25rem;
+  --t-3xl: clamp(2.5rem, 4.5vw, 3.5rem);
+  --track-inscription: 0.14em;
+  --track-mono: 0.04em;
+
+  /* Shape and depth: cut stone has no radius. Two shadows in the whole product. */
+  --p-radius: 0;
+  --p-radius-coin: 999px;
+  --p-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --p-shadow-2: 0 18px 48px rgba(0, 0, 0, 0.45);
+
+  /* Chrome */
+  --p-header-h: 64px;
+  --p-way-h: 52px;
+  --p-gutter: clamp(16px, 4vw, 48px);
+
+  /* Greek key (meander) band, tiled horizontally */
+  --p-meander: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 11h24M1 11V1h10v8H5V5h3' fill='none' stroke='%23F0B660' stroke-width='1.4'/%3E%3Cpath d='M13 11V1h10v8h-6V5h3' fill='none' stroke='%23F0B660' stroke-width='1.4'/%3E%3C/svg%3E");
+  --p-meander-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 11h24M1 11V1h10v8H5V5h3' fill='none' stroke='%23F2EDE4' stroke-opacity='.55' stroke-width='1.2'/%3E%3Cpath d='M13 11V1h10v8h-6V5h3' fill='none' stroke='%23F2EDE4' stroke-opacity='.55' stroke-width='1.2'/%3E%3C/svg%3E");
+
+  /* Faint marble veining for parchment and marble surfaces */
+  --p-marble-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='v'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .018' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .5 0 0 0 0 .42 0 0 0 -1.6 1.05'/%3E%3C/filter%3E%3Crect width='600' height='600' filter='url(%23v)' opacity='.16'/%3E%3C/svg%3E");
+}
+
+/* Parchment and marble: the objects held up in the dark. Scope a document with
+   .p-paper and every token-driven child reads in ink on stone. */
+.p-paper {
+  color-scheme: light;
+  --p-bg: #f3eee4;
+  --p-surface: #fbf8f2;
+  --p-surface-2: #f1ebdf;
+  --p-surface-3: #e9e1d2;
+  --p-line: #e2d9c8;
+  --p-line-strong: #cfc3ad;
+  --p-control-border: #9a8d75;
+  --p-ink: #1f1a16;
+  --p-ink-2: #3d352d;
+  --p-ink-3: #5a5147;
+  --p-ink-4: #685e52;
+  --p-gold: #7e5b1f; /* 5.8:1 on parchment; gold labels must read on paper too */
+  --gold: #7e5b1f;
+  --p-terracotta: #b4532a;
+  --p-terracotta-deep: #8f3f1f;
+  --p-terracotta-tint: #f3e1d5;
+  --p-ochre: #b8893b;
+  --p-ochre-deep: #7e5b1f;
+  --p-ochre-tint: #f3e8cf;
+  --p-olive: #5e6b2e;
+  --p-olive-deep: #46521f;
+  --p-olive-tint: #e8ebd6;
+  --p-aegean: #2e5a78;
+  --p-aegean-tint: #dce6ec;
+  --p-error: #a33a2b;
+  --p-error-tint: #f4dcd6;
+  --p-shadow-1: 0 1px 2px rgba(31, 26, 22, 0.12);
+  --p-shadow-2: 0 18px 48px rgba(0, 0, 0, 0.35);
+  --p-meander: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 11h24M1 11V1h10v8H5V5h3' fill='none' stroke='%23B4532A' stroke-width='1.4'/%3E%3Cpath d='M13 11V1h10v8h-6V5h3' fill='none' stroke='%23B4532A' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-color: var(--p-surface);
+  background-image: var(--p-marble-texture);
+  color: var(--p-ink-2);
+}
+
+html,
+body {
+  background: var(--p-bg);
+  color: var(--p-ink-2);
+}
+
+html.theme-night,
+html.theme-night body {
+  background: #0b0e13;
+}
+
+::selection {
+  background: var(--p-terracotta-tint);
+  color: var(--p-ink);
+}
+
+/* Inscription labels: Cinzel, small, spaced. Use for eyebrows and status words. */
+.p-eyebrow {
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  color: var(--p-gold);
+}
+
+.p-mono {
+  font-family: var(--p-font-mono);
+  letter-spacing: var(--track-mono);
+}
+
+/* The one button. Add .secondary or .ghost; add .small for chips. */
+.p-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 22px;
+  border: 1px solid var(--p-gold);
+  border-radius: var(--p-radius);
+  background: var(--p-gold);
+  color: #1f1a16;
+  font-family: var(--p-font-body);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+
+.p-button:hover {
+  background: var(--p-terracotta-deep);
+  border-color: var(--p-terracotta-deep);
+}
+
+.p-button.secondary {
+  background: transparent;
+  border-color: var(--p-control-border);
+  color: var(--p-ink);
+}
+
+a.p-button {
+  text-decoration: none;
+}
+
+.p-button.secondary:hover {
+  border-color: var(--p-gold);
+  color: var(--p-gold);
+}
+
+.p-button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--p-ink-2);
+  padding-inline: 12px;
+}
+
+.p-button.ghost:hover {
+  color: var(--p-gold);
+}
+
+.p-button.small {
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: var(--t-xs);
+}
+
+.p-button:disabled,
+.p-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  background: var(--p-surface-3);
+  border-color: var(--p-line);
+  color: var(--p-ink-3);
+}
+
+.p-button:focus-visible,
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--p-gold);
+  outline-offset: 3px;
+}
+
+/* A strip of Greek key, used as a section divider */
+.p-meander {
+  height: 12px;
+  background-image: var(--p-meander);
+  background-repeat: repeat-x;
+  background-position: left center;
+  opacity: 0.85;
+}
+
+.p-meander.ink {
+  background-image: var(--p-meander-ink);
+}
+
+/* A citizen's coin: a round mark with an initial. Set --role to the citizen's
+   role colour and the coin follows them through every act. */
+.p-coin {
+  --role: var(--p-gold);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--p-radius-coin);
+  border: 1px solid color-mix(in srgb, var(--role) 60%, transparent);
+  background: color-mix(in srgb, var(--role) 14%, var(--p-surface-3));
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--role);
+  flex-shrink: 0;
+}
+
+.p-coin.small {
+  width: 30px;
+  height: 30px;
+  font-size: var(--t-md);
+}
+
+.p-coin.big {
+  width: 56px;
+  height: 56px;
+  font-size: var(--t-xl);
+}
+
+/* Legacy header rules kept while the five acts move onto ActShell. */
+.app-header {
+  position: relative;
+  background-color: var(--p-surface) !important;
+  border-bottom: 1px solid var(--p-line-strong) !important;
+}
+
+.app-header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  background-image: var(--p-meander);
+  background-size: 12px 6px;
+  background-repeat: repeat-x;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+@media (max-width: 1180px) {
+  .main-view .app-header .header-center {
+    position: static;
+    transform: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin: 0 16px;
+  }
+}
+
+@media (max-width: 760px) {
+  .main-view header.app-header {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 10px 16px 14px;
+  }
+
+  .main-view .app-header .header-center {
+    order: 3;
+    flex: 1 0 100%;
+    margin: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

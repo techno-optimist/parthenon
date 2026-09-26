@@ -1,189 +1,160 @@
 <template>
-  <div class="main-view">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
-      </div>
-      
-      <div class="header-center">
-        <div class="view-switcher">
-          <button 
-            v-for="mode in ['graph', 'split', 'workbench']" 
-            :key="mode"
-            class="switch-btn"
-            :class="{ active: viewMode === mode }"
-            @click="viewMode = mode"
-          >
-            {{ { graph: $t('main.layoutGraph'), split: $t('main.layoutSplit'), workbench: $t('main.layoutWorkbench') }[mode] }}
-          </button>
-        </div>
-      </div>
+  <ActShell :act="1" :status="shellStatus" :logs="systemLogs" :links="{}">
+    <template #web>
+      <GraphPanel
+        :graphData="graphData"
+        :loading="graphLoading"
+        :currentPhase="currentPhase"
+        @refresh="refreshGraph"
+      />
+    </template>
 
-      <div class="header-right">
-        <LanguageSwitcher />
-        <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step {{ currentStep }}/5</span>
-          <span class="step-name">{{ $tm('main.stepNames')[currentStep - 1] }}</span>
-        </div>
-        <div class="step-divider"></div>
-        <span class="status-indicator" :class="statusClass">
-          <span class="dot"></span>
-          {{ statusText }}
-        </span>
-      </div>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
-        <GraphPanel 
-          :graphData="graphData"
-          :loading="graphLoading"
-          :currentPhase="currentPhase"
-          @refresh="refreshGraph"
-          @toggle-maximize="toggleMaximize('graph')"
-        />
-      </div>
-
-      <!-- Right Panel: Step Components -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
-        <!-- Step 1: 图谱构建 -->
-        <Step1GraphBuild 
-          v-if="currentStep === 1"
-          :currentPhase="currentPhase"
-          :projectData="projectData"
-          :ontologyProgress="ontologyProgress"
-          :buildProgress="buildProgress"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @next-step="handleNextStep"
-        />
-        <!-- Step 2: 环境搭建 -->
-        <Step2EnvSetup
-          v-else-if="currentStep === 2"
-          :projectData="projectData"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @go-back="handleGoBack"
-          @next-step="handleNextStep"
-          @add-log="addLog"
-        />
-      </div>
-    </main>
-  </div>
+    <Step1GraphBuild
+      :currentPhase="currentPhase"
+      :projectData="projectData"
+      :graphData="graphData"
+      :web="webCounts"
+      :seedText="seedText"
+      :seedName="seedName"
+      :source="scrollSource"
+      :error="error"
+      :noScroll="noScroll"
+      @log="addLog"
+    />
+  </ActShell>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+// Act Α΄ The Hearing: the court at night. The scroll is handed to the court
+// (the pending upload), the court reads it and carves its inscription, the
+// city's memory takes in the names, and the citizens can be summoned.
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import ActShell from '../components/ActShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
-import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import { speakers } from '../parthenon/speakers.js'
+import { arrivals } from '../parthenon/arrivals/index.js'
+import { stripIds, isPlatformNode, isActivityTie } from '../parthenon/vocabulary.js'
 
 const route = useRoute()
 const router = useRouter()
-const { t, tm } = useI18n()
+const { t } = useI18n()
 
-// Layout State
-const viewMode = ref('split') // graph | split | workbench
-
-// Step State
-const currentStep = ref(1) // 1: 图谱构建, 2: 环境搭建, 3: 开始模拟, 4: 报告生成, 5: 深度互动
-const stepNames = computed(() => tm('main.stepNames'))
-
-// Data State
+// The court's state
 const currentProjectId = ref(route.params.projectId)
-const loading = ref(false)
 const graphLoading = ref(false)
 const error = ref('')
+const noScroll = ref(false)
 const projectData = ref(null)
 const graphData = ref(null)
-const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
-const ontologyProgress = ref(null)
+const currentPhase = ref(-1) // -1: handed over, 0: being read, 1: taken in, 2: known
 const buildProgress = ref(null)
 const systemLogs = ref([])
 
-// Polling timers
+// The scroll itself, for the parchment
+const seedText = ref('')
+const seedName = ref('')
+
 let pollTimer = null
 let graphPollTimer = null
 
-// --- Computed Layout Styles ---
-const leftPanelStyle = computed(() => {
-  if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
-const rightPanelStyle = computed(() => {
-  if (viewMode.value === 'workbench') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
-  if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
-  return { width: '50%', opacity: 1, transform: 'translateX(0)' }
-})
-
-// --- Status Computed ---
-const statusClass = computed(() => {
+const shellStatus = computed(() => {
   if (error.value) return 'error'
-  if (currentPhase.value >= 2) return 'completed'
-  return 'processing'
+  if (noScroll.value) return 'ready'
+  if (currentPhase.value >= 2) return 'done'
+  return 'working'
 })
 
-const statusText = computed(() => {
-  if (error.value) return 'Error'
-  if (currentPhase.value >= 2) return 'Ready'
-  if (currentPhase.value === 1) return 'Building Graph'
-  if (currentPhase.value === 0) return 'Generating Ontology'
-  return 'Initializing'
-})
+// --- The ledger -------------------------------------------------------------
 
-// --- Helpers ---
+// Engine progress lines arrive in the engine's words; the ledger keeps the
+// city's. Identifiers never reach the page.
+const inVoice = (msg) =>
+  stripIds(String(msg ?? ''))
+    .replace(/\bZep\b/gi, "the city's memory")
+    .replace(/\bGraphRAG\b/gi, 'the Web of Athens')
+    .replace(/\bknowledge graph\b/gi, 'the Web of Athens')
+    .replace(/\bmemory graph\b/gi, "the city's memory")
+    .replace(/\bgraph build\b/gi, 'weaving of the Web')
+    .replace(/\bgraph\b/gi, 'Web')
+    .replace(/\bontology definition\b/gi, 'inscription')
+    .replace(/\bontology\b/gi, 'inscription')
+    .replace(/\bentities\b/gi, 'names')
+    .replace(/\bentity\b/gi, 'name')
+    .replace(/\bepisodes?\b/gi, (m) => (m.endsWith('s') ? 'passages' : 'passage'))
+    .replace(/\bchunks?\b/gi, (m) => (m.endsWith('s') ? 'passages' : 'passage'))
+    .replace(/\bchunking\b/gi, 'dividing')
+    .replace(/\bagents?\b/gi, (m) => (m.endsWith('s') ? 'citizens' : 'citizen'))
+    .replace(/\bLLM\b/g, 'the Oracle')
+    .replace(/\btask\b/gi, 'work')
+
 const addLog = (msg) => {
-  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + new Date().getMilliseconds().toString().padStart(3, '0')
-  systemLogs.value.push({ time, msg })
-  // Keep last 100 logs
-  if (systemLogs.value.length > 100) {
-    systemLogs.value.shift()
-  }
+  const now = new Date()
+  const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const message = inVoice(msg)
+  if (!message) return
+  systemLogs.value.push({ time, message })
+  if (systemLogs.value.length > 100) systemLogs.value.shift()
 }
 
-// --- Layout Methods ---
-const toggleMaximize = (target) => {
-  if (viewMode.value === target) {
-    viewMode.value = 'split'
-  } else {
-    viewMode.value = target
-  }
+// --- The scroll -------------------------------------------------------------
+
+const SCROLL_KEY = (id) => `parthenon.scroll.${id}`
+const isTextFile = (f) => /^text\//.test(f?.type || '') || /\.(md|txt|markdown)$/i.test(f?.name || '')
+
+// The seed on a prepared scroll lives in the front end, so a revisit can show
+// it again by its file name. A visitor's own scroll is remembered for this
+// browser session only.
+const rememberedScroll = (id) => {
+  try { return sessionStorage.getItem(SCROLL_KEY(id)) || '' } catch (e) { return '' }
+}
+const rememberScroll = (id, text) => {
+  if (!id || !text) return
+  try { sessionStorage.setItem(SCROLL_KEY(id), text) } catch (e) { /* per-viewer convenience only */ }
+}
+const preparedScroll = (fileName) => {
+  if (!fileName) return ''
+  const match = [...speakers, ...arrivals].find((item) => item.fileName === fileName)
+  return match?.seed || ''
 }
 
-const handleNextStep = (params = {}) => {
-  if (currentStep.value < 5) {
-    currentStep.value++
-    addLog(t('log.enterStep', { step: currentStep.value, name: stepNames.value[currentStep.value - 1] }))
-    
-    // 如果是从 Step 2 进入 Step 3，记录模拟轮数配置
-    if (currentStep.value === 3 && params.maxRounds) {
-      addLog(t('log.customSimRounds', { rounds: params.maxRounds }))
-    }
+const readPendingScroll = async (files) => {
+  const texts = []
+  for (const f of files) {
+    if (!isTextFile(f) || typeof f.text !== 'function') continue
+    try { texts.push(await f.text()) } catch (e) { /* the parchment shows what the court heard instead */ }
   }
+  return texts.join('\n\n')
 }
 
-const handleGoBack = () => {
-  if (currentStep.value > 1) {
-    currentStep.value--
-    addLog(t('log.returnToStep', { step: currentStep.value, name: stepNames.value[currentStep.value - 1] }))
-  }
+const recoverScroll = () => {
+  const first = projectData.value?.files?.[0]
+  seedName.value = first?.filename || ''
+  if (!seedText.value) seedText.value = preparedScroll(seedName.value) || rememberedScroll(currentProjectId.value)
 }
 
-// --- Data Logic ---
+// Where the scroll came from, in words: the speaker and their work, the
+// arrival's title, a stage the visitor built, or the visitor's own scroll.
+// The file's name never reaches the page.
+const scrollSource = computed(() => {
+  const file = seedName.value
+  if (!file) return null
+  const speaker = speakers.find((s) => s.fileName === file)
+  if (speaker) return { kind: 'speaker', name: speaker.name, work: speaker.work || '' }
+  const arrival = arrivals.find((a) => a.fileName === file)
+  if (arrival) return { kind: 'arrival', title: arrival.title || arrival.name || '' }
+  if (/^stage-/i.test(file)) return { kind: 'stage' }
+  return { kind: 'own' }
+})
+
+// --- The court --------------------------------------------------------------
 
 const initProject = async () => {
-  addLog('Project view initialized.')
+  addLog(t('parthenon.hearing.ledger.opened'))
   if (currentProjectId.value === 'new') {
     await handleNewProject()
   } else {
@@ -194,132 +165,166 @@ const initProject = async () => {
 const handleNewProject = async () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No pending files found.'
-    addLog('Error: No pending files found for new project.')
+    noScroll.value = true
     return
   }
-  
+
   try {
-    loading.value = true
     currentPhase.value = 0
-    ontologyProgress.value = { message: 'Uploading and analyzing docs...' }
-    addLog('Starting ontology generation: Uploading files...')
-    
+    seedName.value = pending.files[0]?.name || ''
+    seedText.value = await readPendingScroll(pending.files)
+    addLog(t('parthenon.hearing.ledger.handed'))
+
     const formData = new FormData()
-    pending.files.forEach(f => formData.append('files', f))
+    pending.files.forEach((f) => formData.append('files', f))
     formData.append('simulation_requirement', pending.simulationRequirement)
-    
+
     const res = await generateOntology(formData)
     if (res.success) {
       clearPendingUpload()
       currentProjectId.value = res.data.project_id
       projectData.value = res.data
-      
+      rememberScroll(res.data.project_id, seedText.value)
+
       router.replace({ name: 'Process', params: { projectId: res.data.project_id } })
-      ontologyProgress.value = null
-      addLog(`Ontology generated successfully for project ${res.data.project_id}`)
+      addLog(t('parthenon.hearing.ledger.read'))
       await startBuildGraph()
     } else {
-      error.value = res.error || 'Ontology generation failed'
-      addLog(`Error generating ontology: ${error.value}`)
+      error.value = res.error || t('common.unknownError')
+      addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
     error.value = err.message
-    addLog(`Exception in handleNewProject: ${err.message}`)
-  } finally {
-    loading.value = false
+    addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
 }
 
 const loadProject = async () => {
   try {
-    loading.value = true
-    addLog(`Loading project ${currentProjectId.value}...`)
     const res = await getProject(currentProjectId.value)
     if (res.success) {
       projectData.value = res.data
       updatePhaseByStatus(res.data.status)
-      addLog(`Project loaded. Status: ${res.data.status}`)
-      
+      recoverScroll()
+
       if (res.data.status === 'ontology_generated' && !res.data.graph_id) {
+        addLog(t('parthenon.hearing.ledger.read'))
         await startBuildGraph()
       } else if (res.data.status === 'graph_building' && res.data.graph_build_task_id) {
         currentPhase.value = 1
+        addLog(t('parthenon.hearing.ledger.memoryBegins'))
         startPollingTask(res.data.graph_build_task_id)
+        startGraphPolling()
       } else if (res.data.status === 'graph_completed' && res.data.graph_id) {
         currentPhase.value = 2
         await loadGraph(res.data.graph_id)
       }
     } else {
       error.value = res.error
-      addLog(`Error loading project: ${res.error}`)
+      addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
     error.value = err.message
-    addLog(`Exception in loadProject: ${err.message}`)
-  } finally {
-    loading.value = false
+    addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
 }
 
 const updatePhaseByStatus = (status) => {
   switch (status) {
     case 'created':
-    case 'ontology_generated': currentPhase.value = 0; break;
-    case 'graph_building': currentPhase.value = 1; break;
-    case 'graph_completed': currentPhase.value = 2; break;
-    case 'failed': error.value = 'Project failed'; break;
+    case 'ontology_generated': currentPhase.value = 0; break
+    case 'graph_building': currentPhase.value = 1; break
+    case 'graph_completed': currentPhase.value = 2; break
+    case 'failed': error.value = t('parthenon.hearing.trouble.body'); break
   }
 }
 
 const startBuildGraph = async () => {
   try {
     currentPhase.value = 1
-    buildProgress.value = { progress: 0, message: 'Starting build...' }
-    addLog('Initiating graph build...')
-    
+    buildProgress.value = { progress: 0, message: '' }
+    addLog(t('parthenon.hearing.ledger.memoryBegins'))
+
     const res = await buildGraph({ project_id: currentProjectId.value })
     if (res.success) {
       if (res.data.reused && res.data.graph_id) {
         currentPhase.value = 2
         buildProgress.value = null
+        addLog(t('parthenon.hearing.ledger.memoryKnown'))
         const projectRes = await getProject(currentProjectId.value)
         if (projectRes.success) {
           projectData.value = projectRes.data
+          recoverScroll()
         }
         await loadGraph(res.data.graph_id)
         return
       }
 
-      addLog(`Graph build task started. Task ID: ${res.data.task_id}`)
       startPollingTask(res.data.task_id)
+      startGraphPolling()
     } else {
       error.value = res.error
-      addLog(`Error starting build: ${res.error}`)
+      addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
     error.value = err.message
-    addLog(`Exception in startBuildGraph: ${err.message}`)
+    addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
 }
 
+// While the memory takes the scroll in, the Web is read every ten seconds so
+// the names light up as they arrive.
 const startGraphPolling = () => {
-  addLog('Started polling for graph data...')
+  if (graphPollTimer) return
+  addLog(t('parthenon.hearing.ledger.watching'))
   fetchGraphData()
   graphPollTimer = setInterval(fetchGraphData, 10000)
 }
 
+// The count the Web itself draws, so the status line, the ledger and the Web
+// panel never disagree: the platform nodes are the squares, not names; a tie
+// to nothing or to oneself is dropped; parallel ties between the same two
+// names are one tie; and the square's own chatter (who spoke, nodded, quoted)
+// is counted apart from the shape of the city.
+const countWeb = (data) => {
+  const nodes = (Array.isArray(data?.nodes) ? data.nodes : []).filter((n) => n && n.uuid && !isPlatformNode(n.name))
+  const ids = new Set(nodes.map((n) => n.uuid))
+  const pairs = new Set()
+  let chatter = 0
+  for (const e of Array.isArray(data?.edges) ? data.edges : []) {
+    const a = e?.source_node_uuid
+    const b = e?.target_node_uuid
+    if (!ids.has(a) || !ids.has(b) || a === b) continue
+    if (isActivityTie(e.name || e.fact_type || 'RELATES_TO')) {
+      chatter++
+      continue
+    }
+    pairs.add(a < b ? `${a}|${b}` : `${b}|${a}`)
+  }
+  return { names: nodes.length, ties: pairs.size, chatter }
+}
+
+const webCounts = computed(() => countWeb(graphData.value))
+
+// The ledger says what the Web shows, and names the chatter only when there is any.
+const webLine = (key, counts) =>
+  t(`parthenon.hearing.ledger.${counts.chatter ? `${key}Chatter` : key}`, counts)
+
+let lastCounts = ''
 const fetchGraphData = async () => {
   try {
-    // Refresh project info to check for graph_id
     const projRes = await getProject(currentProjectId.value)
     if (projRes.success && projRes.data.graph_id) {
+      if (!projectData.value?.graph_id) projectData.value = projRes.data
       const gRes = await getGraphData(projRes.data.graph_id)
       if (gRes.success) {
         graphData.value = gRes.data
-        const nodeCount = gRes.data.node_count || gRes.data.nodes?.length || 0
-        const edgeCount = gRes.data.edge_count || gRes.data.edges?.length || 0
-        addLog(`Graph data refreshed. Nodes: ${nodeCount}, Edges: ${edgeCount}`)
+        const counts = countWeb(gRes.data)
+        const mark = `${counts.names}/${counts.ties}/${counts.chatter}`
+        if (mark !== lastCounts) {
+          lastCounts = mark
+          addLog(webLine('soFar', counts))
+        }
       }
     }
   } catch (err) {
@@ -337,30 +342,30 @@ const pollTaskStatus = async (taskId) => {
     const res = await getTaskStatus(taskId)
     if (res.success) {
       const task = res.data
-      
-      // Log progress message if it changed
+
       if (task.message && task.message !== buildProgress.value?.message) {
         addLog(task.message)
       }
-      
+
       buildProgress.value = { progress: task.progress || 0, message: task.message }
-      
+
       if (task.status === 'completed') {
-        addLog('Graph build task completed.')
+        addLog(t('parthenon.hearing.ledger.memoryDone'))
         stopPolling()
-        stopGraphPolling() // Stop polling, do final load
+        stopGraphPolling()
         currentPhase.value = 2
-        
-        // Final load
+
         const projRes = await getProject(currentProjectId.value)
         if (projRes.success && projRes.data.graph_id) {
-            projectData.value = projRes.data
-            await loadGraph(projRes.data.graph_id)
+          projectData.value = projRes.data
+          recoverScroll()
+          await loadGraph(projRes.data.graph_id)
         }
       } else if (task.status === 'failed') {
         stopPolling()
+        stopGraphPolling()
         error.value = task.error
-        addLog(`Graph build task failed: ${task.error}`)
+        addLog(t('parthenon.hearing.ledger.trouble', { error: task.error }))
       }
     }
   } catch (e) {
@@ -370,17 +375,16 @@ const pollTaskStatus = async (taskId) => {
 
 const loadGraph = async (graphId) => {
   graphLoading.value = true
-  addLog(`Loading full graph data: ${graphId}`)
   try {
     const res = await getGraphData(graphId)
     if (res.success) {
       graphData.value = res.data
-      addLog('Graph data loaded successfully.')
+      addLog(webLine('webRead', countWeb(res.data)))
     } else {
-      addLog(`Failed to load graph data: ${res.error}`)
+      addLog(t('parthenon.hearing.ledger.trouble', { error: res.error }))
     }
   } catch (e) {
-    addLog(`Exception loading graph: ${e.message}`)
+    addLog(t('parthenon.hearing.ledger.trouble', { error: e.message }))
   } finally {
     graphLoading.value = false
   }
@@ -388,7 +392,7 @@ const loadGraph = async (graphId) => {
 
 const refreshGraph = () => {
   if (projectData.value?.graph_id) {
-    addLog('Manual graph refresh triggered.')
+    addLog(t('parthenon.hearing.ledger.webAgain'))
     loadGraph(projectData.value.graph_id)
   }
 }
@@ -404,7 +408,7 @@ const stopGraphPolling = () => {
   if (graphPollTimer) {
     clearInterval(graphPollTimer)
     graphPollTimer = null
-    addLog('Graph polling stopped.')
+    addLog(t('parthenon.hearing.ledger.restWatching'))
   }
 }
 
@@ -419,136 +423,25 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.main-view {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: #FFF;
-  overflow: hidden;
-  font-family: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
+/* The shell's Web pane keeps display: flex while [hidden], so the sheet showed
+   open on phones. Until ActShell carries this rule, the Hearing closes it here. */
+.act-shell :deep(.web-pane[hidden]) {
+  display: none;
 }
 
-/* Header */
-.app-header {
-  height: 60px;
-  border-bottom: 1px solid #EAEAEA;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  background: #FFF;
-  z-index: 100;
-  position: relative;
-}
+/* At phone width the brand and the act name run into the Web toggle; the name
+   yields first. ActShell should carry this once, for every act. */
+@media (max-width: 480px) {
+  .act-shell :deep(.act-subject) {
+    min-width: 0;
+    overflow: hidden;
+    gap: 8px;
+  }
 
-.header-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.brand {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 800;
-  font-size: 18px;
-  letter-spacing: 1px;
-  cursor: pointer;
-}
-
-.view-switcher {
-  display: flex;
-  background: #F5F5F5;
-  padding: 4px;
-  border-radius: 6px;
-  gap: 4px;
-}
-
-.switch-btn {
-  border: none;
-  background: transparent;
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.switch-btn.active {
-  background: #FFF;
-  color: #000;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #666;
-  font-weight: 500;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.workflow-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-}
-
-.step-num {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  color: #999;
-}
-
-.step-name {
-  font-weight: 700;
-  color: #000;
-}
-
-.step-divider {
-  width: 1px;
-  height: 14px;
-  background-color: #E0E0E0;
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #CCC;
-}
-
-.status-indicator.processing .dot { background: #FF5722; animation: pulse 1s infinite; }
-.status-indicator.completed .dot { background: #4CAF50; }
-.status-indicator.error .dot { background: #F44336; }
-
-@keyframes pulse { 50% { opacity: 0.5; } }
-
-/* Content */
-.content-area {
-  flex: 1;
-  display: flex;
-  position: relative;
-  overflow: hidden;
-}
-
-.panel-wrapper {
-  height: 100%;
-  overflow: hidden;
-  transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease, transform 0.3s ease;
-  will-change: width, opacity, transform;
-}
-
-.panel-wrapper.left {
-  border-right: 1px solid #EAEAEA;
+  .act-shell :deep(.act-name) {
+    font-size: var(--t-md);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 </style>

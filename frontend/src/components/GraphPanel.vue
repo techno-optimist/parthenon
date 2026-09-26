@@ -1,243 +1,134 @@
 <template>
-  <div class="graph-panel">
-    <div class="panel-header">
-      <span class="panel-title">{{ $t('graph.panelTitle') }}</span>
-      <!-- 顶部工具栏 (Internal Top Right) -->
-      <div class="header-tools">
-        <button class="tool-btn" @click="$emit('refresh')" :disabled="loading" :title="$t('graph.refreshGraph')">
-          <span class="icon-refresh" :class="{ 'spinning': loading }">↻</span>
-          <span class="btn-text">Refresh</span>
+  <div class="graph-panel" ref="graphContainer" :class="{ narrow: isNarrow }">
+    <!-- The panel's own bar: what is here, and one small choice. The Web
+         grows on its own while the city works; the shell shows and hides it. -->
+    <div class="panel-top">
+      <div class="panel-heading">
+        <span v-if="!isNarrow" class="p-eyebrow panel-title">{{ $t('parthenon.web.title') }}</span>
+        <span class="panel-sub" role="status" aria-live="polite">
+          <span v-if="busy" class="ember" aria-hidden="true"></span>
+          <span class="panel-sub-text">{{ subline }}</span>
+          <button
+            v-if="lateThreads && !busy"
+            type="button"
+            class="look-again"
+            :disabled="loading"
+            @click="onRefresh"
+          >{{ $t('parthenon.web.lookAgain') }}</button>
+        </span>
+      </div>
+      <div v-if="graphData" class="panel-tools">
+        <button
+          type="button"
+          class="p-button ghost small chatter"
+          :class="{ on: showChatter }"
+          :aria-pressed="showChatter"
+          :title="$t('parthenon.web.chatterHint')"
+          @click="showChatter = !showChatter"
+        >
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M3 5.5h9M3 9h6M3 12.5h4" stroke-linecap="round" />
+            <path d="M12.5 11.5 15 14l3.5-4.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>{{ showChatter ? $t('parthenon.web.chatterOn') : $t('parthenon.web.chatter') }}</span>
         </button>
-        <button class="tool-btn" @click="$emit('toggle-maximize')" :title="$t('graph.toggleMaximize')">
-          <span class="icon-maximize">⛶</span>
-        </button>
-      </div>
-    </div>
-    
-    <div class="graph-container" ref="graphContainer">
-      <!-- 图谱可视化 -->
-      <div v-if="graphData" class="graph-view">
-        <svg ref="graphSvg" class="graph-svg"></svg>
-        
-        <!-- 构建中/模拟中提示 -->
-        <div v-if="currentPhase === 1 || isSimulating" class="graph-building-hint">
-          <div class="memory-icon-wrapper">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="memory-icon">
-              <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-4.04z" />
-              <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-4.04z" />
-            </svg>
-          </div>
-          {{ isSimulating ? $t('graph.graphMemoryRealtime') : $t('graph.realtimeUpdating') }}
-        </div>
-        
-        <!-- 模拟结束后的提示 -->
-        <div v-if="showSimulationFinishedHint" class="graph-building-hint finished-hint">
-          <div class="hint-icon-wrapper">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hint-icon">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="16" x2="12" y2="12"></line>
-              <line x1="12" y1="8" x2="12.01" y2="8"></line>
-            </svg>
-          </div>
-          <span class="hint-text">{{ $t('graph.pendingContentHint') }}</span>
-          <button class="hint-close-btn" @click="dismissFinishedHint" :title="$t('graph.closeHint')">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-        
-        <!-- 节点/边详情面板 -->
-        <div v-if="selectedItem" class="detail-panel">
-          <div class="detail-panel-header">
-            <span class="detail-title">{{ selectedItem.type === 'node' ? $t('graph.nodeDetails') : $t('graph.relationship') }}</span>
-            <span v-if="selectedItem.type === 'node'" class="detail-type-badge" :style="{ background: selectedItem.color, color: '#fff' }">
-              {{ selectedItem.entityType }}
-            </span>
-            <button class="detail-close" @click="closeDetailPanel">×</button>
-          </div>
-          
-          <!-- 节点详情 -->
-          <div v-if="selectedItem.type === 'node'" class="detail-content">
-            <div class="detail-row">
-              <span class="detail-label">Name:</span>
-              <span class="detail-value">{{ selectedItem.data.name }}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">UUID:</span>
-              <span class="detail-value uuid-text">{{ selectedItem.data.uuid }}</span>
-            </div>
-            <div class="detail-row" v-if="selectedItem.data.created_at">
-              <span class="detail-label">Created:</span>
-              <span class="detail-value">{{ formatDateTime(selectedItem.data.created_at) }}</span>
-            </div>
-            
-            <!-- Properties -->
-            <div class="detail-section" v-if="selectedItem.data.attributes && Object.keys(selectedItem.data.attributes).length > 0">
-              <div class="section-title">Properties:</div>
-              <div class="properties-list">
-                <div v-for="(value, key) in selectedItem.data.attributes" :key="key" class="property-item">
-                  <span class="property-key">{{ key }}:</span>
-                  <span class="property-value">{{ value || 'None' }}</span>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Summary -->
-            <div class="detail-section" v-if="selectedItem.data.summary">
-              <div class="section-title">Summary:</div>
-              <div class="summary-text">{{ selectedItem.data.summary }}</div>
-            </div>
-            
-            <!-- Labels -->
-            <div class="detail-section" v-if="selectedItem.data.labels && selectedItem.data.labels.length > 0">
-              <div class="section-title">Labels:</div>
-              <div class="labels-list">
-                <span v-for="label in selectedItem.data.labels" :key="label" class="label-tag">
-                  {{ label }}
-                </span>
-              </div>
-            </div>
-          </div>
-          
-          <!-- 边详情 -->
-          <div v-else class="detail-content">
-            <!-- 自环组详情 -->
-            <template v-if="selectedItem.data.isSelfLoopGroup">
-              <div class="edge-relation-header self-loop-header">
-                {{ selectedItem.data.source_name }} - Self Relations
-                <span class="self-loop-count">{{ selectedItem.data.selfLoopCount }} items</span>
-              </div>
-              
-              <div class="self-loop-list">
-                <div 
-                  v-for="(loop, idx) in selectedItem.data.selfLoopEdges" 
-                  :key="loop.uuid || idx" 
-                  class="self-loop-item"
-                  :class="{ expanded: expandedSelfLoops.has(loop.uuid || idx) }"
-                >
-                  <div 
-                    class="self-loop-item-header"
-                    @click="toggleSelfLoop(loop.uuid || idx)"
-                  >
-                    <span class="self-loop-index">#{{ idx + 1 }}</span>
-                    <span class="self-loop-name">{{ loop.name || loop.fact_type || 'RELATED' }}</span>
-                    <span class="self-loop-toggle">{{ expandedSelfLoops.has(loop.uuid || idx) ? '−' : '+' }}</span>
-                  </div>
-                  
-                  <div class="self-loop-item-content" v-show="expandedSelfLoops.has(loop.uuid || idx)">
-                    <div class="detail-row" v-if="loop.uuid">
-                      <span class="detail-label">UUID:</span>
-                      <span class="detail-value uuid-text">{{ loop.uuid }}</span>
-                    </div>
-                    <div class="detail-row" v-if="loop.fact">
-                      <span class="detail-label">Fact:</span>
-                      <span class="detail-value fact-text">{{ loop.fact }}</span>
-                    </div>
-                    <div class="detail-row" v-if="loop.fact_type">
-                      <span class="detail-label">Type:</span>
-                      <span class="detail-value">{{ loop.fact_type }}</span>
-                    </div>
-                    <div class="detail-row" v-if="loop.created_at">
-                      <span class="detail-label">Created:</span>
-                      <span class="detail-value">{{ formatDateTime(loop.created_at) }}</span>
-                    </div>
-                    <div v-if="loop.episodes && loop.episodes.length > 0" class="self-loop-episodes">
-                      <span class="detail-label">Episodes:</span>
-                      <div class="episodes-list compact">
-                        <span v-for="ep in loop.episodes" :key="ep" class="episode-tag small">{{ ep }}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </template>
-            
-            <!-- 普通边详情 -->
-            <template v-else>
-              <div class="edge-relation-header">
-                {{ selectedItem.data.source_name }} → {{ selectedItem.data.name || 'RELATED_TO' }} → {{ selectedItem.data.target_name }}
-              </div>
-              
-              <div class="detail-row">
-                <span class="detail-label">UUID:</span>
-                <span class="detail-value uuid-text">{{ selectedItem.data.uuid }}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Label:</span>
-                <span class="detail-value">{{ selectedItem.data.name || 'RELATED_TO' }}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Type:</span>
-                <span class="detail-value">{{ selectedItem.data.fact_type || 'Unknown' }}</span>
-              </div>
-              <div class="detail-row" v-if="selectedItem.data.fact">
-                <span class="detail-label">Fact:</span>
-                <span class="detail-value fact-text">{{ selectedItem.data.fact }}</span>
-              </div>
-              
-              <!-- Episodes -->
-              <div class="detail-section" v-if="selectedItem.data.episodes && selectedItem.data.episodes.length > 0">
-                <div class="section-title">Episodes:</div>
-                <div class="episodes-list">
-                  <span v-for="ep in selectedItem.data.episodes" :key="ep" class="episode-tag">
-                    {{ ep }}
-                  </span>
-                </div>
-              </div>
-              
-              <div class="detail-row" v-if="selectedItem.data.created_at">
-                <span class="detail-label">Created:</span>
-                <span class="detail-value">{{ formatDateTime(selectedItem.data.created_at) }}</span>
-              </div>
-              <div class="detail-row" v-if="selectedItem.data.valid_at">
-                <span class="detail-label">Valid From:</span>
-                <span class="detail-value">{{ formatDateTime(selectedItem.data.valid_at) }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 加载状态 -->
-      <div v-else-if="loading" class="graph-state">
-        <div class="loading-spinner"></div>
-        <p>{{ $t('graph.graphDataLoading') }}</p>
-      </div>
-      
-      <!-- 等待/空状态 -->
-      <div v-else class="graph-state">
-        <div class="empty-icon">❖</div>
-        <p class="empty-text">{{ $t('graph.waitingOntology') }}</p>
       </div>
     </div>
 
-    <!-- 底部图例 (Bottom Left) -->
-    <div v-if="graphData && entityTypes.length" class="graph-legend">
-      <span class="legend-title">Entity Types</span>
-      <div class="legend-items">
-        <div class="legend-item" v-for="type in entityTypes" :key="type.name">
-          <span class="legend-dot" :style="{ background: type.color }"></span>
-          <span class="legend-label">{{ type.name }}</span>
-        </div>
+    <!-- The sky: the constellation itself. -->
+    <div class="sky" ref="sky">
+      <svg
+        ref="graphSvg"
+        class="graph-svg"
+        role="group"
+        :aria-label="pictureLabel"
+        :class="{ hidden: !graphData }"
+      ></svg>
+
+      <!-- Before the Web exists: one quiet sentence. -->
+      <div v-if="!graphData" class="sky-state">
+        <span v-if="loading" class="ember large" aria-hidden="true"></span>
+        <span v-else class="star" aria-hidden="true"></span>
+        <p>{{ loading ? $t('parthenon.web.reading') : $t('parthenon.web.notYet') }}</p>
       </div>
-    </div>
-    
-    <!-- 显示边标签开关 -->
-    <div v-if="graphData" class="edge-labels-toggle">
-      <label class="toggle-switch">
-        <input type="checkbox" v-model="showEdgeLabels" />
-        <span class="slider"></span>
-      </label>
-      <span class="toggle-label">Show Edge Labels</span>
+
+      <!-- The card: who this is, or what ties these two. Hover shows it; a choice pins it. -->
+      <div
+        v-if="card"
+        class="web-card"
+        :class="{ pinned: !!pinned, [`family-${card.family || 'tie'}`]: true }"
+        :style="cardStyle"
+      >
+        <template v-if="card.kind === 'node'">
+          <div class="card-head">
+            <span class="card-dot" :style="{ background: card.colorVar }" aria-hidden="true"></span>
+            <span class="card-role p-eyebrow">{{ card.role || $t('parthenon.web.thing') }}</span>
+            <button v-if="pinned" type="button" class="card-close" :aria-label="$t('parthenon.web.closeCard')" @click.stop="clearPinned">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke-linecap="round" /></svg>
+            </button>
+          </div>
+          <h3 class="card-name">{{ card.name }}</h3>
+          <p v-if="card.summary" class="card-text">{{ card.summary }}</p>
+          <p class="card-meta">{{ card.degree === 1 ? $t('parthenon.web.tieOne') : $t('parthenon.web.tiesOf', { n: card.degree }) }}</p>
+        </template>
+        <template v-else>
+          <div class="card-head">
+            <span class="card-dot tie" :class="card.stance" aria-hidden="true"></span>
+            <span class="card-role p-eyebrow">{{ card.count === 1 ? $t('parthenon.web.tieOne') : $t('parthenon.web.tiesOf', { n: card.count }) }}</span>
+            <button v-if="pinned" type="button" class="card-close" :aria-label="$t('parthenon.web.closeCard')" @click.stop="clearPinned">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke-linecap="round" /></svg>
+            </button>
+          </div>
+          <ul class="card-ties" role="list">
+            <li v-for="line in card.lines" :key="line.key">
+              <span class="tie-from">{{ line.from }}</span>
+              <span class="tie-word">{{ line.word }}</span>
+              <span class="tie-to">{{ line.to }}</span>
+              <span v-if="line.count > 1" class="tie-count">{{ $t('parthenon.web.times', { n: line.count }) }}</span>
+            </li>
+          </ul>
+          <p v-if="card.more" class="card-meta">{{ $t('parthenon.web.andMore', { n: card.more }) }}</p>
+          <p v-if="card.fact" class="card-text fact">{{ card.fact }}</p>
+        </template>
+      </div>
+
+      <!-- Who is here: an inscription in the corner. -->
+      <div v-if="graphData && legend.length" ref="legendEl" class="legend" :class="{ open: legendOpen }" :style="legendStyle">
+        <button type="button" class="legend-head" :aria-expanded="legendOpen" @click="legendOpen = !legendOpen">
+          <span class="p-eyebrow">{{ $t('parthenon.web.whoIsHere') }}</span>
+          <span class="chev" aria-hidden="true"></span>
+        </button>
+        <ul v-show="legendOpen" class="legend-items" role="list">
+          <li v-for="entry in legend" :key="entry.type" class="legend-item">
+            <span class="legend-dot" :style="{ background: entry.colorVar }" aria-hidden="true"></span>
+            <span class="legend-label">{{ entry.label }}</span>
+            <span class="legend-count">{{ entry.count }}</span>
+          </li>
+        </ul>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+// The Web of Athens, Phase I: a night-sky constellation of the names the scroll
+// has tied together. Platform hubs are hidden, the chatter of the square is
+// folded away behind one toggle, parallel ties are drawn once and thicker, and
+// every name keeps its place from one poll to the next.
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import * as d3 from 'd3'
+import {
+  entityTypeName,
+  roleFamily,
+  roleColorVar,
+  tieName,
+  isActivityTie,
+  isPlatformNode,
+  citizenName,
+  platformName,
+  stripIds
+} from '../parthenon/vocabulary.js'
 
 const props = defineProps({
   graphData: Object,
@@ -246,570 +137,1186 @@ const props = defineProps({
   isSimulating: Boolean
 })
 
-const emit = defineEmits(['refresh', 'toggle-maximize'])
+const emit = defineEmits(['refresh'])
+const { t } = useI18n()
 
 const graphContainer = ref(null)
+const sky = ref(null)
 const graphSvg = ref(null)
-const selectedItem = ref(null)
-const showEdgeLabels = ref(true) // 默认显示边标签
-const expandedSelfLoops = ref(new Set()) // 展开的自环项
-const showSimulationFinishedHint = ref(false) // 模拟结束后的提示
-const wasSimulating = ref(false) // 追踪之前是否在模拟中
+const legendEl = ref(null)
 
-// 关闭模拟结束提示
-const dismissFinishedHint = () => {
-  showSimulationFinishedHint.value = false
+const showChatter = ref(false)
+const legendOpen = ref(true)
+const isNarrow = ref(false)
+const compact = ref(false)
+const hover = ref(null)
+const pinned = ref(null)
+const cardPos = ref({ x: 16, y: 16 })
+const lateThreads = ref(false)
+const wasSimulating = ref(false)
+// How much of the sky's foot lies below the fold, behind the Way strip.
+const hiddenBelow = ref(0)
+
+// Every name is printed. The twelve best-tied are set in a heavier hand.
+const TOP_LABELS = 12
+const NAME_MAX = 22
+const COMPACT_MAX = 16
+const COMPACT_WIDTH = 420
+const LATE_THREADS_MS = 90000
+const UNTYPED_COLOR = 'var(--p-ink-4)'
+
+// ---------------------------------------------------------------------------
+// Words
+
+// Facts arrive in the engine's words; the square has its own.
+const cityWords = (text) => {
+  let s = stripIds(text)
+  if (!s) return ''
+  s = s
+    .replace(/\bOn (Twitter|X)\b/g, `In ${platformName('twitter')}`)
+    .replace(/\bOn Reddit\b/g, `In ${platformName('reddit')}`)
+    .replace(/\bTwitter\b/g, platformName('twitter'))
+    .replace(/\bReddit\b/g, platformName('reddit'))
+    .replace(/\bthe user [“"]([a-z0-9]+(?:_[a-z0-9]+)*)[”"]/gi, (m, handle) => citizenName('', handle))
+    .replace(/[“"]([a-z0-9]+(?:_[a-z0-9]+)*_\d+)[”"]/g, (m, handle) => citizenName('', handle))
+  return s
 }
 
-// 监听 isSimulating 变化，检测模拟结束
-watch(() => props.isSimulating, (newValue, oldValue) => {
-  if (wasSimulating.value && !newValue) {
-    // 从模拟中变为非模拟状态，显示结束提示
-    showSimulationFinishedHint.value = true
-  }
-  wasSimulating.value = newValue
-}, { immediate: true })
+const shortName = (name, max = NAME_MAX) => (name.length > max ? name.slice(0, max - 1).trimEnd() + '…' : name)
 
-// 切换自环项展开/折叠状态
-const toggleSelfLoop = (id) => {
-  const newSet = new Set(expandedSelfLoops.value)
-  if (newSet.has(id)) {
-    newSet.delete(id)
-  } else {
-    newSet.add(id)
-  }
-  expandedSelfLoops.value = newSet
+// On a narrow sheet a citizen is "Despina N."; a thing keeps its name, cut short.
+const compactName = (name, family) => {
+  const words = name.split(/\s+/).filter(Boolean)
+  if (family === 'people' && words.length >= 2) return `${words[0]} ${words[words.length - 1].charAt(0)}.`
+  return shortName(name, COMPACT_MAX)
 }
 
-// 计算实体类型用于图例
-const entityTypes = computed(() => {
-  if (!props.graphData?.nodes) return []
-  const typeMap = {}
-  // 美观的颜色调色板
-  const colors = ['#FF6B35', '#004E89', '#7B2D8E', '#1A936F', '#C5283D', '#E9724C', '#3498db', '#9b59b6', '#27ae60', '#f39c12']
-  
-  props.graphData.nodes.forEach(node => {
-    const type = node.labels?.find(l => l !== 'Entity') || 'Entity'
-    if (!typeMap[type]) {
-      typeMap[type] = { name: type, count: 0, color: colors[Object.keys(typeMap).length % colors.length] }
+// ---------------------------------------------------------------------------
+// The model: what the picture shows, derived from the engine's graph
+
+const buildModel = (data, chatter) => {
+  const empty = { nodes: [], links: [], legend: [], top: new Set(), signature: '', tieCount: 0, chatterCount: 0 }
+  if (!data || !Array.isArray(data.nodes)) return empty
+
+  const rawNodes = data.nodes.filter((n) => n && n.uuid && !isPlatformNode(n.name))
+  const ids = new Set(rawNodes.map((n) => n.uuid))
+  const rawEdges = (data.edges || []).filter(
+    (e) => e && ids.has(e.source_node_uuid) && ids.has(e.target_node_uuid) && e.source_node_uuid !== e.target_node_uuid
+  )
+
+  const degree = new Map()
+  const bundles = new Map()
+  let chatterCount = 0
+
+  for (const e of rawEdges) {
+    const name = e.name || e.fact_type || 'RELATES_TO'
+    const activity = isActivityTie(name)
+    const a = e.source_node_uuid
+    const b = e.target_node_uuid
+    if (!activity) {
+      degree.set(a, (degree.get(a) || 0) + 1)
+      degree.set(b, (degree.get(b) || 0) + 1)
+    } else {
+      chatterCount++
+      if (!chatter) continue
     }
-    typeMap[type].count++
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    let bundle = bundles.get(key)
+    if (!bundle) {
+      bundle = { key, source: a < b ? a : b, target: a < b ? b : a, count: 0, structural: false, stance: '', ties: new Map() }
+      bundles.set(key, bundle)
+    }
+    bundle.count++
+    if (!activity) bundle.structural = true
+    if (name === 'SUPPORTS' && !bundle.stance) bundle.stance = 'supports'
+    if (name === 'OPPOSES') bundle.stance = 'opposes'
+    const tkey = `${name}>${a}`
+    let tie = bundle.ties.get(tkey)
+    if (!tie) {
+      tie = { key: tkey, name, word: tieName(name), from: a, to: b, count: 0, fact: '', activity }
+      bundle.ties.set(tkey, tie)
+    }
+    tie.count++
+    if (!tie.fact && e.fact) tie.fact = cityWords(e.fact)
+  }
+
+  const maxDegree = Math.max(1, ...degree.values())
+  const radius = d3.scaleSqrt().domain([0, maxDegree]).range([3.5, 10])
+
+  const nodes = rawNodes.map((n) => {
+    const type = (n.labels || []).find((l) => l && l !== 'Entity') || ''
+    const role = type ? entityTypeName(type) : ''
+    const name = citizenName(n.name) || n.name || ''
+    const deg = degree.get(n.uuid) || 0
+    const family = type ? roleFamily(type) : 'untyped'
+    return {
+      id: n.uuid,
+      name,
+      label: shortName(name),
+      labelCompact: compactName(name, family),
+      type,
+      role,
+      family,
+      colorVar: type ? roleColorVar(type) : UNTYPED_COLOR,
+      degree: deg,
+      r: radius(deg),
+      summary: cityWords(n.summary || ''),
+      rank: 0,
+      top: false
+    }
   })
-  return Object.values(typeMap)
+
+  // Rank by ties decides only the weight of a name and who is printed first.
+  const ranked = [...nodes].sort((x, y) => y.degree - x.degree || x.name.localeCompare(y.name))
+  ranked.forEach((n, i) => {
+    n.rank = i
+    n.top = i < TOP_LABELS
+  })
+  const top = new Set(ranked.slice(0, TOP_LABELS).map((n) => n.id))
+
+  const links = [...bundles.values()].map((b) => ({
+    key: b.key,
+    source: b.source,
+    target: b.target,
+    count: b.count,
+    structural: b.structural,
+    stance: b.stance,
+    ties: [...b.ties.values()].sort((x, y) => Number(x.activity) - Number(y.activity) || y.count - x.count)
+  }))
+
+  const byType = new Map()
+  for (const n of nodes) {
+    if (!n.type || !n.role) continue
+    const entry = byType.get(n.type) || { type: n.type, label: n.role, colorVar: n.colorVar, count: 0 }
+    entry.count++
+    byType.set(n.type, entry)
+  }
+  const legend = [...byType.values()].sort((x, y) => y.count - x.count || x.label.localeCompare(y.label))
+
+  const signature =
+    nodes.map((n) => n.id).sort().join(',') + '#' + links.map((l) => `${l.key}:${l.count}`).sort().join(',')
+
+  return { nodes, links, legend, top, signature, tieCount: links.length, chatterCount }
+}
+
+const model = computed(() => buildModel(props.graphData, showChatter.value))
+const legend = computed(() => model.value.legend)
+
+const busy = computed(() => props.currentPhase === 1 || props.isSimulating)
+
+const subline = computed(() => {
+  if (props.isSimulating) return t('parthenon.web.moving')
+  if (props.currentPhase === 1 && !model.value.nodes.length) return t('parthenon.web.weaving')
+  if (lateThreads.value) return t('parthenon.web.lateThreads')
+  if (!props.graphData) return ''
+  const m = model.value
+  if (!m.nodes.length) return t('parthenon.web.empty')
+  // On a narrow panel the chatter button already says whether the chatter is in.
+  const key = isNarrow.value
+    ? 'parthenon.web.countShort'
+    : (showChatter.value ? 'parthenon.web.countChatter' : 'parthenon.web.count')
+  return t(key, { names: m.nodes.length, ties: m.tieCount })
 })
 
-// 格式化时间
-const formatDateTime = (dateStr) => {
-  if (!dateStr) return ''
-  try {
-    const date = new Date(dateStr)
-    return date.toLocaleString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true 
-    })
-  } catch {
-    return dateStr
-  }
+const pictureLabel = computed(() =>
+  t('parthenon.web.picture', { names: model.value.nodes.length, ties: model.value.tieCount })
+)
+
+// The card reads from the pinned choice first, then from what the pointer is over.
+const card = computed(() => pinned.value || hover.value)
+const cardStyle = computed(() => ({ left: `${cardPos.value.x}px`, top: `${cardPos.value.y}px` }))
+const legendStyle = computed(() => ({ bottom: `${12 + hiddenBelow.value}px` }))
+
+// ---------------------------------------------------------------------------
+// The picture: d3 on one svg, with joins so nothing is rebuilt on a poll
+
+let svg = null
+let root = null
+let linkLayer = null
+let nodeLayer = null
+let sim = null
+let zoom = null
+let resizeObserver = null
+let width = 600
+let height = 480
+let currentTransform = d3.zoomIdentity
+let userZoomed = false
+let lastSignature = ''
+let hasLaidOut = false
+let simNodes = []
+let simLinks = []
+let adjacency = new Map()
+let paint = {}
+
+// Every name keeps its place: node objects live here across polls, keyed by id.
+const nodeById = new Map()
+
+const reducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+// How hard the sky pulls the names to its centre, across and down, so the
+// constellation takes the shape of the pane it is in.
+const pull = () => {
+  if (isNarrow.value) return { x: 0.18, y: 0.015 }
+  const aspect = Math.max(0.5, Math.min(2, width / Math.max(1, height)))
+  return { x: Math.min(0.14, 0.055 / aspect), y: Math.min(0.14, 0.055 * aspect) }
 }
 
-const closeDetailPanel = () => {
-  selectedItem.value = null
-  expandedSelfLoops.value = new Set() // 重置展开状态
+const resolveVar = (expr, fallback) => {
+  const el = graphContainer.value
+  if (!el) return fallback
+  const m = /var\((--[\w-]+)\)/.exec(expr || '')
+  const name = m ? m[1] : expr
+  const value = getComputedStyle(el).getPropertyValue(name).trim()
+  return value || fallback
 }
 
-let currentSimulation = null
-let linkLabelsRef = null
-let linkLabelBgRef = null
-
-const renderGraph = () => {
-  if (!graphSvg.value || !props.graphData) return
-  
-  // 停止之前的仿真
-  if (currentSimulation) {
-    currentSimulation.stop()
-  }
-  
-  const container = graphContainer.value
-  const width = container.clientWidth
-  const height = container.clientHeight
-  
-  const svg = d3.select(graphSvg.value)
-    .attr('width', width)
-    .attr('height', height)
-    .attr('viewBox', `0 0 ${width} ${height}`)
-    
-  svg.selectAll('*').remove()
-  
-  const nodesData = props.graphData.nodes || []
-  const edgesData = props.graphData.edges || []
-  
-  if (nodesData.length === 0) return
-
-  // Prep data
-  const nodeMap = {}
-  nodesData.forEach(n => nodeMap[n.uuid] = n)
-  
-  const nodes = nodesData.map(n => ({
-    id: n.uuid,
-    name: n.name || 'Unnamed',
-    type: n.labels?.find(l => l !== 'Entity') || 'Entity',
-    rawData: n
-  }))
-  
-  const nodeIds = new Set(nodes.map(n => n.id))
-  
-  // 处理边数据，计算同一对节点间的边数量和索引
-  const edgePairCount = {}
-  const selfLoopEdges = {} // 按节点分组的自环边
-  const tempEdges = edgesData
-    .filter(e => nodeIds.has(e.source_node_uuid) && nodeIds.has(e.target_node_uuid))
-  
-  // 统计每对节点之间的边数量，收集自环边
-  tempEdges.forEach(e => {
-    if (e.source_node_uuid === e.target_node_uuid) {
-      // 自环 - 收集到数组中
-      if (!selfLoopEdges[e.source_node_uuid]) {
-        selfLoopEdges[e.source_node_uuid] = []
-      }
-      selfLoopEdges[e.source_node_uuid].push({
-        ...e,
-        source_name: nodeMap[e.source_node_uuid]?.name,
-        target_name: nodeMap[e.target_node_uuid]?.name
-      })
-    } else {
-      const pairKey = [e.source_node_uuid, e.target_node_uuid].sort().join('_')
-      edgePairCount[pairKey] = (edgePairCount[pairKey] || 0) + 1
+const readPaint = () => {
+  paint = {
+    surface: resolveVar('var(--p-surface)', '#11151c'),
+    ink: resolveVar('var(--p-ink)', '#f2ede4'),
+    ink2: resolveVar('var(--p-ink-2)', '#d8d2c7'),
+    ink3: resolveVar('var(--p-ink-3)', '#a7a197'),
+    ink4: resolveVar('var(--p-ink-4)', '#8a847a'),
+    gold: resolveVar('var(--p-gold)', '#f0b660'),
+    olive: resolveVar('var(--p-olive)', '#a8b86a'),
+    error: resolveVar('var(--p-error)', '#f08a7a'),
+    families: {
+      people: resolveVar('var(--p-gold)', '#f0b660'),
+      institutions: resolveVar('var(--p-aegean)', '#8fb8d8'),
+      movements: resolveVar('var(--p-olive)', '#a8b86a'),
+      machines: resolveVar('var(--p-ink)', '#f2ede4'),
+      places: resolveVar('var(--p-ochre)', '#d9a25a'),
+      untyped: resolveVar('var(--p-ink-4)', '#8a847a')
     }
-  })
-  
-  // 记录当前处理到每对节点的第几条边
-  const edgePairIndex = {}
-  const processedSelfLoopNodes = new Set() // 已处理的自环节点
-  
-  const edges = []
-  
-  tempEdges.forEach(e => {
-    const isSelfLoop = e.source_node_uuid === e.target_node_uuid
-    
-    if (isSelfLoop) {
-      // 自环边 - 每个节点只添加一条合并的自环
-      if (processedSelfLoopNodes.has(e.source_node_uuid)) {
-        return // 已处理过，跳过
-      }
-      processedSelfLoopNodes.add(e.source_node_uuid)
-      
-      const allSelfLoops = selfLoopEdges[e.source_node_uuid]
-      const nodeName = nodeMap[e.source_node_uuid]?.name || 'Unknown'
-      
-      edges.push({
-        source: e.source_node_uuid,
-        target: e.target_node_uuid,
-        type: 'SELF_LOOP',
-        name: `Self Relations (${allSelfLoops.length})`,
-        curvature: 0,
-        isSelfLoop: true,
-        rawData: {
-          isSelfLoopGroup: true,
-          source_name: nodeName,
-          target_name: nodeName,
-          selfLoopCount: allSelfLoops.length,
-          selfLoopEdges: allSelfLoops // 存储所有自环边的详细信息
+  }
+}
+
+const nodeColor = (d) => paint.families[d.family] || paint.families.untyped
+
+// Labels keep their 12px whatever the zoom, so the sky can be scaled to fit
+// without the names growing or shrinking with it.
+const LABEL_PX = 12
+const LABEL_H = 14
+const LABEL_GAP = 6 // between a coin and its name
+const LABEL_PAD = 3 // kept clear around every printed name
+const CHAR_W = 6.6
+// Right of the coin, left, below, above; then the four corners as a last resort.
+const SIDES = ['r', 'l', 'b', 'a', 'rb', 'ra', 'lb', 'la']
+const CORNER_LIFT = 11 // how far a corner name sits above or below the coin's centre line
+let fitScale = 1 // the scale the picture is heading for, so the forces can plan for it
+const labelScale = () => 1 / (currentTransform.k || 1)
+const plannedLabelScale = () => 1 / (fitScale || 1)
+
+const labelText = (d) => (compact.value ? d.labelCompact : d.label) || ''
+
+// The width of a printed name, measured once per string in the body face.
+let measureCtx = null
+const widthCache = new Map()
+const labelWidth = (text) => {
+  if (!text) return 0
+  const cached = widthCache.get(text)
+  if (cached != null) return cached
+  let w = 0
+  try {
+    if (!measureCtx) {
+      measureCtx = document.createElement('canvas').getContext('2d')
+      const family = graphContainer.value ? getComputedStyle(graphContainer.value).getPropertyValue('--p-font-body').trim() : ''
+      measureCtx.font = `500 ${LABEL_PX}px ${family || 'Geist, sans-serif'}`
+    }
+    w = measureCtx.measureText(text).width
+  } catch (e) {
+    w = 0
+  }
+  if (!(w > 0)) w = text.length * CHAR_W
+  widthCache.set(text, w)
+  return w
+}
+
+// Where a name sits beside its coin, in screen pixels from the coin's centre.
+const labelBox = (d, side, k, w) => {
+  const R = d.r * k
+  const lift = side.length === 2 ? (side[1] === 'a' ? -CORNER_LIFT : CORNER_LIFT) : 0
+  const gap = side.length === 2 ? R * 0.7 + LABEL_GAP : R + LABEL_GAP
+  switch (side[0]) {
+    case 'l':
+      return { x0: -gap - w, x1: -gap, y0: lift - LABEL_H / 2, y1: lift + LABEL_H / 2 }
+    case 'b':
+      return { x0: -w / 2, x1: w / 2, y0: R + LABEL_PAD, y1: R + LABEL_PAD + LABEL_H }
+    case 'a':
+      return { x0: -w / 2, x1: w / 2, y0: -R - LABEL_PAD - LABEL_H, y1: -R - LABEL_PAD }
+    default:
+      return { x0: gap, x1: gap + w, y0: lift - LABEL_H / 2, y1: lift + LABEL_H / 2 }
+  }
+}
+
+// The text attributes for a side, in the picture's units at label scale s.
+const labelAnchor = (d, s) => {
+  const side = d.side || 'r'
+  const corner = side.length === 2
+  const lift = corner ? (side[1] === 'a' ? -CORNER_LIFT : CORNER_LIFT) * s : 0
+  const gap = corner ? d.r * 0.7 + LABEL_GAP * s : d.r + LABEL_GAP * s
+  switch (side[0]) {
+    case 'l':
+      return { anchor: 'end', x: -gap, y: lift + 4 * s }
+    case 'b':
+      return { anchor: 'middle', x: 0, y: d.r + (LABEL_PAD + 11) * s }
+    case 'a':
+      return { anchor: 'middle', x: 0, y: -(d.r + (LABEL_PAD + 3) * s) }
+    default:
+      return { anchor: 'start', x: gap, y: lift + 4 * s }
+  }
+}
+
+const boxesMeet = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+
+const coinMeetsBox = (cx, cy, R, box) => {
+  const nx = Math.max(box.x0, Math.min(cx, box.x1))
+  const ny = Math.max(box.y0, Math.min(cy, box.y1))
+  return Math.hypot(cx - nx, cy - ny) < R
+}
+
+const applyLabelScale = () => {
+  if (!nodeLayer) return
+  const s = labelScale()
+  nodeLayer
+    .selectAll('g.node text.label')
+    .attr('font-size', LABEL_PX * s)
+    .attr('stroke-width', 3 * s)
+    .attr('text-anchor', (d) => labelAnchor(d, s).anchor)
+    .attr('x', (d) => labelAnchor(d, s).x)
+    .attr('y', (d) => labelAnchor(d, s).y)
+  nodeLayer.selectAll('g.node').classed('crowded', (d) => !!d.crowded)
+}
+
+// Once the names have settled, each is printed on the first side of its coin
+// where it covers neither another name nor another coin. The best-tied are
+// printed first. A name that fits nowhere is held back until it is pointed at.
+const placeLabels = (k) => {
+  if (!simNodes.length || !(k > 0)) return
+  const ranked = [...simNodes].sort((a, b) => a.rank - b.rank)
+  const placed = []
+  for (const d of ranked) {
+    const w = labelWidth(labelText(d))
+    const sx = d.x * k
+    const sy = d.y * k
+    // A name keeps the side it had when it still fits there, so nothing jumps about.
+    const order = d.side ? [d.side, ...SIDES.filter((s) => s !== d.side)] : SIDES
+    let chosen = null
+    for (const side of order) {
+      const b = labelBox(d, side, k, w)
+      const box = { x0: sx + b.x0 - LABEL_PAD, x1: sx + b.x1 + LABEL_PAD, y0: sy + b.y0 - LABEL_PAD, y1: sy + b.y1 + LABEL_PAD }
+      if (placed.some((p) => boxesMeet(p, box))) continue
+      if (simNodes.some((o) => o !== d && coinMeetsBox(o.x * k, o.y * k, o.r * k + 1, box))) continue
+      chosen = side
+      placed.push(box)
+      break
+    }
+    d.crowded = !chosen
+    if (chosen) d.side = chosen
+    else if (!d.side) d.side = 'r'
+  }
+  applyLabelScale()
+}
+
+// A small force that keeps other coins out of each name's rectangle.
+const labelCollide = () => {
+  let nodes = []
+  const force = (alpha) => {
+    const k = alpha * 0.9
+    const s = plannedLabelScale()
+    for (const a of nodes) {
+      const box = labelBox(a, a.side || 'r', 1 / s, labelWidth(labelText(a)))
+      const x0 = a.x + (box.x0 - 2) * s
+      const x1 = a.x + (box.x1 + 2) * s
+      const y0 = a.y + (box.y0 - 2) * s
+      const y1 = a.y + (box.y1 + 2) * s
+      for (const b of nodes) {
+        if (b === a) continue
+        const cx = Math.max(x0, Math.min(b.x, x1))
+        const cy = Math.max(y0, Math.min(b.y, y1))
+        const dx = b.x - cx
+        const dy = b.y - cy
+        const dist = Math.hypot(dx, dy)
+        const min = b.r + 4 * s
+        if (dist >= min) continue
+        let ux
+        let uy
+        if (dist > 0.01) {
+          ux = dx / dist
+          uy = dy / dist
+        } else {
+          ux = 0
+          uy = b.y >= a.y ? 1 : -1
         }
-      })
+        const push = (min - dist) * k
+        b.vx += ux * push
+        b.vy += uy * push
+        a.vx -= ux * push * 0.35
+        a.vy -= uy * push * 0.35
+      }
+    }
+  }
+  force.initialize = (n) => { nodes = n }
+  return force
+}
+
+const linkStroke = (d) => {
+  if (d.stance === 'opposes') return paint.error
+  if (d.stance === 'supports') return paint.olive
+  return d.structural ? paint.ink2 : paint.gold
+}
+
+const linkOpacity = (d) => (d.structural ? 0.34 : 0.16)
+const linkWidth = (d) => 1 + Math.min(3, Math.log2(Math.max(1, d.count)))
+
+// Where the picture may sit: below the bar, above the legend, above the fold.
+const fitInsets = () => {
+  const legendH = legendEl.value ? legendEl.value.offsetHeight : 0
+  const aboveLegend = legendOpen.value && !isNarrow.value ? Math.max(84, legendH + 24) : 48
+  return { top: 12, right: 16, bottom: aboveLegend + hiddenBelow.value, left: 16 }
+}
+
+const storageKey = () => {
+  const id = props.graphData?.graph_id
+  return id ? `parthenon.web.pos.${id}` : ''
+}
+
+const loadPositions = () => {
+  const key = storageKey()
+  if (!key) return {}
+  try {
+    const raw = sessionStorage.getItem(key)
+    return raw ? JSON.parse(raw) : {}
+  } catch (e) {
+    return {}
+  }
+}
+
+const savePositions = () => {
+  const key = storageKey()
+  if (!key || !simNodes.length) return
+  try {
+    const out = {}
+    for (const n of simNodes) out[n.id] = [Math.round(n.x), Math.round(n.y)]
+    sessionStorage.setItem(key, JSON.stringify(out))
+  } catch (e) {
+    /* a per-viewer convenience only */
+  }
+}
+
+// While the pane is hidden (the phone sheet before it opens) the sky has no
+// size; the first layout waits for the first real one.
+let skyVisible = false
+let pendingRender = false
+let legendDecided = false
+
+// The shell's Web pane can run below the fold before the visitor scrolls
+// (it is as tall as the viewport but starts under the threshold band), and the
+// Way strip covers whatever lies there. The picture keeps to the part that
+// can be seen. In the phone sheet, which floats above the strip, nothing is hidden.
+const inFixedLayer = (el) => {
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    if (getComputedStyle(n).position === 'fixed') return true
+  }
+  return false
+}
+
+const measureFold = (rect) => {
+  if (typeof window === 'undefined' || !graphContainer.value) return 0
+  const wayH = parseFloat(getComputedStyle(graphContainer.value).getPropertyValue('--p-way-h')) || 0
+  const floor = inFixedLayer(graphContainer.value) ? window.innerHeight : window.innerHeight - wayH
+  const hidden = Math.max(0, Math.round(rect.bottom - floor))
+  // Never take more than half the sky; past that the visitor has to scroll anyway.
+  return Math.min(hidden, Math.round(rect.height / 2))
+}
+
+const measure = () => {
+  const el = sky.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  skyVisible = rect.width > 0 && rect.height > 0
+  width = Math.max(240, Math.round(rect.width) || 600)
+  height = Math.max(240, Math.round(rect.height) || 480)
+  isNarrow.value = width < 560
+  compact.value = width < COMPACT_WIDTH
+  hiddenBelow.value = skyVisible ? measureFold(rect) : 0
+  // The inscription stands open only where the sky has room for it and every
+  // name; on a short sky it waits, closed, for a click.
+  if (skyVisible && !legendDecided) {
+    legendDecided = true
+    legendOpen.value = !isNarrow.value && height - hiddenBelow.value >= 600
+  }
+  if (svg) svg.attr('width', width).attr('height', height).attr('viewBox', `0 0 ${width} ${height}`)
+  if (sim) {
+    sim.force('x').x(width / 2)
+    sim.force('y').y(height / 2)
+  }
+}
+
+const SCALE_MIN = 0.3
+const SCALE_MAX = 1.4
+
+const availArea = () => {
+  const ins = fitInsets()
+  return { ins, availW: Math.max(120, width - ins.left - ins.right), availH: Math.max(120, height - ins.top - ins.bottom) }
+}
+
+// Where the picture must sit to fill the sky: a first guess from the coins
+// alone, with a little room kept for the names.
+const computeFit = () => {
+  const xs = simNodes.map((n) => n.x)
+  const ys = simNodes.map((n) => n.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const { ins, availW, availH } = availArea()
+  const maxR = Math.max(...simNodes.map((n) => n.r || 4))
+  // Labels keep their screen size, so the room they need is in screen pixels.
+  const labelRoom = Math.min(110, Math.max(50, availW * 0.2))
+  const padY = 24
+  const spanX = Math.max(1, maxX - minX + maxR * 2)
+  const spanY = Math.max(1, maxY - minY + maxR * 2)
+  const scale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.min((availW - labelRoom) / spanX, (availH - padY) / spanY)))
+  const cx = (minX - maxR + maxX + maxR + labelRoom / scale) / 2
+  const cy = (minY + maxY) / 2
+  const tx = ins.left + availW / 2 - cx * scale
+  const ty = ins.top + availH / 2 - cy * scale
+  return d3.zoomIdentity.translate(tx, ty).scale(scale)
+}
+
+// The screen-pixel bounds of coins and printed names at scale k, before translation.
+const pictureBounds = (k) => {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const d of simNodes) {
+    const sx = d.x * k
+    const sy = d.y * k
+    const R = d.r * k
+    minX = Math.min(minX, sx - R)
+    maxX = Math.max(maxX, sx + R)
+    minY = Math.min(minY, sy - R)
+    maxY = Math.max(maxY, sy + R)
+    if (d.crowded) continue
+    const b = labelBox(d, d.side || 'r', k, labelWidth(labelText(d)))
+    minX = Math.min(minX, sx + b.x0)
+    maxX = Math.max(maxX, sx + b.x1)
+    minY = Math.min(minY, sy + b.y0)
+    maxY = Math.max(maxY, sy + b.y1)
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+// The names are placed at the planned scale and the fit is taken again with
+// them counted, so no printed name ends up outside the frame.
+const refineFit = (transform) => {
+  let k = transform.k
+  const { ins, availW, availH } = availArea()
+  for (let i = 0; i < 4; i++) {
+    placeLabels(k)
+    const b = pictureBounds(k)
+    const grow = Math.min(availW / Math.max(1, b.maxX - b.minX), availH / Math.max(1, b.maxY - b.minY))
+    if (grow >= 0.98 && grow <= 1.08) break
+    const next = Math.max(SCALE_MIN, Math.min(SCALE_MAX, k * (grow < 1 ? grow * 0.985 : Math.min(grow, 1.25))))
+    if (Math.abs(next - k) < 0.005) break
+    k = next
+  }
+  placeLabels(k)
+  let b = pictureBounds(k)
+  const over = Math.min(1, availW / Math.max(1, b.maxX - b.minX), availH / Math.max(1, b.maxY - b.minY))
+  if (over < 0.995 && k > SCALE_MIN) {
+    k = Math.max(SCALE_MIN, k * over)
+    placeLabels(k)
+    b = pictureBounds(k)
+  }
+  const bw = b.maxX - b.minX
+  const bh = b.maxY - b.minY
+  const tx = ins.left + (availW - bw) / 2 - b.minX
+  const ty = ins.top + (availH - bh) / 2 - b.minY
+  return d3.zoomIdentity.translate(tx, ty).scale(k)
+}
+
+// A few quiet ticks at the planned scale, so labels that grew in the picture's
+// units when it was scaled down get their room back.
+const settleLabels = () => {
+  if (!sim || !simNodes.length) return
+  const alpha = sim.alpha()
+  sim.alpha(0.14)
+  for (let i = 0; i < 60; i++) sim.tick()
+  sim.alpha(alpha)
+  tick()
+}
+
+// Fit the picture to the sky. With `settle`, the names first make room for
+// their labels at the scale they are heading for, then the fit is taken again
+// so nothing that moved ends up outside the frame.
+const fit = (animate, settle = false) => {
+  if (!svg || !zoom || !simNodes.length) return
+  let transform = refineFit(computeFit())
+  if (settle) {
+    // Two rounds: the names are placed at the scale the picture will really
+    // have, the coins make room for them, and the names that still fit nowhere
+    // are placed again once the room is there.
+    for (let round = 0; round < 2; round++) {
+      fitScale = transform.k
+      settleLabels()
+      transform = refineFit(computeFit())
+    }
+  }
+  fitScale = transform.k
+  const target = animate && !reducedMotion() ? svg.transition().duration(700).ease(d3.easeCubicOut) : svg
+  target.call(zoom.transform, transform)
+}
+
+const buildAdjacency = () => {
+  adjacency = new Map()
+  for (const l of simLinks) {
+    const a = typeof l.source === 'object' ? l.source.id : l.source
+    const b = typeof l.target === 'object' ? l.target.id : l.target
+    if (!adjacency.has(a)) adjacency.set(a, new Set())
+    if (!adjacency.has(b)) adjacency.set(b, new Set())
+    adjacency.get(a).add(b)
+    adjacency.get(b).add(a)
+  }
+}
+
+// Focus: hovering or choosing a name lights its neighbourhood and dims the rest.
+const applyFocus = () => {
+  if (!nodeLayer || !linkLayer) return
+  const focus = pinned.value || hover.value
+  const nodes = nodeLayer.selectAll('g.node')
+  const links = linkLayer.selectAll('g.link')
+  if (!focus) {
+    nodes.classed('lit', false).classed('dim', false).classed('chosen', false)
+    links.classed('lit', false).classed('dim', false)
+    return
+  }
+  if (focus.kind === 'node') {
+    const near = adjacency.get(focus.id) || new Set()
+    nodes
+      .classed('lit', (d) => d.id === focus.id || near.has(d.id))
+      .classed('dim', (d) => d.id !== focus.id && !near.has(d.id))
+      .classed('chosen', (d) => !!pinned.value && d.id === focus.id)
+    links
+      .classed('lit', (d) => d.source.id === focus.id || d.target.id === focus.id)
+      .classed('dim', (d) => d.source.id !== focus.id && d.target.id !== focus.id)
+  } else {
+    nodes
+      .classed('lit', (d) => d.id === focus.a || d.id === focus.b)
+      .classed('dim', (d) => d.id !== focus.a && d.id !== focus.b)
+      .classed('chosen', false)
+    links.classed('lit', (d) => d.key === focus.key).classed('dim', (d) => d.key !== focus.key)
+  }
+}
+
+const nodeCard = (d) => ({
+  kind: 'node',
+  id: d.id,
+  name: d.name,
+  role: d.role,
+  family: d.family,
+  colorVar: d.colorVar,
+  summary: d.summary,
+  degree: d.degree
+})
+
+const linkCard = (d) => {
+  const lines = d.ties.slice(0, 4).map((tie) => ({
+    key: tie.key,
+    from: nodeById.get(tie.from)?.name || '',
+    word: tie.word,
+    to: nodeById.get(tie.to)?.name || '',
+    count: tie.count
+  }))
+  const withFact = d.ties.find((tie) => !tie.activity && tie.fact) || d.ties.find((tie) => tie.fact)
+  return {
+    kind: 'link',
+    key: d.key,
+    a: d.source.id,
+    b: d.target.id,
+    count: d.count,
+    stance: d.stance,
+    lines,
+    more: Math.max(0, d.ties.length - lines.length),
+    fact: withFact ? withFact.fact : ''
+  }
+}
+
+const placeCardAt = (px, py) => {
+  const cardW = 280
+  const cardH = 190
+  const x = Math.max(8, Math.min(px + 14, width - cardW - 8))
+  const y = Math.max(8, Math.min(py + 14, height - cardH - 8))
+  cardPos.value = { x, y }
+}
+
+const placeCardNear = (d) => {
+  const [sx, sy] = currentTransform.apply([d.x, d.y])
+  placeCardAt(sx + d.r * currentTransform.k, sy)
+}
+
+const pointerPos = (event) => {
+  const rect = sky.value?.getBoundingClientRect()
+  if (!rect) return [0, 0]
+  return [event.clientX - rect.left, event.clientY - rect.top]
+}
+
+const clearPinned = () => {
+  pinned.value = null
+  applyFocus()
+}
+
+let lateTimer = null
+const clearLateThreads = () => {
+  lateThreads.value = false
+  if (lateTimer) clearTimeout(lateTimer)
+  lateTimer = null
+}
+
+const onRefresh = () => {
+  clearLateThreads()
+  emit('refresh')
+}
+
+// The names are printed again wherever they now fit, at the scale on screen.
+const relabel = () => {
+  if (!nodeLayer || !simNodes.length) return
+  nodeLayer.selectAll('g.node text.label').text(labelText)
+  if (userZoomed) placeLabels(currentTransform.k)
+  else fit(false)
+}
+
+const tick = () => {
+  linkLayer
+    .selectAll('g.link')
+    .selectAll('path')
+    .attr('d', (d) => `M${d.source.x},${d.source.y}L${d.target.x},${d.target.y}`)
+  nodeLayer.selectAll('g.node').attr('transform', (d) => `translate(${d.x},${d.y})`)
+}
+
+const onSettle = () => {
+  if (userZoomed) placeLabels(currentTransform.k)
+  else fit(true, true)
+  savePositions()
+}
+
+const init = () => {
+  svg = d3.select(graphSvg.value)
+  root = svg.append('g').attr('class', 'root')
+  linkLayer = root.append('g').attr('class', 'links')
+  nodeLayer = root.append('g').attr('class', 'nodes')
+
+  zoom = d3
+    .zoom()
+    .scaleExtent([0.25, 4])
+    .on('zoom', (event) => {
+      currentTransform = event.transform
+      root.attr('transform', event.transform)
+      applyLabelScale()
+      if (event.sourceEvent) userZoomed = true
+      if (pinned.value?.kind === 'node') {
+        const d = nodeById.get(pinned.value.id)
+        if (d) placeCardNear(d)
+      }
+    })
+    // After the visitor's own zoom the names are printed again at the new size.
+    .on('end', (event) => {
+      if (event.sourceEvent) placeLabels(currentTransform.k)
+    })
+  svg.call(zoom).on('dblclick.zoom', null)
+
+  svg.on('click', () => {
+    pinned.value = null
+    hover.value = null
+    applyFocus()
+  })
+
+  sim = d3
+    .forceSimulation()
+    .force(
+      'link',
+      d3
+        .forceLink()
+        .id((d) => d.id)
+        .distance((d) => (d.structural ? 104 : 132))
+        .strength((d) => (d.structural ? 0.55 : 0.12))
+    )
+    // Names with no visible tie are pulled in and pushed less, so they hang
+    // about the constellation like faint stars instead of fleeing to the edge,
+    // yet far enough apart that each keeps room for its name.
+    .force('charge', d3.forceManyBody().strength((d) => (d.shown ? -280 : -160)).distanceMax(460))
+    .force('collide', d3.forceCollide().radius((d) => d.r + 14).strength(0.8))
+    .force('labels', labelCollide())
+    // A tall pane gets a tall constellation: the pull inward is stronger across
+    // than down when the sky is taller than it is wide, and the other way about.
+    .force('x', d3.forceX(width / 2).strength((d) => (d.shown ? pull().x : pull().x * 1.6)))
+    .force('y', d3.forceY(height / 2).strength((d) => (d.shown ? pull().y : pull().y * 1.6)))
+    .alphaDecay(0.035)
+    .velocityDecay(0.42)
+    .on('tick', tick)
+    .on('end', onSettle)
+  sim.stop()
+
+  resizeObserver = new ResizeObserver(() => {
+    const before = width + 'x' + height + '/' + hiddenBelow.value
+    const wasVisible = skyVisible
+    measure()
+    if (skyVisible && !wasVisible && pendingRender) {
+      pendingRender = false
+      render()
       return
     }
-    
-    const pairKey = [e.source_node_uuid, e.target_node_uuid].sort().join('_')
-    const totalCount = edgePairCount[pairKey]
-    const currentIndex = edgePairIndex[pairKey] || 0
-    edgePairIndex[pairKey] = currentIndex + 1
-    
-    // 判断边的方向是否与标准化方向一致（源UUID < 目标UUID）
-    const isReversed = e.source_node_uuid > e.target_node_uuid
-    
-    // 计算曲率：多条边时分散开，单条边为直线
-    let curvature = 0
-    if (totalCount > 1) {
-      // 均匀分布曲率，确保明显区分
-      // 曲率范围根据边数量增加，边越多曲率范围越大
-      const curvatureRange = Math.min(1.2, 0.6 + totalCount * 0.15)
-      curvature = ((currentIndex / (totalCount - 1)) - 0.5) * curvatureRange * 2
-      
-      // 如果边的方向与标准化方向相反，翻转曲率
-      // 这样确保所有边在同一参考系下分布，不会因方向不同而重叠
-      if (isReversed) {
-        curvature = -curvature
-      }
-    }
-    
-    edges.push({
-      source: e.source_node_uuid,
-      target: e.target_node_uuid,
-      type: e.fact_type || e.name || 'RELATED',
-      name: e.name || e.fact_type || 'RELATED',
-      curvature,
-      isSelfLoop: false,
-      pairIndex: currentIndex,
-      pairTotal: totalCount,
-      rawData: {
-        ...e,
-        source_name: nodeMap[e.source_node_uuid]?.name,
-        target_name: nodeMap[e.target_node_uuid]?.name
-      }
-    })
+    if (before !== width + 'x' + height + '/' + hiddenBelow.value && simNodes.length && !userZoomed) fit(false)
   })
-    
-  // Color scale
-  const colorMap = {}
-  entityTypes.value.forEach(t => colorMap[t.name] = t.color)
-  const getColor = (type) => colorMap[type] || '#999'
+  resizeObserver.observe(sky.value)
+  window.addEventListener('scroll', onScroll, { passive: true })
+  measure()
+}
 
-  // Simulation - 根据边数量动态调整节点间距
-  const simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(edges).id(d => d.id).distance(d => {
-      // 根据这对节点之间的边数量动态调整距离
-      // 基础距离 150，每多一条边增加 40
-      const baseDistance = 150
-      const edgeCount = d.pairTotal || 1
-      return baseDistance + (edgeCount - 1) * 50
-    }))
-    .force('charge', d3.forceManyBody().strength(-400))
-    .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collide', d3.forceCollide(50))
-    // 添加向中心的引力，让独立的节点群聚集到中心区域
-    .force('x', d3.forceX(width / 2).strength(0.04))
-    .force('y', d3.forceY(height / 2).strength(0.04))
-  
-  currentSimulation = simulation
-
-  const g = svg.append('g')
-  
-  // Zoom
-  svg.call(d3.zoom().extent([[0, 0], [width, height]]).scaleExtent([0.1, 4]).on('zoom', (event) => {
-    g.attr('transform', event.transform)
-  }))
-
-  // Links - 使用 path 支持曲线
-  const linkGroup = g.append('g').attr('class', 'links')
-  
-  // 计算曲线路径
-  const getLinkPath = (d) => {
-    const sx = d.source.x, sy = d.source.y
-    const tx = d.target.x, ty = d.target.y
-    
-    // 检测自环
-    if (d.isSelfLoop) {
-      // 自环：绘制一个圆弧从节点出发再返回
-      const loopRadius = 30
-      // 从节点右侧出发，绕一圈回来
-      const x1 = sx + 8  // 起点偏移
-      const y1 = sy - 4
-      const x2 = sx + 8  // 终点偏移
-      const y2 = sy + 4
-      // 使用圆弧绘制自环（sweep-flag=1 顺时针）
-      return `M${x1},${y1} A${loopRadius},${loopRadius} 0 1,1 ${x2},${y2}`
-    }
-    
-    if (d.curvature === 0) {
-      // 直线
-      return `M${sx},${sy} L${tx},${ty}`
-    }
-    
-    // 计算曲线控制点 - 根据边数量和距离动态调整
-    const dx = tx - sx, dy = ty - sy
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    // 垂直于连线方向的偏移，根据距离比例计算，保证曲线明显可见
-    // 边越多，偏移量占距离的比例越大
-    const pairTotal = d.pairTotal || 1
-    const offsetRatio = 0.25 + pairTotal * 0.05 // 基础25%，每多一条边增加5%
-    const baseOffset = Math.max(35, dist * offsetRatio)
-    const offsetX = -dy / dist * d.curvature * baseOffset
-    const offsetY = dx / dist * d.curvature * baseOffset
-    const cx = (sx + tx) / 2 + offsetX
-    const cy = (sy + ty) / 2 + offsetY
-    
-    return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`
-  }
-  
-  // 计算曲线中点（用于标签定位）
-  const getLinkMidpoint = (d) => {
-    const sx = d.source.x, sy = d.source.y
-    const tx = d.target.x, ty = d.target.y
-    
-    // 检测自环
-    if (d.isSelfLoop) {
-      // 自环标签位置：节点右侧
-      return { x: sx + 70, y: sy }
-    }
-    
-    if (d.curvature === 0) {
-      return { x: (sx + tx) / 2, y: (sy + ty) / 2 }
-    }
-    
-    // 二次贝塞尔曲线的中点 t=0.5
-    const dx = tx - sx, dy = ty - sy
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    const pairTotal = d.pairTotal || 1
-    const offsetRatio = 0.25 + pairTotal * 0.05
-    const baseOffset = Math.max(35, dist * offsetRatio)
-    const offsetX = -dy / dist * d.curvature * baseOffset
-    const offsetY = dx / dist * d.curvature * baseOffset
-    const cx = (sx + tx) / 2 + offsetX
-    const cy = (sy + ty) / 2 + offsetY
-    
-    // 二次贝塞尔曲线公式 B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2, t=0.5
-    const midX = 0.25 * sx + 0.5 * cx + 0.25 * tx
-    const midY = 0.25 * sy + 0.5 * cy + 0.25 * ty
-    
-    return { x: midX, y: midY }
-  }
-  
-  const link = linkGroup.selectAll('path')
-    .data(edges)
-    .enter().append('path')
-    .attr('stroke', '#C0C0C0')
-    .attr('stroke-width', 1.5)
-    .attr('fill', 'none')
-    .style('cursor', 'pointer')
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      // 重置之前选中边的样式
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-      linkLabels.attr('fill', '#666')
-      // 高亮当前选中的边
-      d3.select(event.target).attr('stroke', '#3498db').attr('stroke-width', 3)
-      
-      selectedItem.value = {
-        type: 'edge',
-        data: d.rawData
-      }
-    })
-
-  // Link labels background (白色背景使文字更清晰)
-  const linkLabelBg = linkGroup.selectAll('rect')
-    .data(edges)
-    .enter().append('rect')
-    .attr('fill', 'rgba(255,255,255,0.95)')
-    .attr('rx', 3)
-    .attr('ry', 3)
-    .style('cursor', 'pointer')
-    .style('pointer-events', 'all')
-    .style('display', showEdgeLabels.value ? 'block' : 'none')
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-      linkLabels.attr('fill', '#666')
-      // 高亮对应的边
-      link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
-      d3.select(event.target).attr('fill', 'rgba(52, 152, 219, 0.1)')
-      
-      selectedItem.value = {
-        type: 'edge',
-        data: d.rawData
-      }
-    })
-
-  // Link labels
-  const linkLabels = linkGroup.selectAll('text')
-    .data(edges)
-    .enter().append('text')
-    .text(d => d.name)
-    .attr('font-size', '9px')
-    .attr('fill', '#666')
-    .attr('text-anchor', 'middle')
-    .attr('dominant-baseline', 'middle')
-    .style('cursor', 'pointer')
-    .style('pointer-events', 'all')
-    .style('font-family', 'system-ui, sans-serif')
-    .style('display', showEdgeLabels.value ? 'block' : 'none')
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-      linkLabels.attr('fill', '#666')
-      // 高亮对应的边
-      link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
-      d3.select(event.target).attr('fill', '#3498db')
-      
-      selectedItem.value = {
-        type: 'edge',
-        data: d.rawData
-      }
-    })
-  
-  // 保存引用供外部控制显隐
-  linkLabelsRef = linkLabels
-  linkLabelBgRef = linkLabelBg
-
-  // Nodes group
-  const nodeGroup = g.append('g').attr('class', 'nodes')
-  
-  // Node circles
-  const node = nodeGroup.selectAll('circle')
-    .data(nodes)
-    .enter().append('circle')
-    .attr('r', 10)
-    .attr('fill', d => getColor(d.type))
-    .attr('stroke', '#fff')
-    .attr('stroke-width', 2.5)
-    .style('cursor', 'pointer')
-    .call(d3.drag()
-      .on('start', (event, d) => {
-        // 只记录位置，不重启仿真（区分点击和拖拽）
-        d.fx = d.x
-        d.fy = d.y
-        d._dragStartX = event.x
-        d._dragStartY = event.y
-        d._isDragging = false
-      })
-      .on('drag', (event, d) => {
-        // 检测是否真正开始拖拽（移动超过阈值）
-        const dx = event.x - d._dragStartX
-        const dy = event.y - d._dragStartY
-        const distance = Math.sqrt(dx * dx + dy * dy)
-        
-        if (!d._isDragging && distance > 3) {
-          // 首次检测到真正拖拽，才重启仿真
-          d._isDragging = true
-          simulation.alphaTarget(0.3).restart()
-        }
-        
-        if (d._isDragging) {
-          d.fx = event.x
-          d.fy = event.y
-        }
-      })
-      .on('end', (event, d) => {
-        // 只有真正拖拽过才让仿真逐渐停止
-        if (d._isDragging) {
-          simulation.alphaTarget(0)
-        }
-        d.fx = null
-        d.fy = null
-        d._isDragging = false
-      })
-    )
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      // 重置所有节点样式
-      node.attr('stroke', '#fff').attr('stroke-width', 2.5)
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      // 高亮选中节点
-      d3.select(event.target).attr('stroke', '#E91E63').attr('stroke-width', 4)
-      // 高亮与此节点相连的边
-      link.filter(l => l.source.id === d.id || l.target.id === d.id)
-        .attr('stroke', '#E91E63')
-        .attr('stroke-width', 2.5)
-      
-      selectedItem.value = {
-        type: 'node',
-        data: d.rawData,
-        entityType: d.type,
-        color: getColor(d.type)
-      }
-    })
-    .on('mouseenter', (event, d) => {
-      if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
-        d3.select(event.target).attr('stroke', '#333').attr('stroke-width', 3)
-      }
-    })
-    .on('mouseleave', (event, d) => {
-      if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
-        d3.select(event.target).attr('stroke', '#fff').attr('stroke-width', 2.5)
-      }
-    })
-
-  // Node Labels
-  const nodeLabels = nodeGroup.selectAll('text')
-    .data(nodes)
-    .enter().append('text')
-    .text(d => d.name.length > 8 ? d.name.substring(0, 8) + '…' : d.name)
-    .attr('font-size', '11px')
-    .attr('fill', '#333')
-    .attr('font-weight', '500')
-    .attr('dx', 14)
-    .attr('dy', 4)
-    .style('pointer-events', 'none')
-    .style('font-family', 'system-ui, sans-serif')
-
-  simulation.on('tick', () => {
-    // 更新曲线路径
-    link.attr('d', d => getLinkPath(d))
-    
-    // 更新边标签位置（无旋转，水平显示更清晰）
-    linkLabels.each(function(d) {
-      const mid = getLinkMidpoint(d)
-      d3.select(this)
-        .attr('x', mid.x)
-        .attr('y', mid.y)
-        .attr('transform', '') // 移除旋转，保持水平
-    })
-    
-    // 更新边标签背景
-    linkLabelBg.each(function(d, i) {
-      const mid = getLinkMidpoint(d)
-      const textEl = linkLabels.nodes()[i]
-      const bbox = textEl.getBBox()
-      d3.select(this)
-        .attr('x', mid.x - bbox.width / 2 - 4)
-        .attr('y', mid.y - bbox.height / 2 - 2)
-        .attr('width', bbox.width + 8)
-        .attr('height', bbox.height + 4)
-        .attr('transform', '') // 移除旋转
-    })
-
-    node
-      .attr('cx', d => d.x)
-      .attr('cy', d => d.y)
-
-    nodeLabels
-      .attr('x', d => d.x)
-      .attr('y', d => d.y)
-  })
-  
-  // 点击空白处关闭详情面板
-  svg.on('click', () => {
-    selectedItem.value = null
-    node.attr('stroke', '#fff').attr('stroke-width', 2.5)
-    linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-    linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-    linkLabels.attr('fill', '#666')
+// As the page scrolls the fold moves; the picture follows it once per frame.
+let scrollFrame = 0
+const onScroll = () => {
+  if (scrollFrame) return
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0
+    const before = hiddenBelow.value
+    measure()
+    if (Math.abs(hiddenBelow.value - before) >= 6 && simNodes.length && !userZoomed) fit(!reducedMotion())
   })
 }
 
-watch(() => props.graphData, () => {
-  nextTick(renderGraph)
-}, { deep: true })
+const render = () => {
+  if (!svg || !props.graphData) return
+  if (!skyVisible) {
+    pendingRender = true
+    return
+  }
+  const m = model.value
+  if (m.signature === lastSignature) return
+  const firstLayout = !hasLaidOut
+  const previousIds = new Set(simNodes.map((n) => n.id))
+  lastSignature = m.signature
+  readPaint()
 
-// 监听边标签显示开关
-watch(showEdgeLabels, (newVal) => {
-  if (linkLabelsRef) {
-    linkLabelsRef.style('display', newVal ? 'block' : 'none')
+  const stored = firstLayout ? loadPositions() : {}
+  const newNodes = []
+
+  simNodes = m.nodes.map((n) => {
+    let obj = nodeById.get(n.id)
+    if (!obj) {
+      obj = { id: n.id }
+      const at = stored[n.id]
+      if (Array.isArray(at)) {
+        obj.x = at[0]
+        obj.y = at[1]
+      }
+      nodeById.set(n.id, obj)
+      newNodes.push(obj)
+    }
+    Object.assign(obj, n)
+    return obj
+  })
+
+  // Newcomers stand beside the names they are tied to, not in the middle of the sky.
+  const known = new Set(previousIds)
+  for (const n of newNodes) {
+    if (Number.isFinite(n.x) && Number.isFinite(n.y)) continue
+    const near = []
+    for (const l of m.links) {
+      const other = l.source === n.id ? l.target : l.target === n.id ? l.source : null
+      if (!other) continue
+      const o = nodeById.get(other)
+      if (o && (known.has(other) || Number.isFinite(o.x)) && Number.isFinite(o.x)) near.push(o)
+    }
+    if (near.length) {
+      n.x = d3.mean(near, (o) => o.x) + (Math.random() - 0.5) * 40
+      n.y = d3.mean(near, (o) => o.y) + (Math.random() - 0.5) * 40
+    } else {
+      const angle = Math.random() * Math.PI * 2
+      const spread = firstLayout ? Math.min(width, height) * 0.3 : 60
+      n.x = width / 2 + Math.cos(angle) * spread * Math.random()
+      n.y = height / 2 + Math.sin(angle) * spread * Math.random()
+    }
+    n.vx = 0
+    n.vy = 0
   }
-  if (linkLabelBgRef) {
-    linkLabelBgRef.style('display', newVal ? 'block' : 'none')
+
+  simLinks = m.links.map((l) => ({ ...l }))
+  buildAdjacency()
+  simNodes.forEach((n) => { n.shown = (adjacency.get(n.id)?.size || 0) > 0 })
+  sim.nodes(simNodes) // re-reads every force's accessors, so `shown` and `top` take effect
+  sim.force('link').links(simLinks)
+
+  const quiet = reducedMotion()
+  const enterDuration = quiet ? 0 : 700
+
+  // Ties
+  const link = linkLayer.selectAll('g.link').data(simLinks, (d) => d.key)
+  link.exit().remove()
+  const linkEnter = link.enter().append('g').attr('class', 'link')
+  linkEnter.append('path').attr('class', 'hit')
+  linkEnter.append('path').attr('class', 'line')
+  const linkAll = linkEnter.merge(link)
+  linkAll.classed('chatter', (d) => !d.structural).attr('data-stance', (d) => d.stance || null)
+  linkAll
+    .select('path.line')
+    .attr('stroke', linkStroke)
+    .attr('stroke-opacity', linkOpacity)
+    .attr('stroke-width', linkWidth)
+    .attr('stroke-dasharray', (d) => (d.structural ? null : '2 5'))
+  linkAll
+    .select('path.hit')
+    .on('mouseenter', (event, d) => {
+      hover.value = linkCard(d)
+      placeCardAt(...pointerPos(event))
+      applyFocus()
+    })
+    .on('mousemove', (event) => {
+      if (!pinned.value) placeCardAt(...pointerPos(event))
+    })
+    .on('mouseleave', () => {
+      hover.value = null
+      applyFocus()
+    })
+    .on('click', (event, d) => {
+      event.stopPropagation()
+      if (pinned.value?.kind === 'link' && pinned.value.key === d.key) {
+        pinned.value = null
+      } else {
+        pinned.value = linkCard(d)
+        placeCardAt(...pointerPos(event))
+      }
+      applyFocus()
+    })
+  if (!quiet) {
+    linkEnter.select('path.line').attr('opacity', 0).transition().duration(enterDuration).attr('opacity', 1)
   }
+
+  // Names
+  const node = nodeLayer.selectAll('g.node').data(simNodes, (d) => d.id)
+  node.exit().remove()
+  const nodeEnter = node
+    .enter()
+    .append('g')
+    .attr('class', 'node')
+    .attr('tabindex', 0)
+    .attr('role', 'button')
+  nodeEnter.append('circle').attr('class', 'glow')
+  nodeEnter.append('circle').attr('class', 'core')
+  nodeEnter.append('text').attr('class', 'label')
+  const nodeAll = nodeEnter.merge(node)
+  nodeAll
+    .classed('top', (d) => d.top)
+    .attr('data-id', (d) => d.id)
+    .attr('data-family', (d) => d.family)
+    .attr('aria-label', (d) => (d.role ? `${d.name}, ${d.role}` : d.name))
+    .attr('transform', (d) => `translate(${d.x || width / 2},${d.y || height / 2})`)
+  nodeAll.select('circle.glow').attr('r', (d) => d.r * 2.4).attr('fill', nodeColor)
+  nodeAll
+    .select('circle.core')
+    .attr('r', (d) => d.r)
+    .attr('fill', nodeColor)
+    .attr('stroke', paint.surface)
+    .attr('stroke-width', 1.5)
+  nodeAll.select('text.label').text(labelText)
+  applyLabelScale()
+
+  nodeAll
+    .on('mouseenter', (event, d) => {
+      hover.value = nodeCard(d)
+      if (!pinned.value) placeCardAt(...pointerPos(event))
+      applyFocus()
+    })
+    .on('mousemove', (event) => {
+      if (!pinned.value) placeCardAt(...pointerPos(event))
+    })
+    .on('mouseleave', () => {
+      hover.value = null
+      applyFocus()
+    })
+    .on('focus', (event, d) => {
+      hover.value = nodeCard(d)
+      if (!pinned.value) placeCardNear(d)
+      applyFocus()
+    })
+    .on('blur', () => {
+      hover.value = null
+      applyFocus()
+    })
+    .on('keydown', (event, d) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        togglePin(d)
+      } else if (event.key === 'Escape' && pinned.value) {
+        clearPinned()
+      }
+    })
+    .on('click', (event, d) => {
+      event.stopPropagation()
+      togglePin(d)
+    })
+    .call(
+      d3
+        .drag()
+        .on('start', (event, d) => {
+          d._sx = event.x
+          d._sy = event.y
+          d._moved = false
+        })
+        .on('drag', (event, d) => {
+          if (!d._moved && Math.hypot(event.x - d._sx, event.y - d._sy) > 3) {
+            d._moved = true
+            userZoomed = true
+            sim.alphaTarget(0.12).restart()
+          }
+          if (d._moved) {
+            d.fx = event.x
+            d.fy = event.y
+            if (pinned.value?.id === d.id) placeCardNear(d)
+          }
+        })
+        .on('end', (event, d) => {
+          if (d._moved) sim.alphaTarget(0)
+          d.fx = null
+          d.fy = null
+        })
+    )
+
+  if (!quiet) {
+    nodeEnter.attr('opacity', 0).transition().duration(enterDuration).attr('opacity', 1)
+  }
+
+  applyFocus()
+
+  // The layout: settle quietly the first time, then only nudge for what is new.
+  if (firstLayout) {
+    hasLaidOut = true
+    const restored = simNodes.every((n) => stored[n.id])
+    if (restored) {
+      sim.alpha(0.08)
+      tick()
+    } else {
+      sim.alpha(1)
+      sim.stop()
+      const steps = quiet ? 300 : 140
+      for (let i = 0; i < steps; i++) sim.tick()
+      tick()
+      sim.alpha(quiet ? 0 : 0.18)
+    }
+    fit(false, quiet)
+    if (quiet) {
+      savePositions()
+      return
+    }
+    sim.restart()
+    return
+  }
+
+  if (quiet) {
+    sim.stop()
+    for (let i = 0; i < 200; i++) sim.tick()
+    tick()
+    if (!userZoomed) fit(false, true)
+    savePositions()
+    return
+  }
+  sim.alpha(newNodes.length ? 0.35 : 0.22).restart()
+}
+
+const togglePin = (d) => {
+  if (pinned.value?.kind === 'node' && pinned.value.id === d.id) {
+    pinned.value = null
+  } else {
+    pinned.value = nodeCard(d)
+    placeCardNear(d)
+  }
+  applyFocus()
+}
+
+// ---------------------------------------------------------------------------
+// Wiring
+
+watch(
+  () => props.graphData,
+  () => {
+    if (!props.graphData) {
+      clearLateThreads()
+      lastSignature = ''
+      hasLaidOut = false
+      pendingRender = false
+      simNodes = []
+      simLinks = []
+      if (nodeLayer) nodeLayer.selectAll('*').remove()
+      if (linkLayer) linkLayer.selectAll('*').remove()
+      return
+    }
+    nextTick(render)
+  },
+  { deep: true }
+)
+
+watch(showChatter, () => nextTick(render))
+
+watch(legendOpen, () => {
+  if (simNodes.length && !userZoomed) fit(true)
 })
 
-const handleResize = () => {
-  nextTick(renderGraph)
-}
+watch(compact, () => nextTick(relabel))
+
+watch(isNarrow, (narrow) => {
+  legendOpen.value = !narrow
+  // The inward pull changes shape with the panel; re-read the forces and settle again.
+  if (!sim || !simNodes.length) return
+  sim.nodes(simNodes)
+  if (reducedMotion()) {
+    sim.stop()
+    for (let i = 0; i < 160; i++) sim.tick()
+    tick()
+    if (!userZoomed) fit(false, true)
+    return
+  }
+  sim.alpha(0.3).restart()
+})
+
+// When the square closes, the city's memory is still tying the last threads
+// for a while. The act reads the Web once on its own; for the minutes after,
+// the visitor can look again themselves.
+watch(
+  () => props.isSimulating,
+  (now) => {
+    if (wasSimulating.value && !now) {
+      clearLateThreads()
+      lateThreads.value = true
+      lateTimer = setTimeout(clearLateThreads, LATE_THREADS_MS)
+    }
+    wasSimulating.value = now
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
-  window.addEventListener('resize', handleResize)
+  init()
+  if (props.graphData) nextTick(render)
+  // Names measured before the body face arrived are measured again once it has.
+  if (typeof document !== 'undefined' && document.fonts?.ready) {
+    document.fonts.ready.then(() => {
+      widthCache.clear()
+      measureCtx = null
+      if (simNodes.length) relabel()
+    }).catch(() => {})
+  }
 })
 
-onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
-  if (currentSimulation) {
-    currentSimulation.stop()
-  }
+onBeforeUnmount(() => {
+  savePositions()
+  clearLateThreads()
+  window.removeEventListener('scroll', onScroll)
+  if (scrollFrame) cancelAnimationFrame(scrollFrame)
+  if (resizeObserver) resizeObserver.disconnect()
+  if (sim) sim.stop()
 })
 </script>
 
@@ -818,606 +1325,498 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 100%;
-  background-color: #FAFAFA;
-  background-image: radial-gradient(#D0D0D0 1.5px, transparent 1.5px);
-  background-size: 24px 24px;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--p-surface);
+  color: var(--p-ink-2);
+  font-family: var(--p-font-body);
   overflow: hidden;
 }
 
-.panel-header {
+/* Faint marble veining and a vignette, so the sky has depth without a grid. */
+.graph-panel::before {
+  content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 16px 20px;
-  z-index: 10;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.95), rgba(255,255,255,0));
+  inset: 0;
+  background-image: var(--p-marble-texture);
+  opacity: 0.45;
   pointer-events: none;
 }
 
+.graph-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(0, 0, 0, 0.42) 100%);
+  pointer-events: none;
+}
+
+.panel-top {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 8px 16px;
+  min-width: 0;
+}
+
+.panel-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .panel-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-  pointer-events: auto;
-}
-
-.header-tools {
-  pointer-events: auto;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.tool-btn {
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid #E0E0E0;
-  background: #FFF;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  color: #666;
-  transition: all 0.2s;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-  font-size: 13px;
-}
-
-.tool-btn:hover {
-  background: #F5F5F5;
-  color: #000;
-  border-color: #CCC;
-}
-
-.tool-btn .btn-text {
-  font-size: 12px;
-}
-
-.icon-refresh.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-.graph-container {
-  width: 100%;
-  height: 100%;
-}
-
-.graph-view, .graph-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.graph-state {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  color: #999;
-}
-
-.empty-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  opacity: 0.2;
-}
-
-/* Entity Types Legend - Bottom Left */
-.graph-legend {
-  position: absolute;
-  bottom: 24px;
-  left: 24px;
-  background: rgba(255,255,255,0.95);
-  padding: 12px 16px;
-  border-radius: 8px;
-  border: 1px solid #EAEAEA;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-  z-index: 10;
-}
-
-.legend-title {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  color: #E91E63;
-  margin-bottom: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.legend-items {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  max-width: 320px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #555;
-}
-
-.legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.legend-label {
   white-space: nowrap;
 }
 
-/* Edge Labels Toggle - Top Right */
-.edge-labels-toggle {
-  position: absolute;
-  top: 60px;
-  right: 20px;
-  display: flex;
+.panel-sub {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  background: #FFF;
-  padding: 8px 14px;
-  border-radius: 20px;
-  border: 1px solid #E0E0E0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-  z-index: 10;
-}
-
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: #E0E0E0;
-  border-radius: 22px;
-  transition: 0.3s;
-}
-
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 3px;
-  bottom: 3px;
-  background-color: white;
-  border-radius: 50%;
-  transition: 0.3s;
-}
-
-input:checked + .slider {
-  background-color: #7B2D8E;
-}
-
-input:checked + .slider:before {
-  transform: translateX(18px);
-}
-
-.toggle-label {
-  font-size: 12px;
-  color: #666;
-}
-
-/* Detail Panel - Right Side */
-.detail-panel {
-  position: absolute;
-  top: 60px;
-  right: 20px;
-  width: 320px;
-  max-height: calc(100% - 100px);
-  background: #FFF;
-  border: 1px solid #EAEAEA;
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+  gap: 8px;
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
+  white-space: nowrap;
   overflow: hidden;
-  font-family: 'Noto Sans SC', system-ui, sans-serif;
-  font-size: 13px;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
-.detail-panel-header {
+.panel-tools {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 14px 16px;
-  background: #FAFAFA;
-  border-bottom: 1px solid #EEE;
+  gap: 2px;
   flex-shrink: 0;
 }
 
-.detail-title {
-  font-weight: 600;
-  color: #333;
-  font-size: 14px;
+.panel-tools .p-button.chatter.on {
+  color: var(--p-gold);
 }
 
-.detail-type-badge {
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 11px;
+.panel-tools .p-button.chatter span {
+  white-space: nowrap;
+}
+
+.panel-sub-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* One quiet verb, present only while the last threads are being tied. */
+.look-again {
+  flex-shrink: 0;
+  margin: -6px -4px;
+  padding: 6px 4px;
+  background: transparent;
+  border: 0;
+  font: inherit;
   font-weight: 500;
-  margin-left: auto;
-  margin-right: 12px;
-}
-
-.detail-close {
-  background: none;
-  border: none;
-  font-size: 20px;
+  color: var(--p-gold);
+  text-decoration: underline;
+  text-underline-offset: 3px;
   cursor: pointer;
-  color: #999;
-  line-height: 1;
-  padding: 0;
-  transition: color 0.2s;
 }
 
-.detail-close:hover {
-  color: #333;
+.look-again:hover {
+  color: var(--p-ink);
 }
 
-.detail-content {
-  padding: 16px;
-  overflow-y: auto;
-  flex: 1;
+.look-again:disabled {
+  color: var(--p-ink-4);
+  cursor: default;
 }
 
-.detail-row {
-  margin-bottom: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.ember {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--p-radius-coin);
+  background: var(--p-gold);
+  box-shadow: 0 0 0 3px var(--p-terracotta-tint);
+  animation: breathe 1.8s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
-.detail-label {
-  color: #888;
-  font-size: 12px;
-  font-weight: 500;
-  min-width: 80px;
+.ember.large {
+  width: 10px;
+  height: 10px;
+  margin-bottom: 14px;
 }
 
-.detail-value {
-  color: #333;
-  flex: 1;
-  word-break: break-word;
-}
-
-.detail-value.uuid-text {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: #666;
-}
-
-.detail-value.fact-text {
-  line-height: 1.5;
-  color: #444;
-}
-
-.detail-section {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid #F0F0F0;
-}
-
-.section-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  margin-bottom: 10px;
-}
-
-.properties-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.property-item {
-  display: flex;
-  gap: 8px;
-}
-
-.property-key {
-  color: #888;
-  font-weight: 500;
-  min-width: 90px;
-}
-
-.property-value {
-  color: #333;
-  flex: 1;
-}
-
-.summary-text {
-  line-height: 1.6;
-  color: #444;
-  font-size: 12px;
-}
-
-.labels-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.label-tag {
-  display: inline-block;
-  padding: 4px 12px;
-  background: #F5F5F5;
-  border: 1px solid #E0E0E0;
-  border-radius: 16px;
-  font-size: 11px;
-  color: #555;
-}
-
-.episodes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.episode-tag {
-  display: inline-block;
-  padding: 6px 10px;
-  background: #F8F8F8;
-  border: 1px solid #E8E8E8;
-  border-radius: 6px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #666;
-  word-break: break-all;
-}
-
-/* Edge relation header */
-.edge-relation-header {
-  background: #F8F8F8;
-  padding: 12px;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #333;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-/* Building hint */
-.graph-building-hint {
-  position: absolute;
-  bottom: 160px; /* Moved up from 80px */
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(8px);
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: 30px;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  font-weight: 500;
-  letter-spacing: 0.5px;
-  z-index: 100;
-}
-
-.memory-icon-wrapper {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: breathe 2s ease-in-out infinite;
-}
-
-.memory-icon {
-  width: 18px;
-  height: 18px;
-  color: #4CAF50;
+.star {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--p-radius-coin);
+  background: var(--p-ink-4);
+  margin-bottom: 14px;
 }
 
 @keyframes breathe {
-  0%, 100% { opacity: 0.7; transform: scale(1); filter: drop-shadow(0 0 2px rgba(76, 175, 80, 0.3)); }
-  50% { opacity: 1; transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(76, 175, 80, 0.6)); }
+  0%, 100% { box-shadow: 0 0 0 2px var(--p-terracotta-tint); opacity: 0.8; }
+  50% { box-shadow: 0 0 0 7px transparent; opacity: 1; }
 }
 
-/* 模拟结束后的提示样式 */
-.graph-building-hint.finished-hint {
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.finished-hint .hint-icon-wrapper {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.finished-hint .hint-icon {
-  width: 18px;
-  height: 18px;
-  color: #FFF;
-}
-
-.finished-hint .hint-text {
+/* The sky */
+.sky {
+  position: relative;
+  z-index: 1;
   flex: 1;
-  white-space: nowrap;
+  min-height: 0;
+  min-width: 0;
 }
 
-.hint-close-btn {
+.graph-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.graph-svg.hidden {
+  visibility: hidden;
+}
+
+.graph-svg :deep(g.node) {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.25s ease;
+}
+
+.graph-svg :deep(g.node.dim) {
+  opacity: 0.28;
+}
+
+.graph-svg :deep(circle.glow) {
+  opacity: 0.16;
+  transition: opacity 0.25s ease;
+}
+
+.graph-svg :deep(g.node.lit circle.glow),
+.graph-svg :deep(g.node:hover circle.glow) {
+  opacity: 0.36;
+}
+
+.graph-svg :deep(g.node.chosen circle.core) {
+  stroke: var(--p-ink);
+  stroke-width: 2px;
+}
+
+.graph-svg :deep(g.node:focus-visible circle.core) {
+  stroke: var(--p-gold);
+  stroke-width: 3px;
+}
+
+/* Every name is printed. Size and halo are set as attributes so they hold
+   their 12px through the zoom; the best-tied are set in a heavier hand. */
+.graph-svg :deep(text.label) {
+  font-family: var(--p-font-body);
+  font-weight: 500;
+  fill: var(--p-ink-2);
+  paint-order: stroke;
+  stroke: var(--p-surface);
+  stroke-linejoin: round;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.graph-svg :deep(g.node.top text.label) {
+  font-weight: 600;
+  fill: var(--p-ink);
+}
+
+/* A name that fits nowhere waits until its coin is pointed at. */
+.graph-svg :deep(g.node.crowded text.label) {
+  opacity: 0;
+}
+
+.graph-svg :deep(g.node.lit text.label),
+.graph-svg :deep(g.node:hover text.label) {
+  opacity: 1;
+  fill: var(--p-ink);
+}
+
+.graph-svg :deep(g.link path.line) {
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none; /* the wide invisible path beneath it takes the pointer */
+  transition: opacity 0.25s ease, stroke-opacity 0.25s ease;
+}
+
+.graph-svg :deep(g.link path.hit) {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14px;
+  cursor: pointer;
+  pointer-events: stroke;
+}
+
+.graph-svg :deep(g.link.dim path.line) {
+  opacity: 0.35;
+}
+
+.graph-svg :deep(g.link.lit path.line) {
+  stroke-opacity: 0.9;
+}
+
+/* Before the Web exists */
+.sky-state {
+  position: absolute;
+  inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  background: rgba(255, 255, 255, 0.2);
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  color: #FFF;
-  transition: all 0.2s;
-  margin-left: 8px;
+  text-align: center;
+  padding: 24px;
+  color: var(--p-ink-3);
+}
+
+.sky-state p {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-md);
+  max-width: 26em;
+}
+
+/* The card */
+.web-card {
+  position: absolute;
+  z-index: 5;
+  width: min(280px, calc(100% - 16px));
+  padding: 12px 14px 12px;
+  background: rgba(17, 21, 28, 0.94);
+  border: 1px solid var(--p-line-strong);
+  border-radius: var(--p-radius);
+  box-shadow: var(--p-shadow-2);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  color: var(--p-ink-2);
+}
+
+.web-card.pinned {
+  pointer-events: auto;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--p-radius-coin);
   flex-shrink: 0;
 }
 
-.hint-close-btn:hover {
-  background: rgba(255, 255, 255, 0.35);
-  transform: scale(1.1);
+.card-dot.tie {
+  background: var(--p-ink-3);
 }
 
-/* Loading spinner */
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #E0E0E0;
-  border-top-color: #7B2D8E;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
+.card-dot.tie.supports { background: var(--p-olive); }
+.card-dot.tie.opposes { background: var(--p-error); }
+
+.card-role {
+  color: var(--p-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
-/* Self-loop styles */
-.self-loop-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: linear-gradient(135deg, #E8F5E9 0%, #F1F8E9 100%);
-  border: 1px solid #C8E6C9;
-}
-
-.self-loop-count {
+.card-close {
   margin-left: auto;
-  font-size: 11px;
-  color: #666;
-  background: rgba(255,255,255,0.8);
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.self-loop-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.self-loop-item {
-  background: #FAFAFA;
-  border: 1px solid #EAEAEA;
-  border-radius: 8px;
-}
-
-.self-loop-item-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #F5F5F5;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.self-loop-item-header:hover {
-  background: #EEEEEE;
-}
-
-.self-loop-item.expanded .self-loop-item-header {
-  background: #E8E8E8;
-}
-
-.self-loop-index {
-  font-size: 10px;
-  font-weight: 600;
-  color: #888;
-  background: #E0E0E0;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.self-loop-name {
-  font-size: 12px;
-  font-weight: 500;
-  color: #333;
-  flex: 1;
-}
-
-.self-loop-toggle {
-  width: 20px;
-  height: 20px;
-  display: flex;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-  color: #888;
-  background: #E0E0E0;
-  border-radius: 4px;
-  transition: all 0.2s;
+  background: transparent;
+  border: 0;
+  color: var(--p-ink-3);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
-.self-loop-item.expanded .self-loop-toggle {
-  background: #D0D0D0;
-  color: #666;
+.card-close:hover { color: var(--p-gold); }
+
+.card-name {
+  margin: 4px 0 6px;
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--p-ink);
 }
 
-.self-loop-item-content {
-  padding: 12px;
-  border-top: 1px solid #EAEAEA;
+.card-text {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--p-ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.self-loop-item-content .detail-row {
-  margin-bottom: 8px;
-}
-
-.self-loop-item-content .detail-label {
-  font-size: 11px;
-  min-width: 60px;
-}
-
-.self-loop-item-content .detail-value {
-  font-size: 12px;
-}
-
-.self-loop-episodes {
+.card-text.fact {
   margin-top: 8px;
+  font-style: italic;
+  color: var(--p-ink-3);
 }
 
-.episodes-list.compact {
-  flex-direction: row;
-  flex-wrap: wrap;
+.card-meta {
+  margin: 8px 0 0;
+  font-size: var(--t-xs);
+  color: var(--p-ink-4);
+}
+
+.card-ties {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
-.episode-tag.small {
-  padding: 3px 6px;
-  font-size: 9px;
+.card-ties li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+}
+
+.tie-from,
+.tie-to {
+  font-family: var(--p-font-display);
+  font-size: var(--t-md);
+  font-weight: 500;
+  color: var(--p-ink);
+}
+
+.tie-word {
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  color: var(--p-gold);
+}
+
+.tie-count {
+  font-size: var(--t-xs);
+  color: var(--p-ink-4);
+}
+
+/* The legend */
+.legend {
+  position: absolute;
+  z-index: 4;
+  left: 12px;
+  bottom: 12px;
+  max-width: calc(100% - 24px);
+  background: rgba(17, 21, 28, 0.88);
+  border: 1px solid var(--p-line);
+  backdrop-filter: blur(6px);
+}
+
+.legend-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.legend-head .chev {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--p-ink-3);
+  border-bottom: 1.5px solid var(--p-ink-3);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+}
+
+.legend.open .legend-head .chev {
+  transform: rotate(-135deg);
+}
+
+.legend-items {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  max-width: 360px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-xs);
+  color: var(--p-ink-2);
+  white-space: nowrap;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--p-radius-coin);
+  flex-shrink: 0;
+}
+
+.legend-count {
+  color: var(--p-ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* In a narrow column or the phone sheet */
+.graph-panel.narrow .panel-top {
+  padding: 8px 8px 6px 16px;
+}
+
+.graph-panel.narrow .legend-items {
+  max-width: none;
+  max-height: 128px;
+  overflow: auto;
+}
+
+.graph-panel.narrow .web-card.pinned {
+  left: 8px !important;
+  right: 8px;
+  top: auto !important;
+  bottom: 52px;
+  width: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ember {
+    animation: none;
+  }
+
+  .graph-svg :deep(g.node),
+  .graph-svg :deep(text.label),
+  .graph-svg :deep(circle.glow),
+  .graph-svg :deep(g.link path.line) {
+    transition: none;
+  }
 }
 </style>
