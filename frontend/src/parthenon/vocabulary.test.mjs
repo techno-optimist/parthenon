@@ -55,3 +55,29 @@ test('engine ids are stripped from log lines', () => {
   assert.equal(stripIds('Report saved: report_53d558ea0a3d'), 'Report saved')
   assert.equal(stripIds('Graph data loaded successfully.'), 'Graph data loaded successfully.')
 })
+
+import { stanceWords, stanceKey, greekNumeral, cityWords, voiceOf } from './vocabulary.js'
+
+test('stances read the same in every act', () => {
+  assert.equal(stanceWords('supportive', 0.8), 'For')
+  assert.equal(stanceWords('opposing', -0.9, 'phrase'), 'stood firmly against it')
+  assert.equal(stanceWords('observer', 0), 'Watching')
+  assert.equal(stanceKey('neutral', 0.6), 'undecided')
+  assert.equal(stanceKey('', 0.6), 'for')
+  assert.equal(stanceWords('supportive', 0.5, 'side', 'zh'), '支持')
+})
+
+test('greek numerals and city words', () => {
+  assert.equal(greekNumeral(1), 'Α΄')
+  assert.equal(greekNumeral(6), 'ΣΤ΄')
+  assert.equal(cityWords('The simulated agents on Twitter disagreed in the simulation.'), 'The citizens on the Agora disagreed in the gathering.')
+  assert.equal(cityWords('Reddit threads'), 'the Stoa threads')
+})
+
+test('voices by class and spaced names', () => {
+  assert.equal(voiceOf('Aisystem'), 'machine')
+  assert.equal(voiceOf('PublicOfficial'), 'official')
+  assert.equal(voiceOf('Philosopher'), 'elder')
+  assert.equal(voiceOf('Fisher'), 'common')
+  assert.equal(citizenName('CitizenJury'), 'Citizen Jury')
+})

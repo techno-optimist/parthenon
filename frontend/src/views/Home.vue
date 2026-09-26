@@ -6,7 +6,7 @@
       </router-link>
       <nav class="topbar-links" :aria-label="$t('parthenon.navSections')">
         <a href="#stages">{{ $t('parthenon.navSpeakers') }}</a>
-        <a href="#chronicles">{{ $t('parthenon.navArchive') }}</a>
+        <router-link :to="{ name: 'Chronicles' }">{{ $t('parthenon.navArchive') }}</router-link>
       </nav>
     </header>
 
@@ -729,6 +729,9 @@ const startSimulation = () => {
 .topbar-brand {
   text-decoration: none;
   display: inline-flex;
+  align-items: center;
+  min-width: 40px;
+  min-height: 40px;
 }
 
 .topbar-links {
@@ -739,6 +742,9 @@ const startSimulation = () => {
 }
 
 .topbar-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
   font-family: var(--p-font-inscription);
   font-size: var(--t-xs);
   font-weight: 600;

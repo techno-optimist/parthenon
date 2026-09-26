@@ -94,3 +94,89 @@ export const filmAssetUrl = (path) => {
   const base = String(service.defaults.baseURL || '').replace(/\/+$/, '')
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`
 }
+
+/**
+ * Paint a portrait for every citizen of a gathering. Runs in the background;
+ * a gathering already painted (or painting) is left as it is unless force.
+ *
+ * @param {string} simulationId
+ * @param {{ force?: boolean }} [options]
+ * @returns {Promise<{ success: true, data: { status: 'running'|'completed', simulation_id: string } }>}
+ */
+export const startCitizenPortraits = (simulationId, options = {}) => {
+  const body = options.force ? { force: true } : {}
+  return service.post(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/portraits`, body, { timeout: 30000 })
+}
+
+/**
+ * The portraits of a gathering's citizens, as far as they are painted.
+ *
+ * @param {string} simulationId
+ * @returns {Promise<{ success: true, data: {
+ *   status: 'none'|'running'|'completed'|'failed', progress: number, error: string|null,
+ *   portraits: Array<{ agent_id: number, name: string, entity_type: string|null,
+ *     status: 'pending'|'painting'|'done'|'failed', url: string|null }>
+ * } }>} urls are backend-relative; pass them through filmAssetUrl.
+ */
+export const getCitizenPortraits = (simulationId) => {
+  return service.get(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/portraits`, { timeout: 30000 })
+}
+
+/**
+ * Where a gathering stands, from any of its ids (project, simulation or report):
+ * the furthest act reached and the ids of each act, for /gathering/:id links.
+ *
+ * @param {string} id - proj_…, sim_… or report_…
+ * @returns {Promise<{ success: true, data: {
+ *   project_id: string|null, simulation_id: string|null, report_id: string|null,
+ *   act: 1|2|3|4|5, runner_status: string|null, report_status: string|null
+ * } }>} 404 when nothing matches.
+ */
+export const resolveGathering = (id) => {
+  return service.get(`/api/parthenon/gathering/${encodeURIComponent(id)}`, { timeout: 30000 })
+}
+
+/**
+ * Speak an answer in the speaker's voice. A long answer comes in parts: play
+ * part 0 and ask for the next while it plays.
+ *
+ * @param {{ text: string, voice?: 'scribe'|'elder'|'official'|'common'|'machine'|'plain',
+ *   simulation_id?: string, agent_id?: number|string, name?: string, lang?: string, part?: number }} body
+ * @returns {Promise<{ success: true, data: { url: string, voice: string, voice_id: string,
+ *   language: string, part: number, parts: number, cached: boolean, truncated: boolean } }>}
+ *   url is backend-relative (filmAssetUrl). Rejects 503 when no voice service is
+ *   available; fall back to the browser's own voice then.
+ */
+export const speakWords = (body) => {
+  return service.post('/api/parthenon/voice', body, { timeout: 60000 })
+}
+
+/**
+ * Ask the Scribe to read where each citizen stood, period by period, after a run.
+ *
+ * @param {string} simulationId
+ * @param {{ force?: boolean }} [options]
+ * @returns {Promise<{ success: true, data: { status: 'reading'|'completed', simulation_id: string } }>}
+ *   Rejects 409 when nobody has spoken yet.
+ */
+export const startCitizenStances = (simulationId, options = {}) => {
+  const body = options.force ? { force: true } : {}
+  return service.post(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/stances`, body, { timeout: 30000 })
+}
+
+/**
+ * Where the citizens stood, and who moved.
+ *
+ * @param {string} simulationId
+ * @returns {Promise<{ success: true, data: {
+ *   status: 'none'|'reading'|'completed'|'failed', error: string|null, stale: boolean,
+ *   through_round: number, minutes_per_round: number,
+ *   periods: Array<{ period: number, from_round: number, to_round: number }>,
+ *   citizens: Array<{ agent_id: number, name: string, entity_type: string|null,
+ *     stance: string, spoke: boolean, final_stance: string, moved: boolean, turn: number|null,
+ *     stance_history: Array<{ period: number, from_round: number, to_round: number, stance: string }> }>
+ * } }>}
+ */
+export const getCitizenStances = (simulationId) => {
+  return service.get(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/stances`, { timeout: 30000 })
+}

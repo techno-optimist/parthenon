@@ -124,6 +124,21 @@ export const getSimulationPosts = (simulationId, platform, limit = 50, offset = 
 }
 
 /**
+ * The answers said in a square, each with the thread (post) it belongs to.
+ * @param {string} simulationId
+ * @param {{ platform?: 'reddit'|'twitter', limit?: number }} [options] - platform
+ *   defaults to the gathering's own; limit defaults to the backend's (50)
+ * @returns {Promise<{ success: true, data: { count: number,
+ *   comments: Array<{ comment_id, post_id, user_id, content, created_at, ... }> } }>}
+ */
+export const getSimulationComments = (simulationId, { platform, limit } = {}) => {
+  const params = {}
+  if (platform) params.platform = platform
+  if (limit) params.limit = limit
+  return service.get(`/api/simulation/${simulationId}/comments`, { params, timeout: 30000 })
+}
+
+/**
  * 获取模拟时间线（按轮次汇总）
  * @param {string} simulationId
  * @param {number} startRound - 起始轮次

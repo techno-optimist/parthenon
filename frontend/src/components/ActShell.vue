@@ -7,7 +7,7 @@
       <span class="tc-lede">{{ actLede }}</span>
     </div>
 
-    <header class="act-header">
+    <header class="act-header" :inert="sheetOpen || undefined">
       <router-link to="/" class="act-brand" :aria-label="$t('parthenon.navHome')"><ParthenonBrand /></router-link>
       <div class="act-subject">
         <span class="act-numeral">{{ actInfo.numeral }}</span>
@@ -17,6 +17,7 @@
         <slot name="tools"></slot>
         <button
           v-if="hasWeb"
+          ref="webToggleEl"
           type="button"
           class="web-toggle"
           :aria-pressed="webVisible"
@@ -41,19 +42,24 @@
       <!-- The Web of Athens: a column on wide screens, a sheet on phones. -->
       <aside
         v-if="hasWeb"
+        ref="webPaneEl"
         class="web-pane"
         :class="{ sheet: isNarrow }"
         :hidden="!webVisible"
+        :role="isNarrow ? 'dialog' : undefined"
+        :aria-modal="isNarrow ? 'true' : undefined"
         :aria-label="$t('parthenon.shell.web')"
+        tabindex="-1"
+        @keydown.esc="isNarrow && webVisible && closeSheet()"
       >
         <div v-if="isNarrow" class="sheet-bar">
           <span class="p-eyebrow">{{ $t('parthenon.shell.web') }}</span>
-          <button type="button" class="p-button ghost small" @click="toggleWeb">{{ $t('parthenon.shell.close') }}</button>
+          <button ref="sheetCloseEl" type="button" class="p-button ghost small" @click="closeSheet">{{ $t('parthenon.shell.close') }}</button>
         </div>
         <div class="web-inner"><slot name="web"></slot></div>
       </aside>
 
-      <main class="stage">
+      <main class="stage" :inert="sheetOpen || undefined">
         <!-- The threshold: the scene of the act, the name and its promise. -->
         <div v-if="!bare" class="threshold" :style="thresholdStyle">
           <div class="th-shade" aria-hidden="true"></div>
@@ -85,7 +91,7 @@
     </div>
 
     <!-- The Way: the five stations, where you are, what you can go back to. -->
-    <nav class="way" :aria-label="$t('parthenon.shell.way')">
+    <nav class="way" :aria-label="$t('parthenon.shell.way')" :inert="sheetOpen || undefined">
       <ol class="way-list">
         <li
           v-for="a in ACTS"
@@ -127,7 +133,8 @@ const props = defineProps({
   bare: { type: Boolean, default: false }, // no threshold band (the Agora fills the stage)
   scene: { type: String, default: '' },
   quiet: { type: Boolean, default: false }, // no title card
-  ledgerLine: { type: String, default: '' } // one line in the city's words for the closed ledger
+  ledgerLine: { type: String, default: '' }, // one line in the city's words for the closed ledger
+  webDefault: { type: String, default: 'open' } // 'open' | 'closed': the Web on wide screens before the visitor chooses
 })
 
 const { t, tm } = useI18n()
@@ -154,18 +161,41 @@ const hasWeb = computed(() => !!slots.web)
 const NARROW = '(max-width: 899px)'
 const narrowQuery = typeof window !== 'undefined' ? window.matchMedia(NARROW) : null
 const isNarrow = ref(narrowQuery ? narrowQuery.matches : false)
-const WEB_KEY = 'parthenon.web.open'
+// The visitor's choice is remembered per act; until they choose, the act decides.
+const WEB_KEY = `parthenon.web.open.${props.act}`
 const readPref = () => {
-  try { return localStorage.getItem(WEB_KEY) !== 'closed' } catch (e) { return true }
+  try {
+    const saved = localStorage.getItem(WEB_KEY)
+    if (saved) return saved !== 'closed'
+  } catch (e) { /* fall through to the act's default */ }
+  return props.webDefault !== 'closed'
 }
 const webVisible = ref(!isNarrow.value && readPref())
 provide('parthenonWebSheet', isNarrow)
+
+const webToggleEl = ref(null)
+const webPaneEl = ref(null)
+const sheetCloseEl = ref(null)
+const sheetOpen = computed(() => isNarrow.value && webVisible.value)
+
 const toggleWeb = () => {
   webVisible.value = !webVisible.value
   if (!isNarrow.value) {
     try { localStorage.setItem(WEB_KEY, webVisible.value ? 'open' : 'closed') } catch (e) { /* per-viewer convenience only */ }
   }
 }
+
+const closeSheet = () => {
+  webVisible.value = false
+  nextTick(() => webToggleEl.value?.focus())
+}
+
+// On phones the Web is a dialog: focus goes in when it opens, and the page behind is inert.
+watch(sheetOpen, async (open) => {
+  if (!open) return
+  await nextTick()
+  ;(sheetCloseEl.value || webPaneEl.value)?.focus()
+})
 const onNarrow = (e) => {
   isNarrow.value = e.matches
   webVisible.value = e.matches ? false : readPref()
@@ -634,6 +664,7 @@ watch(() => props.act, () => { ledgerOpen.value = false })
   }
 
   .act-name { font-size: var(--t-lg); }
+  .act-brand { min-width: 40px; min-height: 40px; align-items: center; }
   .act-tools { gap: 10px; }
   .act-status { font-size: 10px; letter-spacing: 0.1em; }
   .web-toggle span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

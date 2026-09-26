@@ -87,6 +87,7 @@ onUnmounted(() => {
 
 /* Light theme (default - for white header backgrounds) */
 .switcher-trigger {
+  min-height: 40px;
   background: transparent;
   color: var(--p-ink-2);
   border: 1px solid var(--p-line-strong);

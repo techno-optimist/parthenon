@@ -33,113 +33,184 @@
         </ol>
       </nav>
 
-      <!-- The page itself: parchment held up in the dark -->
-      <article class="p-paper page" :aria-labelledby="ids.title">
-        <header class="title-page">
-          <p class="p-eyebrow">{{ $t('parthenon.chronicle.eyebrow') }}</p>
-          <h1 :id="ids.title" class="title">{{ title }}</h1>
-          <p v-if="standfirst" class="standfirst">{{ standfirst }}</p>
-          <div class="p-meander rule" aria-hidden="true"></div>
-          <div v-if="question" class="question">
-            <span class="p-eyebrow question-label">{{ $t('parthenon.chronicle.questionLabel') }}</span>
-            <p class="question-text">{{ question }}</p>
+      <div class="folio">
+        <!-- The film, once made, announced at the top like a marquee; the film itself is the coda. -->
+        <aside v-if="marquee" class="marquee" :aria-labelledby="ids.marquee">
+          <div class="marquee-poster" aria-hidden="true">
+            <img v-if="marquee.poster" :src="marquee.poster" alt="" decoding="async" />
           </div>
-          <p v-if="dateLine" class="date">{{ dateLine }}</p>
+          <div class="marquee-shade" aria-hidden="true"></div>
+          <div class="marquee-copy">
+            <p class="p-eyebrow marquee-eyebrow">{{ $t('parthenon.chronicle.marquee.eyebrow') }}</p>
+            <p :id="ids.marquee" class="marquee-title">{{ marquee.title }}</p>
+            <p v-if="marquee.logline" class="marquee-logline">{{ marquee.logline }}</p>
+            <div class="marquee-actions">
+              <button type="button" class="p-button" @click="watchFilm">
+                <svg class="play" viewBox="0 0 12 14" width="11" height="13" aria-hidden="true"><path d="M1 1.2v11.6L11 7z" fill="currentColor" /></svg>
+                <span>{{ $t('parthenon.chronicle.marquee.watch') }}</span>
+              </button>
+              <span v-if="marquee.runtime" class="marquee-runtime">{{ $t('parthenon.chronicle.marquee.runtime', { time: marquee.runtime }) }}</span>
+            </div>
+          </div>
+        </aside>
 
-          <div v-if="isComplete" class="actions">
+        <!-- The page itself: parchment held up in the dark -->
+        <article class="p-paper page" :aria-labelledby="ids.title">
+          <header class="title-page" :class="plate ? `has-plate plate-${plate.kind}` : ''">
+            <div class="title-head">
+              <p class="p-eyebrow">{{ $t('parthenon.chronicle.eyebrow') }}</p>
+              <h1 :id="ids.title" class="title">{{ title }}</h1>
+              <p v-if="standfirst" class="standfirst">{{ standfirst }}</p>
+            </div>
+
+            <!-- Who took the steps, or the stage the city gathered on -->
+            <figure v-if="plate" class="plate" :class="`is-${plate.kind}`">
+              <div class="plate-frame">
+                <img :src="plate.src" :alt="plate.name || ''" decoding="async" />
+              </div>
+              <figcaption v-if="plate.name" class="plate-caption">
+                <span v-if="plate.greek" class="plate-greek" aria-hidden="true">{{ plate.greek }}</span>
+                <span class="plate-name">{{ plate.name }}</span>
+                <span v-if="plate.caption" class="plate-note">{{ plate.caption }}</span>
+              </figcaption>
+            </figure>
+
+            <div class="title-rest">
+              <div class="p-meander rule" aria-hidden="true"></div>
+              <div v-if="question" class="question">
+                <span class="p-eyebrow question-label">{{ $t('parthenon.chronicle.questionLabel') }}</span>
+                <p class="question-text">{{ question }}</p>
+              </div>
+              <p v-if="dateLine" class="date">{{ dateLine }}</p>
+
+              <div v-if="isComplete" class="actions">
+                <button type="button" class="p-button" @click="goToInteraction">
+                  {{ $t('parthenon.chronicle.enterSymposium') }}
+                </button>
+                <button type="button" class="p-button secondary" @click="revealFilm">
+                  {{ $t('parthenon.chronicle.filmIt') }}
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <!-- Trouble: the Scribe could not finish -->
+          <section v-if="trouble" class="trouble" role="alert">
+            <p class="trouble-title">{{ $t('parthenon.chronicle.troubleTitle') }}</p>
+            <details class="trouble-why">
+              <summary>{{ $t('parthenon.chronicle.troubleWhy') }}</summary>
+              <p>{{ trouble }}</p>
+            </details>
+          </section>
+
+          <!-- While the Scribe writes: one line, in words, and a breathing ink line -->
+          <p v-else-if="!isComplete" class="scribe-status">
+            <span class="ink-line" aria-hidden="true"></span>
+            <span>{{ statusLine }}</span>
+          </p>
+
+          <!-- The contents, on the page, when there is no margin for them -->
+          <nav
+            v-if="!wide && chapters.length"
+            class="contents contents--inline"
+            :aria-label="$t('parthenon.chronicle.chaptersNav')"
+          >
+            <span class="p-eyebrow contents-label">{{ $t('parthenon.chronicle.contents') }}</span>
+            <ol class="contents-list">
+              <li
+                v-for="ch in chapters"
+                :key="ch.index"
+                class="contents-item"
+                :class="[`is-${ch.state}`, { current: ch.index === activeChapter }]"
+              >
+                <button
+                  type="button"
+                  class="contents-link"
+                  :disabled="ch.state === 'pending'"
+                  :aria-current="ch.index === activeChapter ? 'true' : undefined"
+                  @click="goToChapter(ch.index)"
+                >
+                  <span class="contents-num">{{ numeral(ch.index) }}</span>
+                  <span class="contents-title">{{ ch.title }}</span>
+                  <span v-if="ch.state !== 'done'" class="contents-note">{{ stateNote(ch.state) }}</span>
+                </button>
+              </li>
+            </ol>
+          </nav>
+
+          <!-- The chapters, as they are finished -->
+          <section
+            v-for="ch in visibleChapters"
+            :key="ch.index"
+            :id="chapterId(ch.index)"
+            class="chapter"
+            :class="[`is-${ch.state}`, { 'has-notes': ch.state === 'done' && (ch.cast.length || ch.notes.length) }]"
+            :aria-labelledby="chapterId(ch.index) + '-title'"
+          >
+            <header class="chapter-head">
+              <span class="p-eyebrow chapter-num">{{ $t('parthenon.chronicle.chapter', { n: numeral(ch.index) }) }}</span>
+              <h2 :id="chapterId(ch.index) + '-title'" class="chapter-title" tabindex="-1">{{ ch.title }}</h2>
+            </header>
+
+            <!-- The margin: the faces this chapter names, and how the Scribe found it.
+                 On narrow screens its parts fall into the column: faces under the
+                 heading, the note after the prose. -->
+            <div v-if="ch.state === 'done' && (ch.cast.length || ch.notes.length)" class="chapter-margin">
+              <div
+                v-if="ch.cast.length"
+                class="cast"
+                role="group"
+                :aria-label="$t('parthenon.chronicle.cast.label', { n: numeral(ch.index) })"
+              >
+                <span class="p-eyebrow cast-label" aria-hidden="true">{{ $t('parthenon.chronicle.cast.title') }}</span>
+                <ul class="cast-list">
+                  <li v-for="m in castShown(ch)" :key="m.key" class="cast-member">
+                    <CitizenCoin
+                      :name="m.name"
+                      :type="m.type"
+                      :portrait="portraitOf(m)"
+                      :size="margins ? 'md' : 'sm'"
+                    />
+                    <span class="cast-name">{{ m.name }}</span>
+                  </li>
+                </ul>
+                <p v-if="ch.cast.length > castShown(ch).length" class="cast-more">{{ castRest(ch) }}</p>
+              </div>
+
+              <details v-if="ch.notes.length" class="how-found">
+                <summary>
+                  <span>{{ $t('parthenon.chronicle.howFound') }}</span>
+                  <span class="how-chev" aria-hidden="true"></span>
+                </summary>
+                <ul class="how-list">
+                  <li v-for="(line, i) in ch.notes" :key="i">{{ line }}</li>
+                </ul>
+              </details>
+            </div>
+
+            <div v-if="ch.state === 'done'" class="chapter-body" v-html="ch.html"></div>
+            <div v-else class="chapter-writing">
+              <p class="scribe-status">
+                <span class="ink-line" aria-hidden="true"></span>
+                <span>{{ $t('parthenon.chronicle.writingThis') }}</span>
+              </p>
+              <p v-if="ch.latest" class="chapter-latest">{{ ch.latest }}</p>
+            </div>
+          </section>
+
+          <!-- Colophon: the Scribe sets down her pen -->
+          <footer v-if="isComplete" class="colophon">
+            <div class="p-meander rule" aria-hidden="true"></div>
+            <p class="colophon-line">{{ $t('parthenon.chronicle.colophon') }}</p>
             <button type="button" class="p-button" @click="goToInteraction">
               {{ $t('parthenon.chronicle.enterSymposium') }}
             </button>
-            <button type="button" class="p-button secondary" @click="revealFilm">
-              {{ $t('parthenon.chronicle.filmIt') }}
-            </button>
-          </div>
-        </header>
+          </footer>
 
-        <!-- Trouble: the Scribe could not finish -->
-        <section v-if="trouble" class="trouble" role="alert">
-          <p class="trouble-title">{{ $t('parthenon.chronicle.troubleTitle') }}</p>
-          <details class="trouble-why">
-            <summary>{{ $t('parthenon.chronicle.troubleWhy') }}</summary>
-            <p>{{ trouble }}</p>
-          </details>
-        </section>
-
-        <!-- While the Scribe writes: one line, in words, and a breathing ink line -->
-        <p v-else-if="!isComplete" class="scribe-status">
-          <span class="ink-line" aria-hidden="true"></span>
-          <span>{{ statusLine }}</span>
-        </p>
-
-        <!-- The contents, on the page, when there is no margin for them -->
-        <nav
-          v-if="!wide && chapters.length"
-          class="contents contents--inline"
-          :aria-label="$t('parthenon.chronicle.chaptersNav')"
-        >
-          <span class="p-eyebrow contents-label">{{ $t('parthenon.chronicle.contents') }}</span>
-          <ol class="contents-list">
-            <li
-              v-for="ch in chapters"
-              :key="ch.index"
-              class="contents-item"
-              :class="[`is-${ch.state}`, { current: ch.index === activeChapter }]"
-            >
-              <button
-                type="button"
-                class="contents-link"
-                :disabled="ch.state === 'pending'"
-                :aria-current="ch.index === activeChapter ? 'true' : undefined"
-                @click="goToChapter(ch.index)"
-              >
-                <span class="contents-num">{{ numeral(ch.index) }}</span>
-                <span class="contents-title">{{ ch.title }}</span>
-                <span v-if="ch.state !== 'done'" class="contents-note">{{ stateNote(ch.state) }}</span>
-              </button>
-            </li>
-          </ol>
-        </nav>
-
-        <!-- The chapters, as they are finished -->
-        <section
-          v-for="ch in visibleChapters"
-          :key="ch.index"
-          :id="chapterId(ch.index)"
-          class="chapter"
-          :class="`is-${ch.state}`"
-          :aria-labelledby="chapterId(ch.index) + '-title'"
-        >
-          <header class="chapter-head">
-            <span class="p-eyebrow chapter-num">{{ $t('parthenon.chronicle.chapter', { n: numeral(ch.index) }) }}</span>
-            <h2 :id="chapterId(ch.index) + '-title'" class="chapter-title" tabindex="-1">{{ ch.title }}</h2>
-          </header>
-
-          <div v-if="ch.state === 'done'" class="chapter-body" v-html="ch.html"></div>
-          <p v-else class="scribe-status chapter-writing">
-            <span class="ink-line" aria-hidden="true"></span>
-            <span>{{ $t('parthenon.chronicle.writingThis') }}</span>
-          </p>
-
-          <details v-if="ch.state === 'done' && ch.sources.length" class="how-found">
-            <summary>{{ $t('parthenon.chronicle.howFound') }}</summary>
-            <ul class="how-list">
-              <li v-for="(line, i) in ch.sources" :key="i">{{ line }}</li>
-            </ul>
-          </details>
-        </section>
-
-        <!-- Colophon: the Scribe sets down her pen -->
-        <footer v-if="isComplete" class="colophon">
-          <div class="p-meander rule" aria-hidden="true"></div>
-          <p class="colophon-line">{{ $t('parthenon.chronicle.colophon') }}</p>
-          <button type="button" class="p-button" @click="goToInteraction">
-            {{ $t('parthenon.chronicle.enterSymposium') }}
-          </button>
-        </footer>
-
-        <!-- The film, as the epilogue of the document -->
-        <ChronicleFilm v-if="!trouble" ref="filmPanel" :report-id="reportId" :ready="isComplete" />
-      </article>
+          <!-- The film, as the epilogue of the document -->
+          <ChronicleFilm v-if="!trouble" ref="filmPanel" :report-id="reportId" :ready="isComplete" />
+        </article>
+      </div>
     </div>
   </div>
 </template>
@@ -149,12 +220,21 @@
 // chapter by chapter; the page reveals each one as it is finished and says,
 // in one line, where the Scribe is. The engine's own account goes to the
 // ledger through add-log.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+//
+// The Chronicle reads as one book: a title page with the face of the speaker
+// (or the painting of the stage), the faces of the citizens each chapter names
+// in its margin, a note on how the Scribe found each chapter in plain words,
+// and the film as the epilogue, announced at the top once it is made.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog, getReport } from '../api/report'
-import { stripIds } from '../parthenon/vocabulary.js'
+import { getSimulationConfig, getSimulationProfiles } from '../api/simulation'
+import { filmAssetUrl, getChronicleFilm } from '../api/parthenon'
+import { citizenName, entityTypeName, roleFamily, stripIds } from '../parthenon/vocabulary.js'
+import { useCitizenPortraits } from '../parthenon/portraits.js'
 import ChronicleFilm from './ChronicleFilm.vue'
+import CitizenCoin from './CitizenCoin.vue'
 
 // Chapters are numbered the Greek way, with the keraia, as the Symposium's
 // drawer numbers them. (A shared helper in vocabulary.js is requested.)
@@ -162,19 +242,21 @@ const GREEK = ['Α΄', 'Β΄', 'Γ΄', 'Δ΄', 'Ε΄', 'Ϛ΄', 'Ζ΄', 'Η΄', '
 const greekNumeral = (n) => GREEK[n - 1] || String(n)
 
 const router = useRouter()
-const { t, locale } = useI18n()
+const { t, tm, rt, locale } = useI18n()
 
 const props = defineProps({
   reportId: String,
   simulationId: String,
   report: { type: Object, default: null },
-  loadError: { type: String, default: '' }
+  loadError: { type: String, default: '' },
+  // The image beside the title: { kind: portrait|scene|act, src, name, greek, caption }
+  plate: { type: Object, default: null }
 })
 
 const emit = defineEmits(['add-log', 'update-status'])
 
 const uid = String(useId() || 'ch').replace(/[^A-Za-z0-9_-]/g, '')
-const ids = { title: `${uid}-chronicle-title` }
+const ids = { title: `${uid}-chronicle-title`, marquee: `${uid}-chronicle-marquee` }
 const chapterId = (n) => `${uid}-chapter-${n}`
 
 // Chinese counts its chapters in its own figures; everyone else reads Greek.
@@ -184,7 +266,8 @@ const numeral = (n) => (locale.value === 'zh' ? String(n) : greekNumeral(n))
 const reportOutline = ref(null)
 const currentSectionIndex = ref(null)
 const generatedSections = ref({})
-const sourcesBySection = ref({})
+// What the Scribe did for each chapter: [{ tool, params, iteration, digest }]
+const stepsBySection = ref({})
 const isComplete = ref(false)
 const planningStarted = ref(false)
 const agentLogLine = ref(0)
@@ -225,22 +308,409 @@ const trouble = computed(() => {
   return ''
 })
 
-// Each tool the Scribe used, in the city's words, with how often.
-const KNOWN_SOURCES = ['insight_forge', 'panorama_search', 'interview_agents', 'quick_search', 'get_graph_statistics', 'get_entities_by_type']
-const countWord = (n) => {
-  if (n === 1) return t('parthenon.chronicle.once')
-  if (n === 2) return t('parthenon.chronicle.twice')
-  return t('parthenon.chronicle.times', { n })
-}
-const describeSources = (tools) => {
-  const counts = new Map()
-  for (const tool of tools || []) {
-    const key = KNOWN_SOURCES.includes(tool) ? tool : 'other'
-    counts.set(key, (counts.get(key) || 0) + 1)
+// The citizens of this gathering, for the faces in the margin.
+
+const citizens = ref([]) // [{ key, id, name, type }]
+let citizensFor = null
+
+const nameKey = (name) =>
+  String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+
+const loadCitizens = async (simulationId) => {
+  citizensFor = simulationId || null
+  citizens.value = []
+  if (!simulationId) return
+  const [profilesRes, configRes] = await Promise.allSettled([
+    getSimulationProfiles(simulationId),
+    getSimulationConfig(simulationId)
+  ])
+  if (citizensFor !== simulationId) return
+  const configs = configRes.status === 'fulfilled' ? configRes.value?.data?.agent_configs || [] : []
+  const profiles = profilesRes.status === 'fulfilled' ? profilesRes.value?.data?.profiles || [] : []
+  const typeById = new Map()
+  const typeByName = new Map()
+  for (const c of configs) {
+    if (c?.agent_id !== undefined && c?.agent_id !== null) typeById.set(String(c.agent_id), c.entity_type || '')
+    if (c?.entity_name) typeByName.set(nameKey(c.entity_name), c.entity_type || '')
   }
-  return [...counts.entries()].map(([key, n]) => `${t(`parthenon.chronicle.sources.${key}`)}, ${countWord(n)}`)
+  const list = []
+  const seen = new Set()
+  const add = (id, name, type) => {
+    const key = nameKey(name)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    list.push({ key, id: id === undefined || id === null ? '' : String(id), name, type: type || '' })
+  }
+  profiles.forEach((p, i) => {
+    const id = p?.user_id ?? p?.agent_id ?? i
+    const name = citizenName(p?.name, p?.username)
+    add(id, name, typeById.get(String(id)) ?? typeByName.get(nameKey(name)) ?? '')
+  })
+  configs.forEach((c) => add(c?.agent_id, citizenName(c?.entity_name), c?.entity_type))
+  citizens.value = list
 }
 
+watch(() => props.simulationId, loadCitizens, { immediate: true })
+
+const portraits = useCitizenPortraits(toRef(props, 'simulationId'))
+const portraitOf = (m) => portraits.portraitFor(m.name) || (m.id !== '' ? portraits.portraitFor(m.id) : null) || ''
+
+// Finding citizens in the Scribe's prose. A name is found whole; a person's
+// first or family name alone counts too when no one else in the city shares it.
+// Latin names must stand as words; names in other scripts are found as written.
+const LETTER = 'A-Za-z0-9\\u00C0-\\u024F'
+const HONORIFIC = /^(the|dr\.?|father|mother|mr\.?|mrs\.?|ms\.?|saint|st\.?|sister|brother)\s+/i
+const GENERIC_TAIL = /\s+(campaign|association|cooperative|co-operative|coalition|movement|society|committee|collective)$/i
+const COMMON_WORDS = new Set(['the', 'and', 'for', 'city', 'island', 'people', 'council', 'court', 'school', 'young', 'old', 'new', 'saint'])
+const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const matchers = computed(() => {
+  const list = citizens.value
+  const bare = (name) => name.replace(HONORIFIC, '').trim()
+  const tokenCount = new Map()
+  for (const c of list) {
+    for (const tok of new Set(bare(c.name).split(/\s+/))) tokenCount.set(tok, (tokenCount.get(tok) || 0) + 1)
+  }
+  return list.map((c) => {
+    const aliases = new Set([c.name.trim()])
+    const plain = bare(c.name)
+    if (plain.length >= 3) aliases.add(plain)
+    const trimmed = plain.replace(GENERIC_TAIL, '')
+    if (trimmed !== plain && trimmed.split(/\s+/).length >= 2) aliases.add(trimmed)
+    const words = plain.split(/\s+/)
+    const properName = words.length >= 2 && words.length <= 3 && words.every((w) => /^\p{Lu}/u.test(w))
+    if (properName && roleFamily(c.type) === 'people') {
+      for (const w of words) {
+        if (w.length >= 4 && tokenCount.get(w) === 1 && !COMMON_WORDS.has(w.toLowerCase())) aliases.add(w)
+      }
+    }
+    const patterns = [...aliases].map((alias) => {
+      const body = escapeRe(alias).replace(/\s+/g, '\\s+')
+      const latin = !/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(alias)
+      const source = latin ? `(?<![${LETTER}])${body}(?![${LETTER}])` : body
+      // One word is found as written (Sand, not sand); several are found in any case.
+      return new RegExp(source, /\s/.test(alias) ? 'giu' : 'gu')
+    })
+    return { citizen: c, patterns }
+  })
+})
+
+// How often a text names a citizen, and where first. "Anneke Visser" is one
+// mention, not one for the whole name and another for "Anneke".
+const mentionsOf = (source, patterns) => {
+  const spans = []
+  for (const re of patterns) {
+    for (const m of source.matchAll(re)) spans.push([m.index, m.index + m[0].length])
+  }
+  spans.sort((a, b) => a[0] - b[0] || b[1] - a[1])
+  let count = 0
+  let reach = -1
+  for (const [start, end] of spans) {
+    if (start < reach) continue
+    count += 1
+    reach = end
+  }
+  return { count, first: spans.length ? spans[0][0] : -1 }
+}
+
+// The citizens a text names: the most named first, then in the order named.
+const citizensIn = (text) => {
+  const found = []
+  const source = String(text || '')
+  if (!source) return found
+  for (const { citizen, patterns } of matchers.value) {
+    const { count, first } = mentionsOf(source, patterns)
+    if (count) found.push({ count, first, citizen })
+  }
+  return found.sort((a, b) => b.count - a.count || a.first - b.first).map((f) => f.citizen)
+}
+
+const castCache = new Map()
+const castOf = (content) => {
+  const key = content
+  const cached = castCache.get(key)
+  if (cached && cached.matchers === matchers.value) return cached.cast
+  const cast = citizensIn(content)
+  castCache.set(key, { matchers: matchers.value, cast })
+  return cast
+}
+
+// The margin holds ten faces, a tablet's row eight, a phone's six.
+const castLimit = computed(() => (margins.value ? 10 : phone.value ? 6 : 8))
+const castShown = (ch) => ch.cast.slice(0, castLimit.value)
+const listFormat = (items) => {
+  const tag = locale.value === 'zh' ? 'zh-CN' : 'en-GB'
+  try {
+    return new Intl.ListFormat(tag, { style: 'long', type: 'conjunction' }).format(items)
+  } catch {
+    return items.join(', ')
+  }
+}
+// The rest are named in a line; past five, the line counts them instead.
+const castRest = (ch) => {
+  const rest = ch.cast.slice(castLimit.value).map((m) => m.name)
+  if (rest.length <= 5) return t('parthenon.chronicle.cast.more', { names: listFormat(rest) })
+  const n = rest.length - 4
+  return t('parthenon.chronicle.cast.moreCount', { names: rest.slice(0, 4).join(locale.value === 'zh' ? '、' : ', '), n }, n)
+}
+
+// How the Scribe found each chapter, in plain words, from her working log.
+
+// The engine's words for what she searched, turned into the city's.
+const cityWords = (text) =>
+  scrub(text)
+    .replace(/\bTwitter\b/g, 'the Agora')
+    .replace(/\bReddit\b/g, 'the Stoa')
+    .replace(/\bsimulated\s+/gi, '')
+    .replace(/\bsimulations?\b/gi, 'gathering')
+    .replace(/\bgraph\b/gi, 'Web')
+    .replace(/\bthe\s+the\b/gi, 'the')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+// A search, shortened to what it was about. A string of bare keywords is no
+// topic a reader could follow, so it is left out.
+const PROSE_WORDS = /\b(the|a|an|of|and|for|in|on|to|with|about|between|before|after|from|over|during|against)\b/i
+const QUESTION_LEAD = /^(how|what|who|whom|whose|why|when|where|which|is|are|was|were|does|do|did|can|could|should|would|will)\s+((does|do|did|is|are|was|were|has|have)\s+)?/i
+const TOPIC_WORDS = 9
+const topicOf = (query) => {
+  let q = cityWords(query).replace(/[“”"]/g, '').replace(/\s+/g, ' ').trim()
+  if (!q) return ''
+  q = q.replace(QUESTION_LEAD, '')
+  let head = q.split(/[:?;!]|\s[-–]\s|\.\s/)[0]
+  const comma = head.indexOf(', ')
+  if (comma > 0 && head.slice(0, comma).split(' ').length >= 3) head = head.slice(0, comma)
+  const words = head.trim().split(' ')
+  const opening = words.slice(0, TOPIC_WORDS).join(' ')
+  if (!PROSE_WORDS.test(opening) && !opening.includes(',')) return ''
+  let out = opening.replace(/[.,;:]+$/, '')
+  if (words.length > TOPIC_WORDS) out += '…'
+  return out
+}
+
+// What a result says, in a few numbers. The engine writes these headings in
+// Chinese or English; either is read, and anything unread is left out.
+const numberAfter = (text, labels) => {
+  for (const label of labels) {
+    const m = text.match(new RegExp(`${label}[^0-9\\n]{0,16}(\\d+)`, 'i'))
+    if (m) return Number(m[1])
+  }
+  return null
+}
+const countListUnder = (text, headings) => {
+  const m = text.match(new RegExp(`###\\s*(?:${headings.join('|')})[^\\n]*\\n([\\s\\S]*?)(?=\\n###|$)`, 'i'))
+  if (!m) return 0
+  return (m[1].match(/^\s*\d+\.\s/gm) || []).length
+}
+const digestResult = (tool, result) => {
+  const text = String(result || '')
+  const digest = {
+    agora: (text.match(/\bTwitter\b|Twitter(?=[\u4e00-\u9fff])/g) || []).length,
+    stoa: (text.match(/\bReddit\b|Reddit(?=[\u4e00-\u9fff])/g) || []).length
+  }
+  if (tool === 'insight_forge') {
+    digest.facts = numberAfter(text, ['相关预测事实', 'relevant facts', 'facts'])
+    digest.questions = countListUnder(text, ['分析的子问题', 'sub-?questions'])
+  } else if (tool === 'panorama_search') {
+    digest.facts = numberAfter(text, ['当前有效事实', 'active facts', 'current facts'])
+  } else if (tool === 'quick_search') {
+    digest.facts = numberAfter(text, ['找到', 'found'])
+  } else if (tool === 'interview_agents') {
+    const m = text.match(/(?:采访人数|interviewed)[^0-9\n]*(\d+)\s*\/\s*(\d+)/i)
+    digest.interviewed = m ? Number(m[1]) : null
+    digest.names = [...text.matchAll(/^####\s*(?:采访|interview)\s*#?\s*\d+\s*[:：]\s*(.+)$/gim)]
+      .map((x) => citizenName(x[1].trim()))
+      .filter(Boolean)
+  }
+  return digest
+}
+
+const numberWord = (n) => {
+  const words = tm('parthenon.chronicle.found.numbers')
+  if (Array.isArray(words) && Number.isInteger(n) && n >= 0 && n < words.length) {
+    const w = words[n]
+    return typeof w === 'string' ? w : rt(w)
+  }
+  return String(n)
+}
+
+// A citizen's name as the city knows it, when the engine gave a handle.
+const knownName = (name) => {
+  const key = nameKey(name)
+  const hit = citizens.value.find((c) => c.key === key)
+  return hit ? hit.name : name
+}
+
+const SEARCHES = new Set(['insight_forge', 'panorama_search', 'quick_search'])
+const sum = (steps, field) => steps.reduce((total, s) => total + (Number(s.digest?.[field]) || 0), 0)
+const unique = (items) => [...new Set(items.filter(Boolean))]
+
+// One line per kind of work, in the order she first did it, and where the
+// words she read were said.
+const notesFor = (steps) => {
+  const groups = new Map()
+  steps.forEach((step, i) => {
+    const key = ['insight_forge', 'panorama_search', 'quick_search', 'interview_agents', 'get_graph_statistics', 'get_entities_by_type'].includes(step.tool) ? step.tool : 'other'
+    if (!groups.has(key)) groups.set(key, { key, steps: [], last: i })
+    const g = groups.get(key)
+    g.steps.push(step)
+    g.last = i
+  })
+  const lines = []
+  for (const g of groups.values()) {
+    const text = lineFor(g.key, g.steps)
+    if (text) lines.push({ key: g.key, last: g.last, text })
+  }
+  const agora = sum(steps, 'agora')
+  const stoa = sum(steps, 'stoa')
+  if (agora || stoa) {
+    const where = agora && stoa ? 'followedBoth' : agora ? 'followedAgora' : 'followedStoa'
+    let at = -1
+    lines.forEach((l, i) => { if (SEARCHES.has(l.key)) at = i })
+    lines.splice(at + 1, 0, { key: 'followed', last: -1, text: t(`parthenon.chronicle.found.${where}`) })
+  }
+  return lines
+}
+
+const lineFor = (key, steps) => {
+  const first = steps[0]
+  const n = steps.length
+  if (key === 'insight_forge') {
+    const questions = sum(steps, 'questions')
+    const facts = sum(steps, 'facts')
+    const topic = topicOf(first.params?.query)
+    if (!questions) return topic ? t('parthenon.chronicle.found.deepPlain', { topic }) : t('parthenon.chronicle.found.deepBare')
+    if (n > 1 || !topic) return t('parthenon.chronicle.found.deepMany', { q: numberWord(questions), facts }, facts)
+    return t('parthenon.chronicle.found.deep', { q: numberWord(questions), facts, topic }, facts)
+  }
+  if (key === 'panorama_search') {
+    const topic = topicOf(first.params?.query)
+    if (!topic) return t('parthenon.chronicle.found.wideBare')
+    return n > 1
+      ? t('parthenon.chronicle.found.wideMore', { topic, n: numberWord(n - 1) }, n - 1)
+      : t('parthenon.chronicle.found.wide', { topic })
+  }
+  if (key === 'quick_search') {
+    const names = unique(steps.flatMap((s) => citizensIn(s.params?.query).map((c) => c.name)))
+    if (names.length) {
+      const shown = names.slice(0, 4)
+      const rest = names.length - shown.length
+      return rest
+        ? t('parthenon.chronicle.found.lookedUpMore', { names: shown.join(', '), n: numberWord(rest) }, rest)
+        : t('parthenon.chronicle.found.lookedUp', { names: listFormat(shown) })
+    }
+    const topic = topicOf(first.params?.query)
+    return topic ? t('parthenon.chronicle.found.lookedUpTopic', { topic }) : t('parthenon.chronicle.found.lookedUpBare')
+  }
+  if (key === 'interview_agents') {
+    const answered = steps.filter((s) => s.digest && s.digest.interviewed !== null && s.digest.interviewed !== undefined)
+    const interviewed = sum(answered, 'interviewed')
+    const asked = steps.reduce((total, s) => total + (Number(s.params?.max_agents) || 0), 0)
+    if (!answered.length) return ''
+    if (!interviewed) {
+      return asked
+        ? t('parthenon.chronicle.found.goneHome', { n: numberWord(asked) }, asked)
+        : t('parthenon.chronicle.found.goneHomeBare')
+    }
+    const names = unique(steps.flatMap((s) => s.digest?.names || []).map(knownName))
+    return names.length
+      ? t('parthenon.chronicle.found.questioned', { n: numberWord(interviewed), names: listFormat(names) }, interviewed)
+      : t('parthenon.chronicle.found.questionedBare', { n: numberWord(interviewed) }, interviewed)
+  }
+  if (key === 'get_graph_statistics') return t('parthenon.chronicle.found.counted')
+  if (key === 'get_entities_by_type') {
+    const types = unique(steps.map((s) => entityTypeName(s.params?.entity_type)))
+    return types.length ? t('parthenon.chronicle.found.roll', { types: listFormat(types) }) : t('parthenon.chronicle.found.rollBare')
+  }
+  return t('parthenon.chronicle.found.records')
+}
+
+// While a chapter is written: what the Scribe is doing now, or last did.
+const NOW = {
+  insight_forge: 'nowDeep',
+  panorama_search: 'nowWide',
+  quick_search: 'nowQuick',
+  interview_agents: 'nowQuestioning',
+  get_graph_statistics: 'nowCounting',
+  get_entities_by_type: 'nowRoll'
+}
+const latestFor = (steps) => {
+  if (!steps.length) return ''
+  const last = steps[steps.length - 1]
+  if (!last.digest) {
+    const key = NOW[last.tool] || 'nowRecords'
+    const asked = Number(last.params?.max_agents) || 0
+    if (key === 'nowQuestioning' && asked) return t('parthenon.chronicle.found.nowQuestioningN', { n: numberWord(asked) }, asked)
+    return t(`parthenon.chronicle.found.${key}`)
+  }
+  const lines = notesFor(steps)
+  const index = steps.length - 1
+  const line = lines.find((l) => l.last === index)
+  return line ? line.text : ''
+}
+
+// The film, announced at the top once it is made.
+
+const film = ref(null)
+let filmTimer = null
+let filmFor = null
+
+const formatRuntime = (seconds) => {
+  const total = Math.round(Number(seconds))
+  if (!Number.isFinite(total) || total <= 0) return ''
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+const marquee = computed(() => {
+  const f = film.value
+  if (!f || f.status !== 'completed' || !f.video_url) return null
+  return {
+    title: f.title || t('parthenon.film.untitled'),
+    logline: f.logline || '',
+    poster: filmAssetUrl(f.poster_url),
+    runtime: formatRuntime(f.duration)
+  }
+})
+
+const clearFilmTimer = () => {
+  if (filmTimer) clearTimeout(filmTimer)
+  filmTimer = null
+}
+
+// A film is read once the Chronicle is written, and read again now and then
+// until one is made (quickly while it is being filmed), so the marquee lights
+// without a reload.
+const checkFilm = async () => {
+  clearFilmTimer()
+  const reportId = props.reportId
+  if (!reportId || !isComplete.value) return
+  filmFor = reportId
+  if (typeof document !== 'undefined' && document.hidden) {
+    filmTimer = setTimeout(checkFilm, 30000)
+    return
+  }
+  try {
+    const res = await getChronicleFilm(reportId)
+    if (filmFor !== reportId || reportId !== props.reportId) return
+    film.value = res?.data || null
+  } catch {
+    // The marquee waits; the film's own panel at the end says what is wrong.
+  }
+  if (filmFor !== reportId) return
+  const status = film.value?.status
+  if (status === 'completed' && film.value?.video_url) return
+  filmTimer = setTimeout(checkFilm, status === 'running' ? 12000 : 30000)
+}
+
+watch(() => [props.reportId, isComplete.value], ([id, done]) => {
+  if (filmFor !== id) film.value = null
+  if (id && done) checkFilm()
+  else clearFilmTimer()
+}, { immediate: true })
+
+const watchFilm = () => {
+  filmPanel.value?.reveal()
+}
 const chapters = computed(() => {
   const sections = reportOutline.value?.sections || []
   return sections.map((section, i) => {
@@ -249,12 +719,15 @@ const chapters = computed(() => {
     let state = 'pending'
     if (content) state = 'done'
     else if (currentSectionIndex.value === index) state = 'writing'
+    const steps = stepsBySection.value[index] || []
     return {
       index,
       title: section.title || t('parthenon.chronicle.chapter', { n: index }),
       state,
       html: content ? renderMarkdown(content) : '',
-      sources: content ? describeSources(sourcesBySection.value[index]) : []
+      cast: content ? castOf(content) : [],
+      notes: content ? notesFor(steps).map((n) => n.text) : [],
+      latest: state === 'writing' ? latestFor(steps) : ''
     }
   })
 })
@@ -325,6 +798,17 @@ const WIDE = '(min-width: 1200px)'
 const wideQuery = typeof window !== 'undefined' ? window.matchMedia(WIDE) : null
 const wide = ref(wideQuery ? wideQuery.matches : false)
 const onWide = (e) => { wide.value = e.matches }
+
+// Wider still, each chapter keeps a margin of its own for faces and notes.
+const MARGINS = '(min-width: 1280px)'
+const marginsQuery = typeof window !== 'undefined' ? window.matchMedia(MARGINS) : null
+const margins = ref(marginsQuery ? marginsQuery.matches : false)
+const onMargins = (e) => { margins.value = e.matches }
+
+const PHONE = '(max-width: 899px)'
+const phoneQuery = typeof window !== 'undefined' ? window.matchMedia(PHONE) : null
+const phone = ref(phoneQuery ? phoneQuery.matches : false)
+const onPhone = (e) => { phone.value = e.matches }
 
 // Markdown, the Scribe's, into the page's HTML.
 
@@ -426,9 +910,26 @@ const applyLog = (log) => {
     currentSectionIndex.value = log.section_index
   }
   if (log.action === 'tool_call' && log.section_index) {
-    const list = sourcesBySection.value[log.section_index] || []
-    list.push(log.details?.tool_name || 'other')
-    sourcesBySection.value = { ...sourcesBySection.value, [log.section_index]: list }
+    const list = [...(stepsBySection.value[log.section_index] || [])]
+    list.push({
+      tool: log.details?.tool_name || 'other',
+      params: log.details?.parameters || {},
+      iteration: log.details?.iteration ?? null,
+      digest: null
+    })
+    stepsBySection.value = { ...stepsBySection.value, [log.section_index]: list }
+  }
+  if (log.action === 'tool_result' && log.section_index) {
+    const list = [...(stepsBySection.value[log.section_index] || [])]
+    const tool = log.details?.tool_name || ''
+    const iteration = log.details?.iteration ?? null
+    for (let i = list.length - 1; i >= 0; i--) {
+      const step = list[i]
+      if (step.digest || (tool && step.tool !== tool) || (iteration !== null && step.iteration !== null && step.iteration !== iteration)) continue
+      list[i] = { ...step, digest: digestResult(step.tool, log.details?.result) }
+      break
+    }
+    stepsBySection.value = { ...stepsBySection.value, [log.section_index]: list }
   }
   if (log.action === 'section_complete' && log.details?.content) {
     generatedSections.value = { ...generatedSections.value, [log.section_index]: log.details.content }
@@ -544,6 +1045,8 @@ const chapterLine = (title, withIndex, withoutIndex) => {
     ? t(withIndex, { n: numeral(ch.index), title: ch.title })
     : t(withoutIndex, { title: scrub(title) })
 }
+// The tools the Scribe works with, each with a line in the city's words.
+const KNOWN_SOURCES = ['insight_forge', 'panorama_search', 'interview_agents', 'quick_search', 'get_graph_statistics', 'get_entities_by_type']
 const toolLine = (tool) => {
   const key = KNOWN_SOURCES.includes(tool) ? tool : 'other'
   return t('parthenon.chronicle.ledger.tool', { what: t(`parthenon.chronicle.sources.${key}`) })
@@ -658,7 +1161,7 @@ const resetState = () => {
   reportOutline.value = null
   currentSectionIndex.value = null
   generatedSections.value = {}
-  sourcesBySection.value = {}
+  stepsBySection.value = {}
   isComplete.value = false
   planningStarted.value = false
   agentLogLine.value = 0
@@ -692,13 +1195,18 @@ watch(() => props.reportId, (newId) => {
 
 onMounted(() => {
   wideQuery?.addEventListener('change', onWide)
+  marginsQuery?.addEventListener('change', onMargins)
+  phoneQuery?.addEventListener('change', onPhone)
   window.addEventListener('scroll', onScroll, { passive: true })
   nextTick(onScroll)
 })
 
 onBeforeUnmount(() => {
   stopPolling()
+  clearFilmTimer()
   wideQuery?.removeEventListener('change', onWide)
+  marginsQuery?.removeEventListener('change', onMargins)
+  phoneQuery?.removeEventListener('change', onPhone)
   window.removeEventListener('scroll', onScroll)
 })
 </script>
@@ -731,10 +1239,106 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+/* The folio: the film's marquee above the page, the page below */
+.folio {
+  width: 100%;
+  max-width: 58rem;
+  min-width: 0;
+}
+
+/* The film, announced like a marquee on the night above the page */
+.marquee {
+  position: relative;
+  display: grid;
+  align-items: end;
+  min-height: clamp(200px, 18vw, 250px);
+  margin-bottom: clamp(20px, 3vw, 32px);
+  overflow: hidden;
+  background: var(--p-surface);
+  border: 1px solid var(--p-line);
+  border-top: 1px solid color-mix(in srgb, var(--p-gold) 55%, transparent);
+  box-shadow: var(--p-shadow-2);
+  animation: marquee-in 0.9s ease both;
+}
+
+.marquee-poster {
+  position: absolute;
+  inset: 0;
+}
+
+.marquee-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 40%;
+}
+
+.marquee-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(11, 14, 19, 0.95) 0%, rgba(11, 14, 19, 0.82) 34%, rgba(11, 14, 19, 0.28) 70%, rgba(11, 14, 19, 0.05) 100%),
+    linear-gradient(0deg, rgba(11, 14, 19, 0.55) 0%, transparent 55%);
+}
+
+.marquee-copy {
+  position: relative;
+  max-width: 31rem;
+  padding: clamp(22px, 3vw, 34px);
+}
+
+.marquee-title {
+  margin: 8px 0 0;
+  font-family: var(--p-font-display);
+  font-size: var(--t-xl);
+  font-weight: 500;
+  line-height: 1.05;
+  color: var(--p-ink);
+  text-wrap: balance;
+}
+
+.marquee-logline {
+  display: -webkit-box;
+  margin: 8px 0 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  line-height: 1.55;
+  color: var(--p-ink-2);
+}
+
+.marquee-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+  margin-top: 18px;
+}
+
+.marquee-actions .play {
+  flex: 0 0 auto;
+}
+
+.marquee-runtime {
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  color: var(--p-ink-3);
+}
+
+@keyframes marquee-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
 /* The page */
 .page {
   width: 100%;
-  max-width: 58rem;
   min-width: 0;
   padding: clamp(36px, 6vw, 84px) clamp(20px, 6vw, 92px) clamp(48px, 6vw, 92px);
   box-shadow: var(--p-shadow-2);
@@ -746,9 +1350,18 @@ onBeforeUnmount(() => {
 
 /* Title page */
 .title-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'plate'
+    'head'
+    'rest';
   max-width: 72ch;
   margin: 0 auto;
 }
+
+.title-head { grid-area: head; min-width: 0; }
+.title-rest { grid-area: rest; min-width: 0; }
 
 .title {
   margin: 14px 0 0;
@@ -769,6 +1382,71 @@ onBeforeUnmount(() => {
   font-size: var(--t-lg);
   line-height: 1.5;
   color: var(--p-ink-3);
+}
+
+/* The plate: the speaker, or the stage, framed on the page */
+.plate {
+  grid-area: plate;
+  margin: 0 0 28px;
+  min-width: 0;
+  animation: plate-in 0.8s ease both;
+}
+
+.plate-frame {
+  padding: 6px;
+  border: 1px solid var(--p-line-strong);
+  background: var(--p-surface);
+  box-shadow: 0 14px 30px -18px rgba(31, 26, 22, 0.55);
+}
+
+.plate-frame img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: center 30%;
+  filter: saturate(0.92) contrast(1.02);
+}
+
+.plate.is-portrait .plate-frame img {
+  aspect-ratio: 4 / 3;
+  object-position: center 22%;
+}
+
+.plate-caption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.plate-greek {
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-inscription);
+  color: var(--p-gold);
+}
+
+.plate-name {
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--p-ink);
+}
+
+.plate-note {
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--p-ink-3);
+}
+
+@keyframes plate-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .rule {
@@ -882,7 +1560,9 @@ onBeforeUnmount(() => {
   grid-template-columns: 1.6em minmax(0, 1fr);
   column-gap: 8px;
   align-items: baseline;
+  align-content: center;
   width: 100%;
+  min-height: 40px;
   padding: 7px 8px 7px 10px;
   border: 0;
   border-left: 2px solid transparent;
@@ -936,8 +1616,11 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--p-line);
 }
 
-/* Chapters */
+/* Chapters. In one column the margin's parts fall into the flow: the faces
+   under the heading, the note after the prose. */
 .chapter {
+  display: flex;
+  flex-direction: column;
   max-width: 72ch;
   margin: 56px auto 0;
   scroll-margin-top: calc(var(--p-header-h) + 28px);
@@ -959,8 +1642,18 @@ onBeforeUnmount(() => {
 }
 
 .chapter-head {
+  order: 0;
   margin-bottom: 26px;
 }
+
+.chapter-margin {
+  display: contents;
+}
+
+.cast { order: 1; }
+.chapter-body,
+.chapter-writing { order: 2; }
+.how-found { order: 3; }
 
 .chapter-num {
   display: block;
@@ -980,14 +1673,82 @@ onBeforeUnmount(() => {
   outline: none;
 }
 
-.chapter-writing {
-  margin-top: 8px;
+.chapter-writing .scribe-status {
+  margin: 8px 0 0;
   font-size: var(--t-md);
+}
+
+.chapter-latest {
+  margin: 10px 0 0 58px;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--p-ink-3);
+  animation: arrive 0.6s ease both;
+}
+
+/* The faces a chapter names */
+.cast {
+  margin: -8px 0 26px;
+}
+
+.cast-label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--p-ochre-deep);
+}
+
+.cast-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.cast-member {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  animation: face-in 0.5s ease both;
+}
+
+.cast-member:nth-child(2) { animation-delay: 0.06s; }
+.cast-member:nth-child(3) { animation-delay: 0.12s; }
+.cast-member:nth-child(4) { animation-delay: 0.18s; }
+.cast-member:nth-child(5) { animation-delay: 0.24s; }
+.cast-member:nth-child(6) { animation-delay: 0.3s; }
+.cast-member:nth-child(n + 7) { animation-delay: 0.36s; }
+
+@keyframes face-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.cast-name {
+  font-family: var(--p-font-display);
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--p-ink-2);
+}
+
+.cast-more {
+  margin: 10px 0 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--p-ink-3);
 }
 
 /* The Scribe's prose */
 .chapter-body {
   color: var(--p-ink-2);
+  min-width: 0;
 }
 
 .chapter-body :deep(p) {
@@ -1071,19 +1832,22 @@ onBeforeUnmount(() => {
   border: 1px solid var(--p-line);
 }
 
-/* How the Scribe found this */
+/* How the Scribe found this: a margin note, folded */
 .how-found {
   margin-top: 28px;
-  font-family: var(--p-font-body);
+  font-family: var(--p-font-serif);
   font-size: var(--t-sm);
   color: var(--p-ink-3);
 }
 
 .how-found summary {
-  width: fit-content;
-  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
   padding: 8px 0;
   box-sizing: border-box;
+  list-style: none;
   font-family: var(--p-font-inscription);
   font-size: var(--t-xs);
   font-weight: 600;
@@ -1093,14 +1857,42 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+.how-found summary::-webkit-details-marker {
+  display: none;
+}
+
 .how-found summary:hover {
   color: var(--p-ink);
 }
 
+.how-found summary:focus-visible {
+  outline: 2px solid var(--p-gold);
+  outline-offset: 3px;
+}
+
+.how-chev {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.2s ease;
+}
+
+.how-found[open] .how-chev {
+  transform: translateY(2px) rotate(-135deg);
+}
+
 .how-list {
-  margin: 10px 0 0;
-  padding-left: 1.2em;
-  line-height: 1.55;
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+  border-left: 1px solid var(--p-line-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-style: italic;
+  line-height: 1.5;
 }
 
 /* Colophon */
@@ -1123,6 +1915,38 @@ onBeforeUnmount(() => {
   margin-inline: auto;
 }
 
+/* Tablets and up: the plate stands beside the title */
+@media (min-width: 900px) {
+  .title-page.has-plate {
+    --plate-w: clamp(220px, 30vw, 330px);
+    grid-template-columns: minmax(0, 1fr) var(--plate-w);
+    grid-template-areas:
+      'head plate'
+      'rest rest';
+    column-gap: clamp(28px, 4vw, 52px);
+    align-items: start;
+    max-width: none;
+  }
+
+  .title-page.plate-portrait {
+    --plate-w: clamp(190px, 22vw, 244px);
+  }
+
+  .title-page.has-plate .plate {
+    margin: 6px 0 0;
+  }
+
+  .plate.is-portrait .plate-frame img {
+    aspect-ratio: 4 / 5;
+    object-position: center 20%;
+  }
+
+  .plate.is-scene .plate-frame img,
+  .plate.is-act .plate-frame img {
+    aspect-ratio: 4 / 3;
+  }
+}
+
 /* Wide screens: the contents stand in the margin */
 @media (min-width: 1200px) {
   .chronicle.has-margin {
@@ -1140,18 +1964,100 @@ onBeforeUnmount(() => {
     padding-top: clamp(36px, 6vw, 84px);
   }
 
-  .chronicle.has-margin .page {
+  .chronicle.has-margin .folio {
     grid-column: 2;
   }
 }
 
-@media (min-width: 1400px) {
+/* Wider still: each chapter keeps a margin for its faces and its note */
+@media (min-width: 1280px) {
+  .folio {
+    max-width: 66rem;
+  }
+
   .chronicle.has-margin {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 58rem) minmax(0, 1fr);
+    grid-template-columns: minmax(180px, 1fr) minmax(0, 66rem) minmax(0, 1fr);
   }
 
   .contents--margin {
     justify-self: end;
+    width: min(100%, 240px);
+  }
+
+  .title-page.has-plate {
+    max-width: none;
+  }
+
+  .title-page:not(.has-plate) {
+    max-width: none;
+  }
+
+  .scribe-status,
+  .trouble,
+  .contents--inline,
+  .colophon {
+    max-width: none;
+  }
+
+  .page :deep(.chronicle-film) {
+    max-width: none;
+  }
+
+  .chapter {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(172px, 22%, 212px);
+    grid-template-rows: auto auto 1fr;
+    column-gap: clamp(32px, 3.4vw, 48px);
+    max-width: none;
+  }
+
+  .chapter-head,
+  .chapter-body,
+  .chapter-writing {
+    grid-column: 1;
+  }
+
+  .chapter-head { grid-row: 1; }
+  .chapter-body,
+  .chapter-writing { grid-row: 2; }
+
+  .chapter-margin {
+    display: block;
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: start;
+    padding: 4px 0 4px 20px;
+    border-left: 1px solid var(--p-line);
+  }
+
+  .cast {
+    margin: 0;
+  }
+
+  .cast-list {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+
+  .cast-name {
+    font-size: var(--t-sm);
+  }
+
+  .how-found {
+    margin-top: 22px;
+    padding-top: 6px;
+    border-top: 1px solid var(--p-line);
+    font-size: 0.8125rem;
+  }
+
+  .how-list {
+    padding-left: 10px;
+  }
+}
+
+@media (min-width: 1400px) {
+  .contents--margin {
     width: min(100%, 250px);
   }
 }
@@ -1162,6 +2068,35 @@ onBeforeUnmount(() => {
     padding: 20px 16px 72px;
   }
 
+  .marquee {
+    display: block;
+    min-height: 0;
+  }
+
+  .marquee-poster {
+    position: relative;
+    aspect-ratio: 16 / 9;
+  }
+
+  .marquee-shade {
+    inset: 0 0 auto 0;
+    aspect-ratio: 16 / 9;
+    background: linear-gradient(0deg, var(--p-surface) 0%, rgba(17, 21, 28, 0) 45%);
+  }
+
+  .marquee-copy {
+    max-width: none;
+    padding: 4px 20px 22px;
+  }
+
+  .marquee-title {
+    font-size: var(--t-xl);
+  }
+
+  .marquee-actions .p-button {
+    flex: 1 1 100%;
+  }
+
   .page {
     padding: 34px 20px 44px;
     font-size: 1.0625rem;
@@ -1170,6 +2105,21 @@ onBeforeUnmount(() => {
 
   .title {
     font-size: var(--t-2xl);
+  }
+
+  .plate {
+    margin: -34px -20px 26px;
+  }
+
+  .plate-frame {
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--p-line-strong);
+    box-shadow: none;
+  }
+
+  .plate-caption {
+    padding: 0 20px;
   }
 
   .chapter-title {
@@ -1192,6 +2142,14 @@ onBeforeUnmount(() => {
   .chapter-body :deep(> p:first-of-type)::first-letter {
     font-size: 3.8em;
   }
+
+  .cast-list {
+    gap: 8px 14px;
+  }
+
+  .cast-name {
+    font-size: var(--t-sm);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1201,8 +2159,16 @@ onBeforeUnmount(() => {
     opacity: 1;
   }
 
-  .chapter.is-done {
+  .chapter.is-done,
+  .chapter-latest,
+  .marquee,
+  .plate,
+  .cast-member {
     animation: none;
+  }
+
+  .how-chev {
+    transition: none;
   }
 }
 </style>

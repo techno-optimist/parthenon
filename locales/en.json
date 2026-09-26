@@ -331,15 +331,15 @@
       "thinking": "{name} is thinking",
       "scribeWriting": "The Scribe is writing",
       "crowdAnswering": "The crowd is answering",
-      "asleep": "The citizens have gone home for the night. The Scribe is still at the table.",
-      "asleepCitizen": "{name} has gone home for the night and will answer again when the city is awake.",
+      "asleep": "The citizens have gone home for the night, so the crowd cannot be asked. The Scribe is still at the table.",
+      "asleepCitizen": "{name} has gone home for the night. Citizens answer only while the city is awake; the Scribe is still at the table.",
       "sitWithScribe": "Sit with the Scribe",
       "placeholder": "Ask your question",
       "placeholderScribe": "Ask the Scribe",
       "send": "Ask",
       "sending": "Asking",
       "crowdTitle": "One question for the crowd",
-      "crowdHint": "Choose citizens on the couches, then put your question. Each answers in their own voice.",
+      "crowdHint": "Choose citizens on the couches, then put your question. The answers come back as a quorum of faces.",
       "crowdCount": "{w} will answer.",
       "crowdCountOne": "One citizen will answer.",
       "crowdNone": "No one has been chosen yet.",
@@ -367,12 +367,94 @@
         "crowdAnswered": "{n} answered",
         "failed": "No answer: {error}",
         "awake": "The city is awake; the citizens can be questioned",
-        "asleep": "The city is asleep; only the Scribe is at the table"
+        "asleep": "The city is asleep; only the Scribe is at the table",
+        "read": "The Scribe read the crowd's answers",
+        "voices": "The citizens' own words were gathered from the Agora and the Stoa"
       },
       "needSeat": "Sit down with someone first.",
       "seeAll": "See all {w} citizens",
       "seeFewer": "Show fewer",
-      "moreOnCouches": "{w} more are on the couches."
+      "moreOnCouches": "{w} more are on the couches.",
+      "goneHome": "Gone home",
+      "painters": "The painters are still finishing some faces.",
+      "scribeSaw": "What she saw",
+      "city": {
+        "awake": "The city is awake. Every citizen in the room will answer.",
+        "asleep": "The city is asleep. The citizens have gone home; only the Scribe can answer tonight.",
+        "listening": "Listening for the city.",
+        "statusAwake": "City awake",
+        "statusAsleep": "City asleep"
+      },
+      "stance": {
+        "forFirm": "Stood firmly for it",
+        "for": "Stood for it",
+        "leanFor": "Leaned toward it",
+        "againstFirm": "Stood firmly against it",
+        "against": "Stood against it",
+        "leanAgainst": "Leaned against it",
+        "between": "Stood between",
+        "aside": "Watched from the side"
+      },
+      "saidIn": {
+        "agora": "Said in the Agora",
+        "stoa": "Said in the Stoa"
+      },
+      "hear": "Hear {name} say it",
+      "stopHearing": "Stop reading aloud",
+      "quorum": {
+        "title": "The quorum",
+        "count": "{w} answered",
+        "countOne": "one answered",
+        "yes": "{w} said yes",
+        "no": "{w} said no",
+        "unsure": "{w} would not say",
+        "silent": "{w} said nothing",
+        "for": "{w} who stood for it",
+        "against": "{w} who stood against it",
+        "between": "{w} who stood between",
+        "aside": "{w} who watched from the side",
+        "leanLine": "{count}; {parts}.",
+        "stanceLine": "{count}: {parts}.",
+        "countLine": "{count}.",
+        "withReading": "{count}; {reading}.",
+        "reading": "The Scribe's reading",
+        "readingPending": "The Scribe is reading the answers",
+        "hint": "Point to a face, or tap it, to hear the answer.",
+        "readAll": "Read every answer",
+        "foldAll": "Fold the answers",
+        "faceLabel": "{name}, {group}",
+        "tally": "How the quorum fell",
+        "groups": {
+          "yes": "Said yes",
+          "no": "Said no",
+          "unsure": "Would not say",
+          "for": "Stood for it",
+          "against": "Stood against it",
+          "between": "Stood between",
+          "aside": "Watched",
+          "all": "Answered",
+          "silent": "Said nothing"
+        },
+        "partsLine": "{parts}."
+      },
+      "youAsked": "You asked",
+      "crowdAnsweredLive": "The crowd has answered. {line}",
+      "wall": {
+        "for": "Stood for",
+        "against": "Stood against",
+        "between": "Stood between",
+        "aside": "Watched from the side",
+        "none": "In the room"
+      },
+      "hearing": {
+        "gathering": "Finding the voice",
+        "speaking": "Speaking",
+        "stopped": "Stopped",
+        "stop": "Stop",
+        "resting": "The city's voices are resting; your browser reads instead",
+        "restingQuiet": "The city's voices are resting",
+        "brokeOff": "The voice fell quiet before the end"
+      }
     }
   },
   "graph": {
@@ -805,17 +887,17 @@
       },
       {
         "title": "The Agora",
-        "desc": "They argue in the open square and in the long threads of the Stoa, round after round.",
+        "desc": "They argue in the open square and in the long threads of the Stoa, hour after hour.",
         "tech": "dual-platform simulation"
       },
       {
         "title": "The Chronicle",
-        "desc": "A scribe walks the city afterwards and writes down what Athens came to believe.",
+        "desc": "The Scribe walks the city afterwards and writes down what Athens came to believe.",
         "tech": "report agent"
       },
       {
         "title": "The Symposium",
-        "desc": "Sit down with any citizen, or with the scribe, and question them yourself.",
+        "desc": "Sit down with any citizen, or with the Scribe, and question them yourself.",
         "tech": "interviews and chat"
       }
     ],
@@ -1269,6 +1351,64 @@
         "toolFailed": "A search failed: {error}",
         "snag": "The Scribe hit a snag and went on: {error}",
         "trouble": "Trouble: {message}"
+      },
+      "cast": {
+        "title": "In this chapter",
+        "label": "Citizens named in chapter {n}",
+        "more": "Also named: {names}",
+        "moreCount": "Also named: {names} and {n} other | Also named: {names} and {n} others"
+      },
+      "marquee": {
+        "eyebrow": "The epilogue, on film",
+        "watch": "Watch the film",
+        "runtime": "Runs {time}"
+      },
+      "found": {
+        "numbers": [
+          "no",
+          "one",
+          "two",
+          "three",
+          "four",
+          "five",
+          "six",
+          "seven",
+          "eight",
+          "nine",
+          "ten",
+          "eleven",
+          "twelve"
+        ],
+        "deep": "Put {q} sharper questions to the Web of Athens about “{topic}” and turned up {facts} thing the city said | Put {q} sharper questions to the Web of Athens about “{topic}” and turned up {facts} things the city said",
+        "deepMany": "Put {q} sharper questions to the Web of Athens and turned up {facts} thing the city said | Put {q} sharper questions to the Web of Athens and turned up {facts} things the city said",
+        "deepPlain": "Searched the city's memory for “{topic}”",
+        "deepBare": "Searched the city's memory for what mattered",
+        "wide": "Searched the whole Web of Athens, past and present, for “{topic}”",
+        "wideMore": "Searched the whole Web of Athens, past and present, for “{topic}” and {n} other matter | Searched the whole Web of Athens, past and present, for “{topic}” and {n} other matters",
+        "wideBare": "Took in the whole Web of Athens, past and present",
+        "lookedUp": "Looked up what {names} said",
+        "lookedUpMore": "Looked up what {names} and {n} other said | Looked up what {names} and {n} others said",
+        "lookedUpTopic": "Looked up “{topic}” in the Web of Athens",
+        "lookedUpBare": "Asked around the square",
+        "questioned": "Questioned {n} citizen: {names} | Questioned {n} citizens: {names}",
+        "questionedBare": "Questioned {n} citizen | Questioned {n} citizens",
+        "goneHome": "Went to question {n} citizen, but the city had gone home | Went to question {n} citizens, but the city had gone home",
+        "goneHomeBare": "Went to question the citizens, but the city had gone home",
+        "followedBoth": "Followed the argument through the Agora and the Stoa",
+        "followedAgora": "Followed the argument through the Agora",
+        "followedStoa": "Followed the argument through the Stoa",
+        "counted": "Counted the names and ties in the Web of Athens",
+        "roll": "Read the roll of every {types} in the city",
+        "rollBare": "Read who is who in the city",
+        "records": "Consulted the city's records",
+        "nowDeep": "She is putting sharper questions to the Web of Athens.",
+        "nowWide": "She is searching the whole Web of Athens.",
+        "nowQuick": "She is looking something up in the Web of Athens.",
+        "nowQuestioning": "She is questioning citizens.",
+        "nowQuestioningN": "She is questioning {n} citizen. | She is questioning {n} citizens.",
+        "nowCounting": "She is counting the names and ties in the Web of Athens.",
+        "nowRoll": "She is reading the roll of the city.",
+        "nowRecords": "She is reading the city's records."
       }
     },
     "gathering": {
@@ -1295,7 +1435,46 @@
         "close": "Close the card",
         "past": "Their past",
         "cares": "What they care about",
-        "nothing": "Nothing is written about them yet."
+        "nothing": "Nothing is written about them yet.",
+        "stand": "Where they stand",
+        "scaleAgainst": "Against",
+        "scaleFor": "For",
+        "stance": {
+          "forFirm": "Firmly for the motion.",
+          "for": "For the motion.",
+          "forLean": "Leaning toward the motion.",
+          "againstFirm": "Firmly against the motion.",
+          "against": "Against the motion.",
+          "againstLean": "Leaning against the motion.",
+          "undecided": "Undecided, weighing both sides.",
+          "undecidedFor": "Undecided, though leaning toward the motion.",
+          "undecidedAgainst": "Undecided, though leaning against the motion.",
+          "watching": "Watching, not taking a side."
+        },
+        "comes": "When they come to the square",
+        "always": "In the square at every hour.",
+        "inSquare": "In the square {spans}.",
+        "span": "from {from} until {to}",
+        "spanJoin": ", and ",
+        "speaks": "{often}{manner}{pace}.",
+        "often": {
+          "top": "Speaks more than almost anyone",
+          "high": "Speaks often",
+          "mid": "Speaks now and then",
+          "low": "Speaks rarely"
+        },
+        "manner": {
+          "answers": ", mostly in answer to others",
+          "opens": ", more often to open a matter than to answer one"
+        },
+        "pace": {
+          "quick": ", and replies quickly",
+          "slow": ", and takes their time before replying"
+        },
+        "readMore": "Read more of their past",
+        "readLess": "Less of their past",
+        "prev": "The citizen before: {name}",
+        "next": "The citizen after: {name}"
       },
       "hours": {
         "eyebrow": "The city's hours",
@@ -1304,7 +1483,18 @@
         "peakSpan": "in {part}, from {from} until {to}",
         "awake": "At the busiest hour about {max} citizens are in the square; in the quiet hours as few as {min}.",
         "loudest": "Those who will speak most: {names}.",
-        "and": "and"
+        "and": "and",
+        "dial": "How full the square is at each hour of the city's day",
+        "marks": {
+          "midnight": "midnight",
+          "dawn": "dawn",
+          "noon": "noon",
+          "dusk": "dusk"
+        },
+        "first": "The first into the square, at {time}: {names}.",
+        "last": "The last to leave, at {time}: {names}.",
+        "others": "{n} others",
+        "loudestLead": "Those who will speak most"
       },
       "clock": {
         "midnight": "midnight",
@@ -1362,15 +1552,15 @@
       "live": {
         "text": "The city is already talking, hour {round} of {total}. Leaving this page will not stop it.",
         "watch": "Watch it live",
-        "stop": "Stop the swarm",
-        "stopping": "Stopping",
+        "stop": "Close the square",
+        "stopping": "Closing",
         "closing": "The square is closing at your word. The Scribe is watching for the doors to shut."
       },
       "ledger": {
         "opened": "The Gathering opened.",
-        "liveFound": "A swarm is already in the square. It was left running.",
-        "stopped": "The swarm was stopped at your word.",
-        "stopFailed": "The swarm could not be stopped: {error}",
+        "liveFound": "The city is already talking in the square. It was left to talk.",
+        "stopped": "The square was closed at your word.",
+        "stopFailed": "The square could not be closed: {error}",
         "readingRecord": "Reading the record of this gathering.",
         "recordRead": "The record of the Hearing was found.",
         "recordMissing": "The record of this gathering could not be read: {error}",
@@ -1405,7 +1595,15 @@
         "stopPending": "The square is still closing. The Scribe will look again in a moment."
       },
       "stateTrouble": "The Scribe has stopped calling the citizens. What went wrong is written below.",
-      "openTrouble": "The Agora opens once the citizens have come."
+      "openTrouble": "The Agora opens once the citizens have come.",
+      "painters": {
+        "starting": "The painters are at work on the citizens' faces.",
+        "working": "The painters are at work: {done} of {total} faces are done.",
+        "done": "The painters have finished: every face is on the slope.",
+        "doneSome": "The painters have finished: {done} of {total} faces. The others keep their initials.",
+        "failed": "The painters stopped with {done} of {total} faces done. The others keep their initials.",
+        "again": "Ask the painters again"
+      }
     },
     "web": {
       "title": "The Web of Athens",
@@ -1427,7 +1625,7 @@
       "tiesOf": "{n} ties",
       "tieOne": "1 tie",
       "closeCard": "Close",
-      "picture": "The Web of Athens: {names} names joined by {ties} ties. Hover or choose a name to read who they are.",
+      "picture": "The Web of Athens: {names} names joined by {ties} ties. Choose a name to read who they are, or read the Web as a list.",
       "citizen": "citizen",
       "thing": "a thing the city speaks of",
       "andMore": "and {n} more",
@@ -1436,7 +1634,31 @@
       "hint": "Choose a name to read who they are and whom they are tied to",
       "countShort": "{names} names, {ties} ties",
       "countShortChatter": "{names} names, {ties} ties with the chatter",
-      "lookAgain": "Look again"
+      "lookAgain": "Look again",
+      "find": "Find a name",
+      "findLabel": "Find a name in the Web of Athens",
+      "noMatch": "No one by that name",
+      "fit": "Fit",
+      "fitLabel": "Fit the whole Web in view",
+      "chatterShort": "Chatter",
+      "scrollSays": "What the scroll says",
+      "inSquare": "In the square",
+      "tiedTo": "Tied to",
+      "noFacts": "The scroll names them and says no more.",
+      "keys": "The best-tied names. Tab between them, Enter to choose one, Escape to let go.",
+      "things": "things spoken of",
+      "cardLabel": "{name} in the Web of Athens",
+      "readMore": "Read all",
+      "readLess": "Read less",
+      "whoTheyAre": "Who they are",
+      "readAsList": "Read the Web as a list",
+      "closeList": "Close the list",
+      "listTitle": "The Web in words",
+      "listTied": "Tied to {names}.",
+      "listAllied": "Allied with {names}.",
+      "listAtOdds": "At odds with {names}.",
+      "listAlone": "The scroll ties them to no one yet.",
+      "announce": "{name}, {ties}. Their card is open."
     },
     "navSections": "Sections",
     "pauseMotion": "Pause motion",
@@ -1474,9 +1696,9 @@
       "replayHint": "The Agora is argued live and is not replayed from the shelf.",
       "untitled": "A gathering in Athens",
       "status": {
-        "live": "Live: round {current} of {total}",
+        "live": "Live, hour {current} of {total}",
         "notStarted": "Not yet begun",
-        "finished": "Finished: {current} of {total} rounds",
+        "finished": "Finished after {current} of {total} hours",
         "chronicleWritten": "Chronicle written",
         "chronicleWriting": "Chronicle being written",
         "filmMade": "film made",
@@ -1486,9 +1708,91 @@
         "arguedHours": "Argued for {total} hour | Argued for {total} hours",
         "arguedDays": "Argued for {total} days",
         "liveHours": "Live, hour {current} of {total}",
-        "liveDays": "Live, day {current} of {total}"
+        "liveDays": "Live, day {current} of {total}",
+        "chronicleTrouble": "Chronicle ran into trouble",
+        "pausedHours": "Paused at hour {current} of {total}",
+        "pausedDays": "Paused on day {current} of {total}",
+        "gathered": "Gathered, not yet argued"
       },
-      "watchLive": "Watch it live"
+      "watchLive": "Watch it live",
+      "seeAll": "See every Chronicle",
+      "nights": "{n} night | {n} nights",
+      "nightsOfStage": "Every night of this stage",
+      "strip": "Walk this gathering again",
+      "frames": {
+        "scroll": "The Scroll",
+        "crowd": "The Crowd",
+        "argument": "The Argument",
+        "chronicle": "The Chronicle",
+        "film": "The Film",
+        "symposium": "The Symposium"
+      },
+      "frameLine": {
+        "scroll": "Read at the Hearing",
+        "crowd": "{n} citizen | {n} citizens",
+        "crowdNone": "Not yet gathered",
+        "argumentNone": "Not yet argued",
+        "chronicleDone": "Written by the Scribe",
+        "chronicleWriting": "The Scribe is writing",
+        "chronicleNone": "Not yet written",
+        "filmDone": "Made",
+        "filmRunning": "Being filmed",
+        "filmNone": "Not yet filmed",
+        "symposiumOpen": "Ask the citizens",
+        "symposiumWaiting": "Opens with the Chronicle",
+        "closed": "Not yet reached",
+        "chronicleTrouble": "Ran into trouble"
+      },
+      "returnTo": "Return to where it stands",
+      "copyLink": "Copy the link",
+      "copied": "Link copied",
+      "copyFailed": "The link could not be copied here",
+      "word": {
+        "live": "Live",
+        "complete": "Complete",
+        "stopped": "Stopped",
+        "waiting": "Waiting",
+        "trouble": "Trouble"
+      },
+      "summary": {
+        "gatherings": "{n} gathering | {n} gatherings",
+        "chronicles": "{n} Chronicle written | {n} Chronicles written",
+        "films": "{n} film made | {n} films made",
+        "live": "{n} live now | {n} live now",
+        "stages": "{n} stage | {n} stages"
+      },
+      "find": "Find a gathering",
+      "findPlaceholder": "A title, a question, a place",
+      "filters": "Show",
+      "filter": {
+        "all": "Every stage",
+        "live": "Live",
+        "written": "With a Chronicle",
+        "filmed": "Filmed"
+      },
+      "noMatch": "Nothing on the shelf matches that.",
+      "clear": "Show every gathering",
+      "loading": "Taking the tablets down from the shelf",
+      "unreachable": "The shelf could not be reached just now.",
+      "retry": "Try again",
+      "nightOn": "{date}, {time}",
+      "shown": "Shown",
+      "page": {
+        "eyebrow": "The shelf",
+        "lede": "Every gathering Athens has held, from the first scroll to the last word of the Symposium. Open one and walk it again.",
+        "hold": "Hold a new gathering",
+        "back": "Back to the steps"
+      }
+    },
+    "permalink": {
+      "finding": "Finding the gathering",
+      "missingTitle": "This gathering is not on the shelf",
+      "missingLede": "The link may be mistyped, or the gathering was cleared away. Every gathering Athens still keeps is in the Chronicles.",
+      "quietTitle": "The city is not answering",
+      "quietLede": "The gathering could not be looked up just now. Try again in a moment.",
+      "retry": "Try again",
+      "toChronicles": "Open the Chronicles",
+      "home": "Back to the steps"
     }
   },
   "agora": {
@@ -1653,6 +1957,126 @@
         "goTo": "Go to a turn",
         "span": "{m} minutes"
       }
+    },
+    "square": {
+      "label": "The Agora at {hour}, with {n} citizens in the square.",
+      "labelEmpty": "The Agora at {hour}. The square is empty.",
+      "dayAt": "Day {d} · {hour}",
+      "hours": {
+        "midnight": "midnight",
+        "noon": "noon",
+        "night": "{n} at night",
+        "morning": "{n} in the morning",
+        "afternoon": "{n} in the afternoon",
+        "evening": "{n} in the evening",
+        "lateNight": "{n} at night"
+      },
+      "ribbon": {
+        "speaks": "speaks",
+        "answers": "answers {who}",
+        "answersAll": "answers",
+        "quotes": "quotes {who}",
+        "quotesAll": "quotes",
+        "inStoa": "in the Stoa"
+      },
+      "invite": "Watch the argument again",
+      "ledger": {
+        "stood": "Where they stood",
+        "stoodNote": "This is where each citizen stood when the argument began. The record keeps no later stance, so any change of mind is in their own words below.",
+        "moved": "Who moved",
+        "movedNote": "Citizens whose stance changed as the argument went on.",
+        "noneMoved": "No one changed their stance.",
+        "movedLine": "{from}, now {to}",
+        "began": "Where they began",
+        "sides": {
+          "for": "Supporters",
+          "against": "Opposed",
+          "undecided": "Undecided"
+        },
+        "sideWords": {
+          "for": "for",
+          "against": "opposed",
+          "undecided": "undecided"
+        },
+        "nobody": "No one"
+      },
+      "crowd": "The citizens in the square",
+      "token": "{name}, {side}",
+      "began": {
+        "for": "began in favour",
+        "against": "began opposed",
+        "undecided": "began undecided",
+        "watching": "began watching"
+      },
+      "pin": {
+        "lines": "their lines are lit in the record below",
+        "card": "See their card",
+        "release": "Let go"
+      },
+      "strip": {
+        "label": "The last words said",
+        "title": "Last words"
+      },
+      "ended": {
+        "for": "ended in favour",
+        "against": "ended opposed",
+        "undecided": "ended undecided",
+        "watching": "ended watching"
+      },
+      "after": {
+        "title": "Who moved",
+        "note": "The Scribe read where each citizen stood from their own words, hour by hour.",
+        "reading": "The Scribe is reading what each citizen said",
+        "failed": "The Scribe could not finish reading their words.",
+        "again": "Ask the Scribe again",
+        "none": "No one moved. Each citizen ended where they began.",
+        "line": "{name} moved from {from} to {to} {when}",
+        "lineNoWhen": "{name} moved from {from} to {to}",
+        "when": {
+          "night": "in the night",
+          "morning": "in the morning",
+          "afternoon": "in the afternoon",
+          "evening": "in the evening"
+        },
+        "whenOn": {
+          "night": "on the night of day {d}",
+          "morning": "on the morning of day {d}",
+          "afternoon": "on the afternoon of day {d}",
+          "evening": "on the evening of day {d}"
+        },
+        "ended": "Where they ended",
+        "began": "Where they began",
+        "views": "Where the citizens stood",
+        "both": "{began}, {ended}",
+        "announce": "The Scribe has read their words. No one moved. | The Scribe has read their words. One citizen moved. | The Scribe has read their words. {n} citizens moved."
+      }
+    },
+    "replay": {
+      "play": "Watch the argument again",
+      "resume": "Carry on",
+      "pause": "Pause",
+      "speeds": "How fast to watch",
+      "speed": "{n}×",
+      "speedName": "{n} times the pace",
+      "speedOne": "At the pace it was said",
+      "whole": "The whole record",
+      "from": "Watching from {when}."
+    },
+    "listen": {
+      "label": "Listen",
+      "title": "Hear the murmur of the square"
+    },
+    "status": {
+      "stopped": "Stopped early"
     }
+  },
+  "scribe": {
+    "untitled": "The Chronicle",
+    "fallbackTitle": "What Athens Came to Believe",
+    "fallbackSummary": "The Scribe sets down what the city came to believe, who moved it there, and what is still unsettled.",
+    "fallbackChapterOne": "The Question and What the City Found",
+    "fallbackChapterTwo": "How the Citizens Moved",
+    "fallbackChapterThree": "What Is Still Unsettled",
+    "chapterUnwritten": "(The Scribe could not finish this chapter. Ask her to write the Chronicle again in a little while.)"
   }
 }

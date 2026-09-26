@@ -202,7 +202,7 @@ a.p-button {
 }
 
 .p-button.small {
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 14px;
   font-size: var(--t-xs);
 }

@@ -11,6 +11,7 @@
         :graphData="graphData"
         :loading="graphLoading"
         :currentPhase="2"
+        :simulation-id="currentSimulationId"
         @refresh="refreshGraph"
       />
     </template>

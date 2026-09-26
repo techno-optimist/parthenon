@@ -1,11 +1,13 @@
 <template>
-  <ActShell :act="3" :status="shellStatus" :logs="systemLogs" :links="links" :lede="$t('agora.lede')">
+  <ActShell bare :act="3" :status="shellStatus" :status-text="shellStatusText" :logs="systemLogs" :links="links" :lede="$t('agora.lede')">
     <template #web>
       <GraphPanel
         :graphData="graphData"
         :loading="graphLoading"
         :currentPhase="3"
         :isSimulating="isSimulating"
+        :simulationId="currentSimulationId"
+        :pulse="webPulse"
         @refresh="refreshGraph"
       />
     </template>
@@ -19,17 +21,24 @@
       :reportId="reportId"
       :reportStatus="reportStatus"
       :reportTrouble="reportTrouble"
+      :era="era"
+      :reading="reading"
       @add-log="addLog"
       @update-status="updateStatus"
       @finished="onFinished"
+      @beat="webPulse = $event"
+      @reread="readStances"
     />
   </ActShell>
 </template>
 
 <script setup>
+// The painted square is the scene, so the Agora's shell is bare: no threshold band above it.
+// Keep the template to one root element: the route transition cannot animate a fragment.
 // Act Γ΄, the Agora, on the shell: the Web of Athens beside the square, the
-// scribe's ledger below it, the Way at the foot. The stage decides for itself
-// whether to watch, read back or wait; this view feeds it what the city knows.
+// scribe's ledger below it, the Way at the foot. The painted square is the
+// act's scene, so the shell stands bare. The stage decides for itself whether
+// to watch, read back or wait; this view feeds it what the city knows.
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -39,8 +48,11 @@ import Step3Simulation from '../components/Step3Simulation.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, getSimulationConfig, getSimulationHistory } from '../api/simulation'
 import { getReport } from '../api/report'
+import { getCitizenStances, startCitizenStances } from '../api/parthenon'
 import service from '../api/index'
 import { stripIds } from '../parthenon/vocabulary.js'
+import { gatheringEra } from '../parthenon/square.js'
+import { speakers } from '../parthenon/speakers.js'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -63,8 +75,25 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const shellStatus = ref('working') // ready | working | live | done | error
+// A run stopped before its last hour is finished, but not complete: say so.
+const endedHow = ref('')
+const shellStatusText = computed(() => (shellStatus.value === 'done' && endedHow.value === 'stopped' ? t('agora.status.stopped') : ''))
 
 const isSimulating = computed(() => shellStatus.value === 'live')
+
+// Each move the square stages, by name: the Web blooms the speaker's star.
+const webPulse = ref(null)
+
+// Which Athens the square is painted as: a speaker's scroll from the steps
+// stands in 399 BC, an Arrival stands today.
+const SCROLLS = speakers.map((s) => s.fileName)
+const projectRead = ref(false)
+const era = computed(() => {
+  const p = projectData.value
+  // Until the scroll is known the square waits, rather than show the wrong Athens.
+  if (!p) return projectRead.value ? 'now' : ''
+  return gatheringEra({ files: p.files || [], requirement: p.simulation_requirement || '', summary: p.analysis_summary || '' }, SCROLLS)
+})
 
 // Stations that can be revisited from the Way
 const links = computed(() => ({
@@ -122,6 +151,9 @@ const findChronicle = async () => {
 }
 
 const onFinished = async (how, { fresh } = {}) => {
+  endedHow.value = how || ''
+  // Who moved: the Scribe reads each citizen's own words once the square has closed.
+  if (how === 'completed' || how === 'stopped') readStances()
   if (fresh) {
     reportId.value = ''
     reportStatus.value = ''
@@ -138,6 +170,102 @@ const onFinished = async (how, { fresh } = {}) => {
   reportTrouble.value = stripIds(found.trouble)
   if (found.status === 'failed') addLog(t('agora.log.scribeFailed'))
 }
+
+// ---- Who moved ----
+// Once the square has closed, the Scribe reads where each citizen ended from
+// their own words. A reading already made is shown at once; a missing or
+// stale one is asked for once, then looked at every five seconds until it is
+// done. null keeps the square's own view of where they began (a live run, a
+// run nobody spoke in, a gathering the Scribe cannot find).
+const reading = ref(null) // null | { status: 'reading' | 'completed' | 'failed', data }
+const STANCE_EVERY = 5000
+const STANCE_LOOKS = 360 // half an hour of looking before the page stops waiting
+let stanceTimer = 0
+let stanceRun = 0
+
+const stopStances = () => {
+  stanceRun++
+  if (stanceTimer) clearTimeout(stanceTimer)
+  stanceTimer = 0
+}
+
+const readStances = () => {
+  const id = currentSimulationId.value
+  if (!id) return
+  stopStances()
+  const run = stanceRun
+  const current = () => run === stanceRun
+  let asked = false
+  let misses = 0
+  let looks = 0
+  const again = () => { stanceTimer = setTimeout(look, STANCE_EVERY) }
+  const fail = () => { reading.value = { status: 'failed', data: null } }
+
+  const ask = async () => {
+    asked = true
+    reading.value = { status: 'reading', data: null }
+    try {
+      const res = await startCitizenStances(id)
+      if (!current()) return
+      if (res?.data?.status === 'completed') look()
+      else again()
+    } catch (err) {
+      if (!current()) return
+      // Nobody has spoken yet: there is nothing to read, and the square keeps where they began.
+      if (err?.response?.status === 409) reading.value = null
+      else fail()
+    }
+  }
+
+  const look = async () => {
+    stanceTimer = 0
+    if (!current()) return
+    looks++
+    let data = null
+    try {
+      const res = await getCitizenStances(id)
+      data = res?.data || null
+      misses = 0
+    } catch (err) {
+      if (!current()) return
+      if (err?.response?.status === 404) {
+        reading.value = null
+        return
+      }
+      misses++
+    }
+    if (!current()) return
+    if (!data) {
+      if (misses >= 3 || looks >= STANCE_LOOKS) fail()
+      else again()
+      return
+    }
+    const s = data.status
+    if (s === 'completed' && (!data.stale || asked)) {
+      reading.value = { status: 'completed', data }
+      return
+    }
+    if (!asked && (s === 'none' || s === 'failed' || data.stale)) {
+      ask()
+      return
+    }
+    if (s === 'failed' || looks >= STANCE_LOOKS) {
+      fail()
+      return
+    }
+    reading.value = { status: 'reading', data: null }
+    again()
+  }
+
+  look()
+}
+
+// A square opened again throws the old reading away; the new one is read when it closes.
+watch(shellStatus, (s) => {
+  if (s !== 'live') return
+  stopStances()
+  reading.value = null
+})
 
 // The unit of the city's time, for the ledger: an hour at sixty minutes a turn.
 const spanOfTurn = (minutes) => {
@@ -167,11 +295,17 @@ const loadSimulationData = async () => {
       if (cfg?.time_config?.minutes_per_round) minutesPerRound.value = cfg.time_config.minutes_per_round
       if (cfg?.time_config?.total_simulation_hours) totalHours.value = cfg.time_config.total_simulation_hours
       if (Array.isArray(cfg?.agent_configs)) {
+        // Where each citizen began, how strongly, and any later stance the
+        // gathering records: the square's 'who moved' ledger reads these.
         citizens.value = cfg.agent_configs.map((a) => ({
           agent_id: a.agent_id,
           entity_name: a.entity_name,
           entity_type: a.entity_type,
-          stance: a.stance
+          stance: a.stance,
+          sentiment_bias: a.sentiment_bias,
+          ...(a.stance_history ? { stance_history: a.stance_history } : {}),
+          ...(a.current_stance ? { current_stance: a.current_stance } : {}),
+          ...(a.final_stance ? { final_stance: a.final_stance } : {})
         }))
       }
       addLog(t('agora.log.hours', { span: spanOfTurn(minutesPerRound.value) }))
@@ -186,11 +320,14 @@ const loadSimulationData = async () => {
       const projRes = await getProject(simData.project_id)
       if (projRes.success && projRes.data) {
         projectData.value = projRes.data
+        projectRead.value = true
         if (projRes.data.graph_id) await loadGraph(projRes.data.graph_id)
       }
     }
   } catch (err) {
     addLog(t('agora.log.trouble', { error: err.message }))
+  } finally {
+    projectRead.value = true
   }
 }
 
@@ -243,6 +380,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (graphRefreshTimer) clearInterval(graphRefreshTimer)
   graphRefreshTimer = null
+  stopStances()
 })
 </script>
 
