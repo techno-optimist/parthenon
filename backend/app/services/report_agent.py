@@ -10,6 +10,7 @@ Report Agent服务
 """
 
 import os
+import csv
 import json
 import time
 import re
@@ -21,7 +22,7 @@ from enum import Enum
 from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
-from ..utils.locale import get_language_instruction, t
+from ..utils.locale import get_language_instruction, get_locale, t
 from .zep_tools import (
     ZepToolsService, 
     SearchResult, 
@@ -468,364 +469,822 @@ class Report:
 
 
 # ═══════════════════════════════════════════════════════════════
+# The Scribe's voice
+# ═══════════════════════════════════════════════════════════════
+#
+# The Scribe of Athens writes in the city's words: citizens, called by name;
+# the Agora and the Stoa; hours and days; the argument, the gathering and the
+# Chronicle. The prompts below ask for that. scribe_voice() is the backstop on
+# what comes back: it rewrites the few mechanical cases that are safe to
+# rewrite, never changes a citizen's quoted words except to turn tags into
+# plain words and handles into names, and reports everything else it finds so
+# the owner can see it in the log.
+
+def _latin(word: str) -> str:
+    """A whole-word pattern that also holds next to CJK text (where \\b does not)."""
+    return rf'(?<![A-Za-z0-9_]){word}(?![A-Za-z0-9_])'
+
+
+# Words the Scribe never writes. The prompts must not contain them either
+# (a model echoes the words it is given), and whatever survives the rewrite
+# below is logged under these labels.
+SCRIBE_BANNED = (
+    ("agent", re.compile(_latin(r'agents?'), re.I)),
+    ("simulation", re.compile(_latin(r'simulat(?:ions?|ed|es|e|ing|ors?)'), re.I)),
+    ("Twitter", re.compile(_latin(r'twitter'), re.I)),
+    ("Reddit", re.compile(_latin(r'(?:sub)?reddits?'), re.I)),
+    ("tweet", re.compile(_latin(r're-?tweet(?:s|ed|ing)?|tweet(?:s|ed|ing)?'), re.I)),
+    ("platform", re.compile(_latin(r'platforms?'), re.I)),
+    ("social media", re.compile(_latin(r'social[\s-]+media'), re.I)),
+    ("user", re.compile(_latin(r'users?'), re.I)),
+    ("language model", re.compile(_latin(r'(?:LLMs?|language\s+models?)'), re.I)),
+    ("prediction", re.compile(_latin(r'(?:predict(?:ions?|ed|s|ing|ive)?|forecast(?:s|ed|ing)?)'), re.I)),
+    ("round", re.compile(_latin(r'(?:rounds?\s+\d+|\d+\s+rounds?)'), re.I)),
+    ("report", re.compile(_latin(r'(?:this|the|our|full|final)\s+report'), re.I)),
+    ("hashtag", re.compile(r'(?<![\w&#/])#[^\W\d_]\w*')),
+    ("handle", re.compile(r'(?<![\w.@/])@[^\W\d]\w*')),
+    ("identifier", re.compile(
+        r'\b(?:proj|sim|report|task|graph)_[0-9a-f]{6,}\b'
+        r'|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+        r'|\b(?:agent|user)_?ids?\b',
+        re.I,
+    )),
+    ("模拟", re.compile(r'模拟|仿真')),
+    ("智能体", re.compile(r'智能体')),
+    ("推特", re.compile(r'推特')),
+    ("平台", re.compile(r'平台')),
+    ("预测", re.compile(r'预测')),
+    ("报告", re.compile(r'报告')),
+)
+
+# What a citizen said: a blockquote line, or words inside quotes of any kind
+# (double or single, curly or straight, the CJK and French marks), or words in
+# italics that follow "said", "wrote", "answered" or a colon. Only tags and
+# handles change in here.
+#
+# A quote opens only where a quote can open: not straight after a letter or a
+# digit, so an apostrophe (Crito's, Socrates') or an inch mark (12") is never
+# taken for one, and not on an elision ('tis, the '90s). Inside single quotes
+# an apostrophe between two letters (don't, Athens’s) does not close them.
+# A quote never holds another opening mark of its own kind, so an unclosed
+# one ends at the next and cannot swallow a paragraph.
+_ELISION = r"(?!(?i:\d0s|tis|twas|em|til|cause|n)(?![A-Za-z0-9]))"
+_QUOTED = re.compile(
+    r'(?m)^[ \t]*>.*$'
+    r'|“(?:[^“”\n]|\n(?![ \t]*\n))*”'
+    r'|(?<![A-Za-z0-9"])"(?=[^\s"])[^"\n]*"'
+    r'|(?<![A-Za-z0-9‘’])‘' + _ELISION
+    + r'(?:[^‘’\n]|\n(?![ \t]*\n)|(?<=[A-Za-z])’(?=[A-Za-z]))*’(?![A-Za-z0-9])'
+    r"|(?<![A-Za-z0-9'])'" + _ELISION
+    + r"(?=[^\s'])(?:[^'\n]|(?<=[A-Za-z])'(?=[A-Za-z]))*?(?<=\S)'(?![A-Za-z0-9])"
+    r'|「[^」]*」|『[^』]*』|«[^»\n]*»'
+)
+
+# Italics are the Scribe's emphasis as often as a citizen's words, so they
+# count as speech only when a verb of speech or a colon leads into them
+# ("Plato answered: *...*", "**Crito:** *...*") or an attribution follows
+# ("*...*, said Crito").
+_SPEECH_VERBS = (
+    r'said|says|say|wrote|writes|write|answered|answers|answer|replied|replies|reply|'
+    r'asked|asks|added|adds|cried|cries|shouted|shouts|declared|declares|insisted|insists|'
+    r'warned|warns|argued|argues|told|tells|put it|posted|posts|called|calls|countered|counters|'
+    r'retorted|retorts|conceded|concedes|admitted|admits|urged|urges|pleaded|pleads|'
+    r'whispered|whispers|murmured|murmurs|announced|announces|proclaimed|proclaims'
+)
+_ITALIC = (
+    r'\*(?!\*)(?=\S)(?:[^*\n]|\n(?![ \t]*\n))+?(?<=\S)\*(?!\*)'
+    r'|(?<![A-Za-z0-9_])_(?!_)(?=\S)(?:[^_\n]|\n(?![ \t]*\n))+?(?<=\S)_(?![A-Za-z0-9_])'
+)
+_SPOKEN_ITALIC = re.compile(
+    rf'(?:(?<![A-Za-z])(?i:{_SPEECH_VERBS})(?:[ \t]+(?:to[ \t]+)?[A-Z][\w’\'-]*)?[ \t]*[,:：]?'
+    r'|[:：])(?:\*\*|__)?[ \t]*'
+    rf'(?P<q>{_ITALIC})'
+)
+_ATTRIBUTED_ITALIC = re.compile(
+    rf'(?:{_ITALIC})'
+    rf'(?=[ \t]*[,.]?[ \t]*(?:[A-Z][\w’\'-]*[ \t]+){{0,3}}(?i:{_SPEECH_VERBS})(?![A-Za-z]))'
+)
+
+_CJK = re.compile(r'[㐀-鿿]')
+
+_CITY_PLACES = {
+    # engine name: (English, Chinese, other languages)
+    "twitter": ("the Agora", "广场", "Agora"),
+    "reddit": ("the Stoa", "柱廊", "Stoa"),
+}
+_BOTH_PLACES = {"en": "the Agora and the Stoa", "zh": "广场与柱廊", "other": "Agora & Stoa"}
+
+_TIME_UNITS = {"hour": ("hour", "hours", "小时", "个小时"), "day": ("day", "days", "天", "天")}
+
+
+def _quoted_spans(text: str) -> List[tuple]:
+    spans = [m.span() for m in _QUOTED.finditer(text)]
+    spans += [m.span("q") for m in _SPOKEN_ITALIC.finditer(text)]
+    spans += [m.span() for m in _ATTRIBUTED_ITALIC.finditer(text)]
+    return spans
+
+
+def _touches(start: int, end: int, spans: List[tuple]) -> bool:
+    """True when the words start..end reach into a citizen's quoted words at all."""
+    return any(s < end and start < e for s, e in spans)
+
+
+def _cased(original: str, replacement: str) -> str:
+    """Keep the capital of the words replaced ("Simulated agents" -> "Citizens")."""
+    if original[:1].isupper() and replacement[:1].islower():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def _starts_sentence(text: str, pos: int) -> bool:
+    before = text[:pos].rstrip(' \t*_"“‘(-•')
+    return not before or before[-1] in '.!?\n'
+
+
+def _tag_words(tag: str) -> str:
+    """#ImpietyPunished -> Impiety Punished; #free_speech -> free speech."""
+    words = tag.replace('_', ' ')
+    words = re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])', ' ', words)
+    return re.sub(r'\s+', ' ', words).strip()
+
+
+def _handle_name(handle: str, roster: Dict[str, str]) -> str:
+    """@despina_nomikou_466 -> Despina Nomikou (the roster's name when it has one)."""
+    known = roster.get(handle.lower())
+    if known:
+        return known
+    base = re.sub(r'_\d+$', '', handle)
+    known = roster.get(base.lower())
+    if known:
+        return known
+    if '_' in base or base.islower():
+        return ' '.join(w[:1].upper() + w[1:] for w in base.split('_') if w)
+    return base
+
+
+def _guess_lang(text: str) -> str:
+    cjk = len(_CJK.findall(text))
+    latin = len(re.findall(r'[A-Za-z]', text))
+    return "zh" if cjk and cjk * 3 >= (cjk + latin) else "en"
+
+
+def _rewrite(text: str, pattern, make, notes: List[Dict[str, Any]], term: str) -> str:
+    """Apply one rule outside the citizens' quoted words."""
+    spans = _quoted_spans(text)
+
+    def replace(m):
+        if _touches(m.start(), m.end(), spans):
+            return m.group(0)
+        new = make(m, text)
+        if new is None or new == m.group(0):
+            return m.group(0)
+        notes.append({"kind": "rewrote", "term": term, "from": m.group(0), "to": new})
+        return new
+
+    return pattern.sub(replace, text)
+
+
+def _rewrite_everywhere(text: str, pattern, make, notes: List[Dict[str, Any]], term: str) -> str:
+    """Apply one rule to the whole text, quotations included (tags and handles only)."""
+    def replace(m):
+        new = make(m)
+        if new != m.group(0):
+            notes.append({"kind": "rewrote", "term": term, "from": m.group(0), "to": new})
+        return new
+
+    return pattern.sub(replace, text)
+
+
+# ── The safe rewrites ──
+
+_R_WEIBO_TAG = re.compile(r'#([^\s#]{1,40}?)#')
+_R_TAG = re.compile(r'(?<![\w&#/])#([^\W\d_]\w*)')
+_R_HANDLE = re.compile(r'(?<![\w.@/])@([^\W\d]\w*)')
+
+_R_SIM_PEOPLE = re.compile(
+    r'\b(?:(an?|the|these|those|our|its|their)\s+)?simulated\s+'
+    r'(agents?|users?|accounts?|personas?|citizens?|participants?|individuals?|residents?|characters?|actors?|people)\b',
+    re.I,
+)
+_R_SIM_WORLD = re.compile(
+    r'\b(?:(an?|the|this|that)\s+)?simulated\s+(?:world|society|city|environment|town|polis|community|universe)\b',
+    re.I,
+)
+_R_PLATFORMS = re.compile(
+    r'\b(?:(on|in|across|between)\s+)?(?:the\s+)?(?:simulated|two|both)\s+(?:social[\s-]+media\s+)?platforms\b',
+    re.I,
+)
+_R_SOCIAL = re.compile(
+    r'\b(on|in|across)\s+(?:the\s+)?(?:simulated\s+)?social[\s-]+media(?:\s+platforms?)?\b',
+    re.I,
+)
+_R_SIMULATED = re.compile(r"\b(?:(an?|the)\s+)?simulated\s+([A-Za-z][\w'’-]*)", re.I)
+_R_THE_SIM = re.compile(r'\b(the|this|our|that)\s+simulation(?:\s+run)?\b', re.I)
+_R_ON_PLACE = re.compile(r'\b(on|in)\s+(?:the\s+)?(twitter|reddit)\b(?!\.\w)', re.I)
+_R_PLACE_PEOPLE = re.compile(r'(?<![/.@])\b(twitter|reddit)\s+(users?|accounts?)\b', re.I)
+_R_THE_PLACE = re.compile(r'\b(the)\s+(twitter|reddit)\b(?!\.\w)', re.I)
+_R_PLACE = re.compile(r'(?<![/.@])\b(twitter|reddit)\b(?!\.\w)', re.I)  # not inside a web address
+_R_A_SUBREDDIT = re.compile(r'\b(?:a|the)\s+subreddit\b', re.I)
+_R_ZH_ON_PLACE = re.compile(r'在\s*(Twitter|推特|Reddit)\s*(?:平台)?\s*上', re.I)
+_R_ZH_PLACE = re.compile(r'(Twitter|推特|Reddit)(?:\s*平台)?', re.I)
+_R_ZH_SIM_PEOPLE = re.compile(r'模拟(?:\s*Agents?|智能体|用户|人物|账号)', re.I)
+_R_ZH_AGENT = re.compile(r'(?<=[㐀-鿿])Agents?(?![A-Za-z])|(?<![A-Za-z])Agents?(?=[㐀-鿿])', re.I)
+_R_ROUND_N = re.compile(r'\b(rounds?)\s+(\d+)\b', re.I)
+_R_N_ROUNDS = re.compile(r'\b(\d+)\s+(rounds?)\b', re.I)
+_R_ZH_ROUND_N = re.compile(r'第\s*(\d+)\s*轮')
+_R_ZH_N_ROUNDS = re.compile(r'(\d+)\s*轮(?![流换])')
+_R_THIS_REPORT = re.compile(r'\b(this|the present|our)\s+(?:analysis\s+|prediction\s+|forecast\s+)?report\b', re.I)
+_AGENT_DETERMINERS = (
+    r'the|these|those|all|many|most|several|multiple|other|some|each|every|individual|'
+    r'interviewed|surveyed|active|various|different|both|few|no|\d+'
+)
+_R_AGENTS = re.compile(rf'\b(?:({_AGENT_DETERMINERS})\s+)?(agents?)\b(?!\s+of\b)(?![_-])', re.I)
+
+
+def _a_or_an(word: str) -> str:
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
+def _sim_people(m, _text):
+    det, noun = m.group(1), m.group(2).lower()
+    word = "citizens" if noun.endswith("s") or noun == "people" else "citizen"
+    if det:
+        d = det.lower()
+        return _cased(m.group(0), f"{'a' if d in ('a', 'an') else d} {word}")
+    return _cased(m.group(0), word)
+
+
+def _sim_world(m, _text):
+    det = (m.group(1) or "").lower()
+    return _cased(m.group(0), "a city" if det in ("a", "an") else "the city")
+
+
+def _simulated(m, _text):
+    det, word = m.group(1), m.group(2)
+    if not det:
+        return word[:1].upper() + word[1:] if m.group(0)[:1].isupper() else word
+    if det.lower() in ("a", "an"):
+        return _cased(m.group(0), f"{_a_or_an(word)} {word}")
+    if word[:1].isupper():  # "the simulated Athens" -> "Athens"
+        return word
+    return _cased(m.group(0), f"{det.lower()} {word}")
+
+
+def _the_simulation(m, _text):
+    det = m.group(1).lower()
+    return _cased(m.group(0), f"{'the' if det in ('the', 'our') else det} argument")
+
+
+def _this_report(m, _text):
+    return _cased(m.group(0), "this Chronicle")
+
+
+def scribe_voice(
+    text: str,
+    roster: Optional[Dict[str, str]] = None,
+    time_unit: Optional[str] = None,
+    question: str = "",
+    lang: Optional[str] = None,
+) -> tuple:
+    """Put what the Scribe wrote into the city's words.
+
+    Args:
+        text: a chapter, an outline line or an answer in the Symposium.
+        roster: citizen handles (lower case) to their names, for @handles.
+        time_unit: "hour" or "day" when one step of the argument is that long;
+            numbered steps are rewritten only then.
+        question: the question put to the city. When it is itself about
+            agents, the word is the city's subject and is left alone.
+        lang: "en" or "zh"; guessed from the text when omitted.
+
+    Returns:
+        (text, notes): notes lists each rewrite ({"kind": "rewrote", ...}) and
+        each banned word left in place ({"kind": "left", "term", "quoted", "context"}).
+    """
+    notes: List[Dict[str, Any]] = []
+    if not text or not isinstance(text, str):
+        return text, notes
+
+    roster = {str(k).lower(): v for k, v in (roster or {}).items() if k and v}
+    lang = lang or _guess_lang(text)
+
+    # Tags and handles: everywhere, the citizens' own words included.
+    text = _rewrite_everywhere(
+        text, _R_WEIBO_TAG,
+        lambda m: m.group(1) if _CJK.search(m.group(1)) else m.group(0),
+        notes, "hashtag",
+    )
+    text = _rewrite_everywhere(text, _R_TAG, lambda m: _tag_words(m.group(1)), notes, "hashtag")
+    text = _rewrite_everywhere(text, _R_HANDLE, lambda m: _handle_name(m.group(1), roster), notes, "handle")
+    bare = sorted((h for h in roster if re.search(r'_\d+$', h)), key=len, reverse=True)
+    if bare:
+        pattern = re.compile(r'(?<![\w@])(?:' + '|'.join(re.escape(h) for h in bare) + r')(?!\w)', re.I)
+        text = _rewrite_everywhere(text, pattern, lambda m: roster[m.group(0).lower()], notes, "handle")
+
+    # The rest: only outside the citizens' quoted words.
+    form = 0 if lang == "en" else 1 if lang == "zh" else 2
+    both = _BOTH_PLACES["en" if lang == "en" else "zh" if lang == "zh" else "other"]
+
+    text = _rewrite(text, _R_SIM_PEOPLE, _sim_people, notes, "simulation")
+    text = _rewrite(text, _R_SIM_WORLD, _sim_world, notes, "simulation")
+    text = _rewrite(
+        text, _R_PLATFORMS,
+        lambda m, _t: _cased(m.group(0), (
+            f"{'in' if (m.group(1) or '').lower() in ('on', 'in') else m.group(1).lower()} {both}"
+            if m.group(1) else both
+        )),
+        notes, "platform",
+    )
+    text = _rewrite(
+        text, _R_SOCIAL,
+        lambda m, _t: _cased(m.group(0), f"{'across' if m.group(1).lower() == 'across' else 'in'} {both}"),
+        notes, "social media",
+    )
+    text = _rewrite(text, _R_SIMULATED, _simulated, notes, "simulation")
+    text = _rewrite(text, _R_THE_SIM, _the_simulation, notes, "simulation")
+    text = _rewrite(text, _R_THIS_REPORT, _this_report, notes, "report")
+
+    if lang == "zh":
+        text = _rewrite(
+            text, _R_ZH_ON_PLACE,
+            lambda m, _t: f"在{_CITY_PLACES['reddit' if m.group(1).lower() == 'reddit' else 'twitter'][1]}上",
+            notes, "platform",
+        )
+        text = _rewrite(
+            text, _R_ZH_PLACE,
+            lambda m, _t: _CITY_PLACES['reddit' if m.group(1).lower() == 'reddit' else 'twitter'][1],
+            notes, "platform",
+        )
+        text = _rewrite(text, _R_ZH_SIM_PEOPLE, lambda m, _t: "公民", notes, "simulation")
+    else:
+        text = _rewrite(
+            text, _R_ON_PLACE,
+            lambda m, _t: _cased(m.group(0), (
+                f"in {_CITY_PLACES[m.group(2).lower()][0]}" if form == 0 else f"{m.group(1)} {_CITY_PLACES[m.group(2).lower()][2]}"
+            )),
+            notes, "platform",
+        )
+        if form == 0:
+            text = _rewrite(
+                text, _R_PLACE_PEOPLE,
+                lambda m, t_: (
+                    ("C" if _starts_sentence(t_, m.start()) else "c")
+                    + ("itizens" if m.group(2).lower().endswith("s") else "itizen")
+                    + f" in {_CITY_PLACES[m.group(1).lower()][0]}"
+                ),
+                notes, "platform",
+            )
+            text = _rewrite(
+                text, _R_THE_PLACE,
+                lambda m, _t: f"{m.group(1)} {_CITY_PLACES[m.group(2).lower()][0][4:]}",
+                notes, "platform",
+            )
+            text = _rewrite(text, _R_A_SUBREDDIT, lambda m, _t: _cased(m.group(0), "the Stoa"), notes, "platform")
+        text = _rewrite(
+            text, _R_PLACE,
+            lambda m, t_: (
+                _cased("T" if _starts_sentence(t_, m.start()) else "t", _CITY_PLACES[m.group(1).lower()][0])
+                if form == 0 else _CITY_PLACES[m.group(1).lower()][2]
+            ),
+            notes, "platform",
+        )
+
+    unit = _TIME_UNITS.get(time_unit or "")
+    if unit:
+        def numbered(m, t_):
+            if re.match(r'\s+of\s+(?!\d)', t_[m.end():]):
+                return None  # "round 2 of the talks" belongs to the story
+            plural = m.group(1).lower().endswith("s")
+            return _cased(m.group(1), unit[1] if plural else unit[0]) + " " + m.group(2)
+
+        def counted(m, _t):
+            n = int(m.group(1))
+            return f"{m.group(1)} {unit[0] if n == 1 else unit[1]}"
+
+        text = _rewrite(text, _R_ROUND_N, numbered, notes, "round")
+        text = _rewrite(text, _R_N_ROUNDS, counted, notes, "round")
+        text = _rewrite(text, _R_ZH_ROUND_N, lambda m, _t: f"第{m.group(1)}{unit[2]}", notes, "round")
+        text = _rewrite(text, _R_ZH_N_ROUNDS, lambda m, _t: f"{m.group(1)}{unit[3]}", notes, "round")
+
+    # "agents" alone: rewritten only where the determiner (or the start of a
+    # sentence) shows the machine's sense, and never when the city's own
+    # question is about agents.
+    if not re.search(r'agent|智能体|代理', question or "", re.I):
+        if lang == "en":
+            def agents(m, t_):
+                det, noun = m.group(1), m.group(2)
+                if not det and not _starts_sentence(t_, m.start()):
+                    return None
+                word = "citizens" if noun.lower().endswith("s") else "citizen"
+                return _cased(m.group(0), f"{det} {word}" if det else word)
+
+            text = _rewrite(text, _R_AGENTS, agents, notes, "agent")
+        else:
+            text = _rewrite(text, _R_ZH_AGENT, lambda m, _t: "公民", notes, "agent")
+
+    # Whatever is left goes to the log, not the page.
+    spans = _quoted_spans(text)
+    for term, pattern in SCRIBE_BANNED:
+        for m in pattern.finditer(text):
+            start, end = max(0, m.start() - 40), min(len(text), m.end() + 40)
+            notes.append({
+                "kind": "left",
+                "term": term,
+                "quoted": _touches(m.start(), m.end(), spans),
+                "context": text[start:end].replace("\n", " "),
+            })
+    return text, notes
+
+
+# What the city's memory hands the Scribe is labelled in the engine's words.
+# She reads it relabelled, so she has nothing of the machine's to echo.
+_OBSERVATION_LABELS = (
+    ("【Twitter平台回答】", "【In the Agora】"),
+    ("【Reddit平台回答】", "【In the Stoa】"),
+    ("（该平台未获得回复）", "(no answer here)"),
+    ("未找到可采访的Agent人设文件", "找不到可询问的公民名册"),
+    ("位模拟Agent", "位公民"),
+    ("模拟Agent", "公民"),
+    ("## 未来预测深度分析", "## 深度检索"),
+    ("预测场景:", "城中的问题:"),
+    ("### 预测数据统计", "### 统计"),
+    ("相关预测事实", "相关事实"),
+    ("(请在报告中引用这些原文)", "(可在编年史中按名引用原文)"),
+    ("## 广度搜索结果（未来全景视图）", "## 全景"),
+    ("(模拟结果原文)", "(原文)"),
+    ("## 深度采访报告", "## 采访记录"),
+)
+
+
+def observation_in_city_words(result: str) -> str:
+    """Relabel a search result before the Scribe reads it (the log keeps the original)."""
+    if not result or not isinstance(result, str):
+        return result
+    for engine, city in _OBSERVATION_LABELS:
+        result = result.replace(engine, city)
+    for engine, city in (("Twitter", "the Agora"), ("Reddit", "the Stoa")):
+        result = re.sub(_latin(rf'(?:on|in)\s+(?:the\s+)?{engine}'), f"in {city}", result, flags=re.I)
+        result = re.sub(_latin(rf'(?:the\s+)?{engine}') + r'(?:\s*平台)?', city, result, flags=re.I)
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════
 # Prompt 模板常量
 # ═══════════════════════════════════════════════════════════════
+#
+# Every prompt is the Scribe's. They are written in the city's words and
+# none of SCRIBE_BANNED appears in them (tests/test_scribe_voice.py), since a
+# model echoes what it is told. The language instruction is appended after.
+
+# The search the prompts call interview_citizens runs as interview_agents,
+# the name the logs and the Chronicle's ledger know it by.
+TOOL_ALIASES = {"interview_citizens": "interview_agents"}
+TOOL_LABELS = {"interview_agents": "interview_citizens"}
+
+
+def _tool_label(name: str) -> str:
+    return TOOL_LABELS.get(name, name)
+
+
+def _tool_labels(names) -> str:
+    return ", ".join(sorted(_tool_label(n) for n in names))
+
+
+SCRIBE_WORDS = """\
+[The city's words]
+You write only in the city's words, whatever words your notes use:
+- The people of the city are citizens. Call each one by name, as the city knows them, and quote them by name.
+- They spoke in the Agora, the open square, and in the Stoa, the colonnade where the longer talk is held. These are the only places of speech.
+- Time passes in hours and days.
+- What took place is the argument, or the gathering. What you write is the Chronicle, and you are its Scribe.
+- Write no hashtags and no handles, and never remark on leaving them out: when a citizen's words carry a tag, keep only the plain words; when they name someone by a handle, write that person's name.
+- Write no codes, keys or numbers that belong to the machinery rather than to the city.
+- Write without em-dashes; a comma, a colon or a full stop will do."""
 
 # ── 工具描述 ──
 
 TOOL_DESC_INSIGHT_FORGE = """\
-【深度洞察检索 - 强大的检索工具】
-这是我们强大的检索函数，专为深度分析设计。它会：
-1. 自动将你的问题分解为多个子问题
-2. 从多个维度检索模拟图谱中的信息
-3. 整合语义搜索、实体分析、关系链追踪的结果
-4. 返回最全面、最深度的检索内容
+[Deep reading: the Scribe's strongest search]
+Breaks your question into several smaller ones, searches the city's memory along each, and brings back:
+1. the facts themselves, word for word (you may quote them)
+2. what the city knows of the people and bodies involved
+3. the chains of ties between them
 
-【使用场景】
-- 需要深入分析某个话题
-- 需要了解事件的多个方面
-- 需要获取支撑报告章节的丰富素材
-
-【返回内容】
-- 相关事实原文（可直接引用）
-- 核心实体洞察
-- 关系链分析"""
+Use it when a chapter needs depth: one matter seen from several sides, or rich material for a chapter."""
 
 TOOL_DESC_PANORAMA_SEARCH = """\
-【广度搜索 - 获取全貌视图】
-这个工具用于获取模拟结果的完整全貌，特别适合了解事件演变过程。它会：
-1. 获取所有相关节点和关系
-2. 区分当前有效的事实和历史/过期的事实
-3. 帮助你了解舆情是如何演变的
+[The whole view: how things changed]
+Reads everything the city's memory holds on a matter: every name and tie, what still stands, and what was said earlier and later overturned.
 
-【使用场景】
-- 需要了解事件的完整发展脉络
-- 需要对比不同阶段的舆情变化
-- 需要获取全面的实体和关系信息
+Use it for the course of the argument from the first hour to the last, and for how opinion moved between one day and the next.
 
-【返回内容】
-- 当前有效事实（模拟最新结果）
-- 历史/过期事实（演变记录）
-- 所有涉及的实体"""
+Brings back: what stands now; what stood earlier and was overturned; every name involved."""
 
 TOOL_DESC_QUICK_SEARCH = """\
-【简单搜索 - 快速检索】
-轻量级的快速检索工具，适合简单、直接的信息查询。
+[A quick look]
+A light search for one plain fact, or to check a detail before you write it down.
 
-【使用场景】
-- 需要快速查找某个具体信息
-- 需要验证某个事实
-- 简单的信息检索
-
-【返回内容】
-- 与查询最相关的事实列表"""
+Brings back: the facts that most closely match your words."""
 
 TOOL_DESC_INTERVIEW_AGENTS = """\
-【深度采访 - 真实Agent采访（双平台）】
-调用OASIS模拟环境的采访API，对正在运行的模拟Agent进行真实采访！
-这不是LLM模拟，而是调用真实的采访接口获取模拟Agent的原始回答。
-默认在Twitter和Reddit两个平台同时采访，获取更全面的观点。
+[Question the citizens themselves]
+Puts your question to the citizens of this gathering, in the Agora and in the Stoa, and brings back their answers in their own words. It chooses the citizens with the greatest stake in the matter (a juror, a priest, a merchant, a student), writes the questions, and returns each answer under the citizen's name.
 
-功能流程：
-1. 自动读取人设文件，了解所有模拟Agent
-2. 智能选择与采访主题最相关的Agent（如学生、媒体、官方等）
-3. 自动生成采访问题
-4. 调用 /api/simulation/interview/batch 接口在双平台进行真实采访
-5. 整合所有采访结果，提供多视角分析
+Use it when a chapter needs voices: how different people in the city see the matter, where they stand and why, set down as they said it.
 
-【使用场景】
-- 需要从不同角色视角了解事件看法（学生怎么看？媒体怎么看？官方怎么说？）
-- 需要收集多方意见和立场
-- 需要获取模拟Agent的真实回答（来自OASIS模拟环境）
-- 想让报告更生动，包含"采访实录"
+Brings back: who was asked and why; each citizen's answer in the Agora and in the Stoa; the key lines, ready to quote by name; a short account of where they agree and where they part.
 
-【返回内容】
-- 被采访Agent的身份信息
-- 各Agent在Twitter和Reddit两个平台的采访回答
-- 关键引言（可直接引用）
-- 采访摘要和观点对比
-
-【重要】需要OASIS模拟环境正在运行才能使用此功能！"""
+The citizens answer only while the city is awake. If they cannot be reached, go on with the other searches."""
 
 # ── 大纲规划 prompt ──
 
-PLAN_SYSTEM_PROMPT = """\
-你是一个「未来预测报告」的撰写专家，拥有对模拟世界的「上帝视角」——你可以洞察模拟中每一位Agent的行为、言论和互动。
+PLAN_SYSTEM_PROMPT = f"""\
+You are the Scribe of Athens. A question was put to the city, and the citizens argued it out in the Agora and in the Stoa over hours and days. Now the argument is over. You have walked the city with your tablet, you have read everything that was said and done, and you will write the Chronicle: what Athens came to believe, who moved it there, and what is still unsettled.
 
-【核心理念】
-我们构建了一个模拟世界，并向其中注入了特定的「模拟需求」作为变量。模拟世界的演化结果，就是对未来可能发生情况的预测。你正在观察的不是"实验数据"，而是"未来的预演"。
+[What the Chronicle answers]
+1. Under the question put to the city, what did Athens come to believe, and what happened on the way?
+2. How did each kind of citizen act and speak, and who changed their mind?
+3. What does the argument show that is worth watching: currents rising, dangers, doors opening?
 
-【你的任务】
-撰写一份「未来预测报告」，回答：
-1. 在我们设定的条件下，未来发生了什么？
-2. 各类Agent（人群）是如何反应和行动？
-3. 这个模拟揭示了哪些值得关注的未来趋势和风险？
+[What the Chronicle is]
+- An account of this gathering, told by the one who watched all of it.
+- Built on what the citizens said and did: the course of the argument, how the groups answered one another, what came of it, what may yet go wrong.
+- Not an account of the present-day world outside the city, and not a general essay on public opinion.
 
-【报告定位】
-- ✅ 这是一份基于模拟的未来预测报告，揭示"如果这样，未来会怎样"
-- ✅ 聚焦于预测结果：事件走向、群体反应、涌现现象、潜在风险
-- ✅ 模拟世界中的Agent言行就是对未来人群行为的预测
-- ❌ 不是对现实世界现状的分析
-- ❌ 不是泛泛而谈的舆情综述
+[Chapters]
+- At least 2 chapters, at most 5.
+- No sub-chapters; each chapter is written whole.
+- Keep it spare, on what matters most.
+- You design the chapters to fit what the city came to believe.
 
-【章节数量限制】
-- 最少2个章节，最多5个章节
-- 不需要子章节，每个章节直接撰写完整内容
-- 内容要精炼，聚焦于核心预测发现
-- 章节结构由你根据预测结果自主设计
+{SCRIBE_WORDS}
 
-请输出JSON格式的报告大纲，格式如下：
-{
-    "title": "报告标题",
-    "summary": "报告摘要（一句话概括核心预测发现）",
+Give the Chronicle's outline as JSON, in this form:
+{{
+    "title": "the Chronicle's title",
+    "summary": "one sentence: what Athens came to believe",
     "sections": [
-        {
-            "title": "章节标题",
-            "description": "章节内容描述"
-        }
+        {{
+            "title": "chapter title",
+            "description": "what the chapter tells"
+        }}
     ]
-}
+}}
 
-注意：sections数组最少2个，最多5个元素！"""
+Note: the sections array holds at least 2 and at most 5 chapters."""
 
 PLAN_USER_PROMPT_TEMPLATE = """\
-【预测场景设定】
-我们向模拟世界注入的变量（模拟需求）：{simulation_requirement}
+[The question put to the city]
+{simulation_requirement}
 
-【模拟世界规模】
-- 参与模拟的实体数量: {total_nodes}
-- 实体间产生的关系数量: {total_edges}
-- 实体类型分布: {entity_types}
-- 活跃Agent数量: {total_entities}
+[The size of the city]
+- Names in the Web of Athens: {total_nodes}
+- Ties between them: {total_edges}
+- Kinds of people and bodies: {entity_types}
+- Citizens who took part: {total_entities}
 
-【模拟预测到的部分未来事实样本】
+[Some of what the city's memory holds]
 {related_facts_json}
 
-请以「上帝视角」审视这个未来预演：
-1. 在我们设定的条件下，未来呈现出了什么样的状态？
-2. 各类人群（Agent）是如何反应和行动的？
-3. 这个模拟揭示了哪些值得关注的未来趋势？
+Look over the whole city, as only the Scribe can:
+1. Under the question put to the city, where did Athens come to rest?
+2. How did each kind of citizen act and speak?
+3. What does the argument show that is worth watching?
 
-根据预测结果，设计最合适的报告章节结构。
+Design the chapters that tell it best.
 
-【再次提醒】报告章节数量：最少2个，最多5个，内容要精炼聚焦于核心预测发现。"""
+[Once more] At least 2 chapters and at most 5, spare and on what matters most."""
 
 # ── 章节生成 prompt ──
 
 SECTION_SYSTEM_PROMPT_TEMPLATE = """\
-你是一个「未来预测报告」的撰写专家，正在撰写报告的一个章节。
+You are the Scribe of Athens, writing one chapter of the Chronicle.
 
-报告标题: {report_title}
-报告摘要: {report_summary}
-预测场景（模拟需求）: {simulation_requirement}
+The Chronicle's title: {report_title}
+What Athens came to believe: {report_summary}
+The question put to the city: {simulation_requirement}
 
-当前要撰写的章节: {section_title}
-
-═══════════════════════════════════════════════════════════════
-【核心理念】
-═══════════════════════════════════════════════════════════════
-
-模拟世界是对未来的预演。我们向模拟世界注入了特定条件（模拟需求），
-模拟中Agent的行为和互动，就是对未来人群行为的预测。
-
-你的任务是：
-- 揭示在设定条件下，未来发生了什么
-- 预测各类人群（Agent）是如何反应和行动的
-- 发现值得关注的未来趋势、风险和机会
-
-❌ 不要写成对现实世界现状的分析
-✅ 要聚焦于"未来会怎样"——模拟结果就是预测的未来
+The chapter you are writing now: {section_title}
 
 ═══════════════════════════════════════════════════════════════
-【最重要的规则 - 必须遵守】
+[Who you are]
 ═══════════════════════════════════════════════════════════════
 
-1. 【必须调用工具观察模拟世界】
-   - 你正在以「上帝视角」观察未来的预演
-   - 所有内容必须来自模拟世界中发生的事件和Agent言行
-   - 禁止使用你自己的知识来编写报告内容
-   - 每个章节至少调用3次工具（最多5次）来观察模拟的世界，它代表了未来
+You walked the city after the argument. You heard the citizens in the Agora and in the Stoa, you read what they wrote, and you asked some of them questions. Now you write down what Athens came to believe: plainly, by name, in the citizens' own words.
 
-2. 【必须引用Agent的原始言行】
-   - Agent的发言和行为是对未来人群行为的预测
-   - 在报告中使用引用格式展示这些预测，例如：
-     > "某类人群会表示：原文内容..."
-   - 这些引用是模拟预测的核心证据
+Your work in this chapter:
+- tell what happened in the city under the question put to it
+- show how each kind of citizen acted and spoke, and who moved whom
+- name the currents, dangers and openings worth watching
 
-3. 【语言一致性 - 引用内容必须翻译为报告语言】
-   - 工具返回的内容可能包含与报告语言不同的表述
-   - 报告必须全部使用与用户指定语言一致的语言撰写
-   - 当你引用工具返回的其他语言内容时，必须将其翻译为报告语言后再写入
-   - 翻译时保持原意不变，确保表述自然通顺
-   - 这一规则同时适用于正文和引用块（> 格式）中的内容
+Do not write an account of the present-day world outside the city.
+Write what happened in this city: what the citizens said and did is the whole of your evidence.
 
-4. 【忠实呈现预测结果】
-   - 报告内容必须反映模拟世界中的代表未来的模拟结果
-   - 不要添加模拟中不存在的信息
-   - 如果某方面信息不足，如实说明
-
-5. 【禁止捏造数据】
-   - ❌ 禁止捏造用户名、引用、统计数字或互动数据
-   - ❌ 禁止在回复中包含 <tool_result> 块 — 只有系统会提供工具结果
-   - ✅ 只能引用真实出现在工具结果中的实体、引用和数据
-   - 如果工具结果中没有相关内容，应如实说明，而非编造
+""" + SCRIBE_WORDS.replace("{", "{{").replace("}", "}}") + """
 
 ═══════════════════════════════════════════════════════════════
-【⚠️ 格式规范 - 极其重要！】
+[The rules you keep]
 ═══════════════════════════════════════════════════════════════
 
-【一个章节 = 最小内容单位】
-- 每个章节是报告的最小分块单位
-- ❌ 禁止在章节内使用任何 Markdown 标题（#、##、###、#### 等）
-- ❌ 禁止在内容开头添加章节主标题
-- ✅ 章节标题由系统自动添加，你只需撰写纯正文内容
-- ✅ 使用**粗体**、段落分隔、引用、列表来组织内容，但不要用标题
+1. [Search the city before you write]
+   - Everything in the chapter comes from what the citizens said and did in this gathering.
+   - Do not write from your own knowledge of the world.
+   - Search at least 3 times for each chapter, and at most 5.
 
-【正确示例】
+2. [Quote the citizens by name]
+   - What the citizens said is your evidence. Name the speaker in the sentence that leads into the quotation, then set their words down as a quotation:
+
+     Crito put it to him plainly:
+
+     > "I have the money and the guards are paid. Only say yes."
+
+   - Quote only what appears in your notes.
+
+3. [One language: the Chronicle's]
+   - Your notes may be in another language than the Chronicle.
+   - Write the whole chapter in the language asked for below, every quotation included: translate what you quote into that language, keeping its meaning and letting it read naturally.
+   - This holds for the prose and for the quotations (the > lines) alike.
+
+4. [Tell it faithfully]
+   - Write what the city did, and add nothing the city did not do.
+   - Where your notes are thin, say so plainly.
+
+5. [Invent nothing]
+   - Invent no names, quotations, figures or counts.
+   - Never write a <tool_result> block: only the city answers your searches.
+   - Use only the names, quotations and figures that appear in your notes.
+   - If your notes hold nothing on a point, say so instead of inventing it.
+
+═══════════════════════════════════════════════════════════════
+[The form of a chapter: this matters]
+═══════════════════════════════════════════════════════════════
+
+[A chapter is the smallest part of the Chronicle]
+- Use no Markdown headings of any level (#, ##, ###, ####) inside the chapter.
+- Do not open with the chapter's title; it is added for you.
+- Write the prose only. Give it shape with **bold**, paragraphs, quotations and lists, never with headings.
+- The examples in these instructions show form only. Their names and events are not this city's; never carry them into the chapter.
+
+[Right]
 ```
-本章节分析了事件的舆论传播态势。通过对模拟数据的深入分析，我们发现...
+By the third day the Agora had stopped asking whether Socrates was guilty and started asking what the city owed him...
 
-**首发引爆阶段**
+**The jurors hold their ground**
 
-微博作为舆情的第一现场，承担了信息首发的核心功能：
+Meletus met every doubt with the same line:
 
-> "微博贡献了68%的首发声量..."
+> "The city voted. Piety is not a question for his friends to reopen."
 
-**情绪放大阶段**
+**The friends grow desperate**
 
-抖音平台进一步放大了事件影响力：
+In the Stoa, Crito's plan found more listeners than helpers:
 
-- 视觉冲击力强
-- 情绪共鸣度高
-```
-
-【错误示例】
-```
-## 执行摘要          ← 错误！不要添加任何标题
-### 一、首发阶段     ← 错误！不要用###分小节
-#### 1.1 详细分析   ← 错误！不要用####细分
-
-本章节分析了...
+- it needed a yes from Socrates himself
+- the guards were paid and the ship was coming
 ```
 
+[Wrong]
+```
+## Summary            <- wrong: no headings
+### The first day     <- wrong: no ### sub-sections
+#### 1.1 Detail       <- wrong: no ####
+
+This chapter looks at...
+```
+
 ═══════════════════════════════════════════════════════════════
-【可用检索工具】（每章节调用3-5次）
+[Your searches] (3 to 5 for each chapter)
 ═══════════════════════════════════════════════════════════════
 
 {tools_description}
 
-【工具使用建议 - 请混合使用不同工具，不要只用一种】
-- insight_forge: 深度洞察分析，自动分解问题并多维度检索事实和关系
-- panorama_search: 广角全景搜索，了解事件全貌、时间线和演变过程
-- quick_search: 快速验证某个具体信息点
-- interview_agents: 采访模拟Agent，获取不同角色的第一人称观点和真实反应
+[Mix your searches; do not lean on one]
+- insight_forge: read one matter deeply, from several sides, with the ties between people
+- panorama_search: see the whole course of the argument, first hour to last, and how opinion moved
+- quick_search: check one fact
+- interview_citizens: ask the citizens themselves, and hear each answer in their own words
 
 ═══════════════════════════════════════════════════════════════
-【工作流程】
+[How you work]
 ═══════════════════════════════════════════════════════════════
 
-每次回复你只能做以下两件事之一（不可同时做）：
+Each reply does exactly one of two things, never both:
 
-选项A - 调用工具：
-输出你的思考，然后用以下格式调用一个工具：
+A. Search:
+Write your thought, then make one search in this form:
 <tool_call>
-{{"name": "工具名称", "parameters": {{"参数名": "参数值"}}}}
+{{"name": "search name", "parameters": {{"parameter": "value"}}}}
 </tool_call>
-系统会执行工具并把结果返回给你。你不需要也不能自己编写工具返回结果。
+The city answers, and the answer is given back to you. You never write the answer yourself.
 
-选项B - 输出最终内容：
-当你已通过工具获取了足够信息，以 "Final Answer:" 开头输出章节内容。
+B. Write the chapter:
+When your searches have given you enough, begin with "Final Answer:" and write the chapter.
 
-⚠️ 严格禁止：
-- 禁止在一次回复中同时包含工具调用和 Final Answer
-- 禁止自己编造工具返回结果（Observation），所有工具结果由系统注入
-- 每次回复最多调用一个工具
+Strictly:
+- never put a search and a Final Answer in the same reply
+- never invent the city's answer (an Observation); every answer comes from the city
+- at most one search in each reply
 
 ═══════════════════════════════════════════════════════════════
-【章节内容要求】
+[What the chapter must be]
 ═══════════════════════════════════════════════════════════════
 
-1. 内容必须基于工具检索到的模拟数据
-2. 大量引用原文来展示模拟效果
-3. 使用Markdown格式（但禁止使用标题）：
-   - 使用 **粗体文字** 标记重点（代替子标题）
-   - 使用列表（-或1.2.3.）组织要点
-   - 使用空行分隔不同段落
-   - ❌ 禁止使用 #、##、###、#### 等任何标题语法
-4. 【引用格式规范 - 必须单独成段】
-   引用必须独立成段，前后各有一个空行，不能混在段落中：
+1. Built on what your searches found in the city.
+2. Rich in the citizens' own words, quoted by name.
+3. Markdown, without headings:
+   - **bold** for the key points (in place of sub-headings)
+   - lists (- or 1. 2. 3.) for points
+   - a blank line between paragraphs
+   - no #, ##, ### or #### headings of any kind
+4. [A quotation stands alone as its own paragraph]
+   It has a blank line before and after it and never sits inside a paragraph:
 
-   ✅ 正确格式：
+   Right:
    ```
-   校方的回应被认为缺乏实质内容。
+   The council's answer was thought thin.
 
-   > "校方的应对模式在瞬息万变的社交媒体环境中显得僵化和迟缓。"
+   > "The council answers when the council has met, not when the Agora shouts."
 
-   这一评价反映了公众的普遍不满。
+   The Agora did not take it kindly.
    ```
 
-   ❌ 错误格式：
+   Wrong:
    ```
-   校方的回应被认为缺乏实质内容。> "校方的应对模式..." 这一评价反映了...
+   The council's answer was thought thin. > "The council answers..." The Agora did not...
    ```
-5. 保持与其他章节的逻辑连贯性
-6. 【避免重复】仔细阅读下方已完成的章节内容，不要重复描述相同的信息
-7. 【再次强调】不要添加任何标题！用**粗体**代替小节标题"""
+5. Keep the thread with the other chapters.
+6. [Do not repeat] Read the finished chapters below and do not tell the same things again.
+7. [Once more] No headings. Use **bold** in place of sub-headings."""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
-已完成的章节内容（请仔细阅读，避免重复）：
+The chapters already written (read them closely, and do not repeat them):
 {previous_content}
 
 ═══════════════════════════════════════════════════════════════
-【当前任务】撰写章节: {section_title}
+[Now] Write the chapter: {section_title}
 ═══════════════════════════════════════════════════════════════
 
-【重要提醒】
-1. 仔细阅读上方已完成的章节，避免重复相同的内容！
-2. 开始前必须先调用工具获取模拟数据
-3. 请混合使用不同工具，不要只用一种
-4. 报告内容必须来自检索结果，不要使用自己的知识
+[Remember]
+1. Read the chapters above and do not tell the same things again.
+2. Search the city before you write anything.
+3. Mix your searches; do not lean on one.
+4. Everything in the chapter comes from your searches, not from your own knowledge.
 
-【⚠️ 格式警告 - 必须遵守】
-- ❌ 不要写任何标题（#、##、###、####都不行）
-- ❌ 不要写"{section_title}"作为开头
-- ✅ 章节标题由系统自动添加
-- ✅ 直接写正文，用**粗体**代替小节标题
+[Form: keep it]
+- No headings of any kind (#, ##, ### or ####).
+- Do not open with "{section_title}".
+- The chapter's title is added for you.
+- Write the prose directly, with **bold** in place of sub-headings.
 
-请开始：
-1. 首先思考（Thought）这个章节需要什么信息
-2. 然后调用工具（Action）获取模拟数据
-3. 收集足够信息后输出 Final Answer（纯正文，无任何标题）"""
+Begin:
+1. Think (Thought) about what this chapter needs to know.
+2. Search (Action) the city for it.
+3. When you have enough, write the Final Answer: prose only, no headings."""
+
+FIRST_CHAPTER_NOTE = "(This is the first chapter.)"
 
 # ── ReACT 循环内消息模板 ──
 
 REACT_OBSERVATION_TEMPLATE = """\
-Observation（检索结果）:
+Observation (what the city answered):
 
-═══ 工具 {tool_name} 返回 ═══
+═══ {tool_name} answered ═══
 {result}
 
 ═══════════════════════════════════════════════════════════════
-已调用工具 {tool_calls_count}/{max_tool_calls} 次（已用: {used_tools_str}）{unused_hint}
-- 如果信息充分：以 "Final Answer:" 开头输出章节内容（必须引用上述原文）
-- 如果需要更多信息：调用一个工具继续检索
+Searches made: {tool_calls_count}/{max_tool_calls} (so far: {used_tools_str}){unused_hint}
+- If you have enough: begin with "Final Answer:" and write the chapter, quoting the words above by name.
+- If you need more: make one more search.
 ═══════════════════════════════════════════════════════════════"""
 
 REACT_INSUFFICIENT_TOOLS_MSG = (
-    "【注意】你只调用了{tool_calls_count}次工具，至少需要{min_tool_calls}次。"
-    "请再调用工具获取更多模拟数据，然后再输出 Final Answer。{unused_hint}"
+    "[Note] You have searched only {tool_calls_count} times, and a chapter needs at least {min_tool_calls}. "
+    "Search the city again before you write the Final Answer.{unused_hint}"
 )
 
 REACT_INSUFFICIENT_TOOLS_MSG_ALT = (
-    "当前只调用了 {tool_calls_count} 次工具，至少需要 {min_tool_calls} 次。"
-    "请调用工具获取模拟数据。{unused_hint}"
+    "You have searched {tool_calls_count} times so far, and a chapter needs at least {min_tool_calls}. "
+    "Search the city.{unused_hint}"
 )
+
+REACT_UNSEARCHED_HINT = " (Not yet used, and worth a try: {unused_list})"
+
+REACT_CONFLICT_MSG = (
+    "[Wrong form] Your reply held both a search and a Final Answer, and that is not allowed.\n"
+    "Each reply does one of two things:\n"
+    "- make one search (one <tool_call> block, and no Final Answer)\n"
+    "- write the chapter (begin with 'Final Answer:', and no <tool_call>)\n"
+    "Reply again and do only one."
+)
+
+REACT_EMPTY_REPLY = "(no reply)"
+REACT_GO_ON_MSG = "Go on writing."
 
 # A model can drift into describing the search it will make ("I'll start with the
 # full timeline") without emitting the <tool_call> block. Show it the exact block,
 # and if it stalls again make that search for it, so no section is written blind.
 REACT_TOOL_CALL_EXAMPLE = (
-    "\n\n你刚才只描述了计划，没有真正调用工具。现在只输出一个工具调用块，不要写其他文字，例如：\n"
+    "\n\nYou described a search but did not make it. Now reply with one search block and nothing else, for example:\n"
     "<tool_call>\n{example}\n</tool_call>"
 )
 FALLBACK_TOOL_ORDER = ("panorama_search", "insight_forge", "quick_search")
@@ -833,8 +1292,9 @@ FALLBACK_TOOL_ORDER = ("panorama_search", "insight_forge", "quick_search")
 # too short to be one (a plan such as "Next I need who still holds a choice").
 SHORT_SECTION_CHARS = 600
 REACT_WRITE_NOW_MSG = (
-    "你已经获取了足够的信息。现在请以 \"Final Answer:\" 开头写出完整的章节内容，"
-    "不要再描述下一步计划；如果确实还缺少关键数据，只输出一个 <tool_call> 块。"
+    "You have enough. Now begin with \"Final Answer:\" and write the whole chapter; "
+    "do not describe what you will do next. If something essential is truly missing, "
+    "reply with one <tool_call> block and nothing else."
 )
 
 
@@ -845,13 +1305,13 @@ def _fallback_tool_call(section_title: str, used_tools: set) -> Dict[str, Any]:
 
 
 REACT_TOOL_LIMIT_MSG = (
-    "工具调用次数已达上限（{tool_calls_count}/{max_tool_calls}），不能再调用工具。"
-    '请立即基于已获取的信息，以 "Final Answer:" 开头输出章节内容。'
+    "You have made all your searches ({tool_calls_count}/{max_tool_calls}), and no more are allowed. "
+    'Write the chapter now from what you have, beginning with "Final Answer:".'
 )
 
-REACT_UNUSED_TOOLS_HINT = "\n💡 你还没有使用过: {unused_list}，建议尝试不同工具获取多角度信息"
+REACT_UNUSED_TOOLS_HINT = "\nNot yet used: {unused_list}. A different search may show the matter from another side."
 
-REACT_FORCE_FINAL_MSG = "已达到工具调用限制，请直接输出 Final Answer: 并生成章节内容。"
+REACT_FORCE_FINAL_MSG = 'The searches are done. Begin with "Final Answer:" and write the whole chapter now.'
 
 # Models often dress the marker in Markdown ("**Final Answer:**", "**Final Answer**:").
 # Splitting on the bare "Final Answer:" left the closing "**" as a stray first line.
@@ -868,34 +1328,55 @@ def _final_answer_text(response: str) -> str:
 # ── Chat prompt ──
 
 CHAT_SYSTEM_PROMPT_TEMPLATE = """\
-你是一个简洁高效的模拟预测助手。
+You are the Scribe of Athens, seated at the head of the Symposium. You walked the city after the argument and wrote its Chronicle; now a visitor asks you about it. Answer as the Scribe: briefly, plainly, in the city's words.
 
-【背景】
-预测条件: {simulation_requirement}
+[The question put to the city]
+{simulation_requirement}
 
-【已生成的分析报告】
+[The Chronicle you wrote]
 {report_content}
 
-【规则】
-1. 优先基于上述报告内容回答问题
-2. 直接回答问题，避免冗长的思考论述
-3. 仅在报告内容不足以回答时，才调用工具检索更多数据
-4. 回答要简洁、清晰、有条理
+""" + SCRIBE_WORDS.replace("{", "{{").replace("}", "}}") + """
 
-【可用工具】（仅在需要时使用，最多调用1-2次）
+[How you answer]
+1. Answer first from the Chronicle above.
+2. Answer the question directly; do not think aloud at length.
+3. Search the city only when the Chronicle does not hold the answer.
+4. Be brief, clear and orderly.
+
+[Your searches] (only when needed, 1 or 2 at most)
 {tools_description}
 
-【工具调用格式】
+[The form of a search]
 <tool_call>
-{{"name": "工具名称", "parameters": {{"参数名": "参数值"}}}}
+{{"name": "search name", "parameters": {{"parameter": "value"}}}}
 </tool_call>
 
-【回答风格】
-- 简洁直接，不要长篇大论
-- 使用 > 格式引用关键内容
-- 优先给出结论，再解释原因"""
+[Your manner]
+- Brief and direct; no long speeches.
+- Set the key words down as > quotations, with the speaker named before them.
+- Give the answer first, then the reason."""
 
-CHAT_OBSERVATION_SUFFIX = "\n\n请简洁回答问题。"
+CHAT_NO_CHRONICLE = "(The Chronicle is not yet written.)"
+CHAT_CHRONICLE_CUT = "\n\n... [the rest of the Chronicle is on the shelf] ..."
+CHAT_OBSERVATION_TEMPLATE = "[{tool} answered]\n{result}"
+CHAT_OBSERVATION_SUFFIX = "\n\nAnswer the visitor briefly, as the Scribe."
+
+# The city's words as the Chinese pages already say them, so a Chronicle
+# written in Chinese names things the way the rest of the city does.
+SCRIBE_WORDS_ZH = (
+    "城中的称谓：Agora 写作「广场」，Stoa 写作「柱廊」，citizens 写作「公民」，"
+    "the Scribe 写作「书记官」，the Chronicle 写作「编年史」，the Symposium 写作「会饮厅」，"
+    "the gathering 写作「集会」，hours 与 days 写作「小时」与「天」。"
+)
+
+
+def _language_lines() -> str:
+    """The language instruction, with the Chinese names of the city's words when the Chronicle is Chinese."""
+    instruction = get_language_instruction()
+    if get_locale() == "zh":
+        return f"{SCRIBE_WORDS_ZH}\n{instruction}"
+    return instruction
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -954,42 +1435,117 @@ class ReportAgent:
         self.report_logger: Optional[ReportLogger] = None
         # 控制台日志记录器（在 generate_report 中初始化）
         self.console_logger: Optional[ReportConsoleLogger] = None
-        
+
+        # The city's roster and clock, read once when the Scribe first needs them.
+        self._city: Optional[Dict[str, Any]] = None
+
         logger.info(t('report.agentInitDone', graphId=graph_id, simulationId=simulation_id))
-    
+
+    # ── The Scribe's voice ──
+
+    def _city_facts(self) -> Dict[str, Any]:
+        """Handles to names, and how long one step of the argument lasted.
+
+        Read straight from the gathering's folder (never created here); a
+        gathering without them simply gets no handle names and no time unit.
+        """
+        if self._city is not None:
+            return self._city
+        roster: Dict[str, str] = {}
+        time_unit = None
+        sim_id = str(self.simulation_id or "")
+        if re.fullmatch(r'[\w-]+', sim_id):
+            sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+            try:
+                with open(os.path.join(sim_dir, "simulation_config.json"), 'r', encoding='utf-8') as f:
+                    minutes = (json.load(f).get("time_config") or {}).get("minutes_per_round")
+                time_unit = {60: "hour", 1440: "day"}.get(int(minutes)) if minutes else None
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            profiles: List[Dict[str, Any]] = []
+            try:
+                with open(os.path.join(sim_dir, "reddit_profiles.json"), 'r', encoding='utf-8') as f:
+                    profiles.extend(p for p in json.load(f) if isinstance(p, dict))
+            except (OSError, ValueError, TypeError):
+                pass
+            try:
+                with open(os.path.join(sim_dir, "twitter_profiles.csv"), 'r', encoding='utf-8', newline='') as f:
+                    profiles.extend(csv.DictReader(f))
+            except (OSError, ValueError, csv.Error):
+                pass
+            for profile in profiles:
+                handle = str(profile.get("username") or "").strip().lstrip("@")
+                name = str(profile.get("name") or "").strip()
+                if not handle or not name or re.fullmatch(r'[a-z0-9]+(?:_[a-z0-9]+)*_\d+', name, re.I):
+                    continue
+                roster.setdefault(handle.lower(), name)
+                roster.setdefault(re.sub(r'_\d+$', '', handle).lower(), name)
+        self._city = {"roster": roster, "time_unit": time_unit}
+        return self._city
+
+    def _in_scribe_voice(self, text: str, where: str) -> str:
+        """The backstop pass on what the Scribe hands back (chapters, outline, answers)."""
+        if not text or not isinstance(text, str):
+            return text
+        city = self._city_facts()
+        try:
+            voiced, notes = scribe_voice(
+                text,
+                roster=city["roster"],
+                time_unit=city["time_unit"],
+                question=self.simulation_requirement or "",
+            )
+        except Exception as e:  # the Chronicle is never lost to its own proofreading
+            logger.info("Scribe's words (%s): pass skipped: %s", where, e)
+            return text
+        rewrote = [n for n in notes if n["kind"] == "rewrote"]
+        left = [n for n in notes if n["kind"] == "left"]
+        if rewrote or left:
+            counts: Dict[str, int] = {}
+            for note in left:
+                key = note["term"] + (" (quoted)" if note["quoted"] else "")
+                counts[key] = counts.get(key, 0) + 1
+            # INFO, not WARNING: the Chronicle's ledger shows warnings to the visitor.
+            logger.info(
+                "Scribe's words (%s): %d put in the city's words; left for the owner: %s",
+                where, len(rewrote), ", ".join(f"{k} x{v}" for k, v in sorted(counts.items())) or "none",
+            )
+            for note in left:
+                logger.debug("Scribe's words (%s): left %r: ...%s...", where, note["term"], note["context"])
+        return voiced
+
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
-        """定义可用工具"""
+        """定义可用工具 (keyed by the name the engine runs; "name" is what the Scribe is shown)"""
         return {
             "insight_forge": {
                 "name": "insight_forge",
                 "description": TOOL_DESC_INSIGHT_FORGE,
                 "parameters": {
-                    "query": "你想深入分析的问题或话题",
-                    "report_context": "当前报告章节的上下文（可选，有助于生成更精准的子问题）"
+                    "query": "the question or matter you want to read deeply",
                 }
             },
             "panorama_search": {
                 "name": "panorama_search",
                 "description": TOOL_DESC_PANORAMA_SEARCH,
                 "parameters": {
-                    "query": "搜索查询，用于相关性排序",
-                    "include_expired": "是否包含过期/历史内容（默认True）"
+                    "query": "what to look for; it orders what comes back",
+                    "include_expired": "whether to include what was said earlier and later overturned (default true)"
                 }
             },
             "quick_search": {
                 "name": "quick_search",
                 "description": TOOL_DESC_QUICK_SEARCH,
                 "parameters": {
-                    "query": "搜索查询字符串",
-                    "limit": "返回结果数量（可选，默认10）"
+                    "query": "the words to search for",
+                    "limit": "how many facts to bring back (optional, default 10)"
                 }
             },
             "interview_agents": {
-                "name": "interview_agents",
+                "name": "interview_citizens",
                 "description": TOOL_DESC_INTERVIEW_AGENTS,
                 "parameters": {
-                    "interview_topic": "采访主题或需求描述（如：'了解学生对宿舍甲醛事件的看法'）",
-                    "max_agents": "最多采访的Agent数量（可选，默认5，最大10）"
+                    "interview_topic": "what to ask the citizens about (for example: how the jurors now see the verdict)",
+                    "max_citizens": "how many citizens to question (optional, default 5, at most 10)"
                 }
             }
         }
@@ -1006,6 +1562,7 @@ class ReportAgent:
         Returns:
             工具执行结果（文本格式）
         """
+        tool_name = TOOL_ALIASES.get(tool_name, tool_name)
         logger.info(t('report.executingTool', toolName=tool_name, params=parameters))
         
         try:
@@ -1049,7 +1606,7 @@ class ReportAgent:
             elif tool_name == "interview_agents":
                 # 深度采访 - 调用真实的OASIS采访API获取模拟Agent的回答（双平台）
                 interview_topic = parameters.get("interview_topic", parameters.get("query", ""))
-                max_agents = parameters.get("max_agents", 5)
+                max_agents = parameters.get("max_agents", parameters.get("max_citizens", 5))
                 if isinstance(max_agents, str):
                     max_agents = int(max_agents)
                 max_agents = min(max_agents, 10)
@@ -1096,11 +1653,11 @@ class ReportAgent:
                 return json.dumps(result, ensure_ascii=False, indent=2)
             
             else:
-                return f"未知工具: {tool_name}。请使用以下工具之一: insight_forge, panorama_search, quick_search"
+                return f"No such search: {_tool_label(tool_name)}. Use one of: insight_forge, panorama_search, quick_search, interview_citizens"
                 
         except Exception as e:
             logger.error(t('report.toolExecFailed', toolName=tool_name, error=str(e)))
-            return f"工具执行失败: {str(e)}"
+            return f"The search failed: {str(e)}"
     
     # 合法的工具名称集合，用于裸 JSON 兜底解析时校验
     VALID_TOOL_NAMES = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
@@ -1125,7 +1682,7 @@ class ReportAgent:
                 pass
 
         if tool_calls:
-            return tool_calls
+            return self._canonical_tool_calls(tool_calls)
 
         # 格式2: 兜底 - LLM 直接输出裸 JSON（没包 <tool_call> 标签）
         # 只在格式1未匹配时尝试，避免误匹配正文中的 JSON
@@ -1156,23 +1713,32 @@ class ReportAgent:
         """校验解析出的 JSON 是否是合法的工具调用"""
         # 支持 {"name": ..., "parameters": ...} 和 {"tool": ..., "params": ...} 两种键名
         tool_name = data.get("name") or data.get("tool")
-        if tool_name and tool_name in self.VALID_TOOL_NAMES:
+        if tool_name and TOOL_ALIASES.get(tool_name, tool_name) in self.VALID_TOOL_NAMES:
             # 统一键名为 name / parameters
             if "tool" in data:
                 data["name"] = data.pop("tool")
             if "params" in data and "parameters" not in data:
                 data["parameters"] = data.pop("params")
+            data["name"] = TOOL_ALIASES.get(data["name"], data["name"])
             return True
         return False
+
+    @staticmethod
+    def _canonical_tool_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """interview_citizens, as the Scribe is shown it, runs and is logged as interview_agents."""
+        for call in calls:
+            if isinstance(call, dict) and call.get("name") in TOOL_ALIASES:
+                call["name"] = TOOL_ALIASES[call["name"]]
+        return calls
     
     def _get_tools_description(self) -> str:
-        """生成工具描述文本"""
-        desc_parts = ["可用工具："]
-        for name, tool in self.tools.items():
+        """生成工具描述文本 (under the names the Scribe is shown)"""
+        desc_parts = ["Your searches:"]
+        for tool in self.tools.values():
             params_desc = ", ".join([f"{k}: {v}" for k, v in tool["parameters"].items()])
-            desc_parts.append(f"- {name}: {tool['description']}")
+            desc_parts.append(f"- {tool['name']}: {tool['description']}")
             if params_desc:
-                desc_parts.append(f"  参数: {params_desc}")
+                desc_parts.append(f"  parameters: {params_desc}")
         return "\n".join(desc_parts)
 
     @staticmethod
@@ -1237,7 +1803,7 @@ class ReportAgent:
         if progress_callback:
             progress_callback("planning", 30, t('progress.generatingOutline'))
         
-        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{get_language_instruction()}"
+        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{_language_lines()}"
         user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
             simulation_requirement=self.simulation_requirement,
             total_nodes=context.get('graph_statistics', {}).get('total_nodes', 0),
@@ -1263,13 +1829,13 @@ class ReportAgent:
             sections = []
             for section_data in response.get("sections", []):
                 sections.append(ReportSection(
-                    title=section_data.get("title", ""),
+                    title=self._in_scribe_voice(section_data.get("title", ""), "outline"),
                     content=""
                 ))
             
             outline = ReportOutline(
-                title=response.get("title", "模拟分析报告"),
-                summary=response.get("summary", ""),
+                title=self._in_scribe_voice(response.get("title", t('scribe.untitled')), "outline"),
+                summary=self._in_scribe_voice(response.get("summary", ""), "outline"),
                 sections=sections
             )
             
@@ -1283,12 +1849,12 @@ class ReportAgent:
             logger.error(t('report.outlinePlanFailed', error=str(e)))
             # 返回默认大纲（3个章节，作为fallback）
             return ReportOutline(
-                title="未来预测报告",
-                summary="基于模拟预测的未来趋势与风险分析",
+                title=t('scribe.fallbackTitle'),
+                summary=t('scribe.fallbackSummary'),
                 sections=[
-                    ReportSection(title="预测场景与核心发现"),
-                    ReportSection(title="人群行为预测分析"),
-                    ReportSection(title="趋势展望与风险提示")
+                    ReportSection(title=t('scribe.fallbackChapterOne')),
+                    ReportSection(title=t('scribe.fallbackChapterTwo')),
+                    ReportSection(title=t('scribe.fallbackChapterThree'))
                 ]
             )
     
@@ -1333,7 +1899,7 @@ class ReportAgent:
             section_title=section.title,
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
+        system_prompt = f"{system_prompt}\n\n{_language_lines()}"
 
         # 构建用户prompt - 每个已完成章节各传入最大4000字
         if previous_sections:
@@ -1344,7 +1910,7 @@ class ReportAgent:
                 previous_parts.append(truncated)
             previous_content = "\n\n---\n\n".join(previous_parts)
         else:
-            previous_content = "（这是第一个章节）"
+            previous_content = FIRST_CHAPTER_NOTE
         
         user_prompt = SECTION_USER_PROMPT_TEMPLATE.format(
             previous_content=previous_content,
@@ -1366,7 +1932,7 @@ class ReportAgent:
         stalled_turns = 0  # consecutive replies with neither a tool call nor a Final Answer
 
         # 报告上下文，用于InsightForge的子问题生成
-        report_context = f"章节标题: {section.title}\n模拟需求: {self.simulation_requirement}"
+        report_context = f"Chapter: {section.title}\nThe question put to the city: {self.simulation_requirement}"
         
         for iteration in range(max_iterations):
             if progress_callback:
@@ -1388,8 +1954,8 @@ class ReportAgent:
                 logger.warning(t('report.sectionIterNone', title=section.title, iteration=iteration + 1))
                 # 如果还有迭代次数，添加消息并重试
                 if iteration < max_iterations - 1:
-                    messages.append({"role": "assistant", "content": "（响应为空）"})
-                    messages.append({"role": "user", "content": "请继续生成内容。"})
+                    messages.append({"role": "assistant", "content": REACT_EMPTY_REPLY})
+                    messages.append({"role": "user", "content": REACT_GO_ON_MSG})
                     continue
                 # 最后一次迭代也返回 None，跳出循环进入强制收尾
                 break
@@ -1414,13 +1980,7 @@ class ReportAgent:
                     messages.append({"role": "assistant", "content": cleaned_response})
                     messages.append({
                         "role": "user",
-                        "content": (
-                            "【格式错误】你在一次回复中同时包含了工具调用和 Final Answer，这是不允许的。\n"
-                            "每次回复只能做以下两件事之一：\n"
-                            "- 调用一个工具（输出一个 <tool_call> 块，不要写 Final Answer）\n"
-                            "- 输出最终内容（以 'Final Answer:' 开头，不要包含 <tool_call>）\n"
-                            "请重新回复，只做其中一件事。"
-                        ),
+                        "content": REACT_CONFLICT_MSG,
                     })
                     continue
                 else:
@@ -1454,7 +2014,7 @@ class ReportAgent:
                 if tool_calls_count < min_tool_calls:
                     messages.append({"role": "assistant", "content": cleaned_response})
                     unused_tools = all_tools - used_tools
-                    unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
+                    unused_hint = REACT_UNSEARCHED_HINT.format(unused_list=_tool_labels(unused_tools)) if unused_tools else ""
                     messages.append({
                         "role": "user",
                         "content": REACT_INSUFFICIENT_TOOLS_MSG.format(
@@ -1466,7 +2026,7 @@ class ReportAgent:
                     continue
 
                 # 正常结束
-                final_answer = _final_answer_text(cleaned_response)
+                final_answer = self._in_scribe_voice(_final_answer_text(cleaned_response), f"chapter {section_index}")
                 logger.info(t('report.sectionGenDone', title=section.title, count=tool_calls_count))
 
                 if self.report_logger:
@@ -1530,18 +2090,18 @@ class ReportAgent:
                 unused_tools = all_tools - used_tools
                 unused_hint = ""
                 if unused_tools and tool_calls_count < self.MAX_TOOL_CALLS_PER_SECTION:
-                    unused_hint = REACT_UNUSED_TOOLS_HINT.format(unused_list="、".join(unused_tools))
+                    unused_hint = REACT_UNUSED_TOOLS_HINT.format(unused_list=_tool_labels(unused_tools))
 
                 cleaned_response = ReportAgent._strip_fake_tool_results(response)
                 messages.append({"role": "assistant", "content": cleaned_response})
                 messages.append({
                     "role": "user",
                     "content": REACT_OBSERVATION_TEMPLATE.format(
-                        tool_name=call["name"],
-                        result=result,
+                        tool_name=_tool_label(call["name"]),
+                        result=observation_in_city_words(result),
                         tool_calls_count=tool_calls_count,
                         max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
-                        used_tools_str=", ".join(used_tools),
+                        used_tools_str=_tool_labels(used_tools),
                         unused_hint=unused_hint,
                     ),
                 })
@@ -1554,7 +2114,7 @@ class ReportAgent:
             if tool_calls_count < min_tool_calls:
                 # 工具调用次数不足，推荐未用过的工具
                 unused_tools = all_tools - used_tools
-                unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
+                unused_hint = REACT_UNSEARCHED_HINT.format(unused_list=_tool_labels(unused_tools)) if unused_tools else ""
                 fallback = _fallback_tool_call(section.title, used_tools)
                 stalled_turns += 1
 
@@ -1592,13 +2152,13 @@ class ReportAgent:
                     messages.append({
                         "role": "user",
                         "content": REACT_OBSERVATION_TEMPLATE.format(
-                            tool_name=fallback["name"],
-                            result=result,
+                            tool_name=_tool_label(fallback["name"]),
+                            result=observation_in_city_words(result),
                             tool_calls_count=tool_calls_count,
                             max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
-                            used_tools_str=", ".join(used_tools),
+                            used_tools_str=_tool_labels(used_tools),
                             unused_hint=(
-                                REACT_UNUSED_TOOLS_HINT.format(unused_list="、".join(unused_tools))
+                                REACT_UNUSED_TOOLS_HINT.format(unused_list=_tool_labels(unused_tools))
                                 if unused_tools and tool_calls_count < self.MAX_TOOL_CALLS_PER_SECTION
                                 else ""
                             ),
@@ -1625,7 +2185,7 @@ class ReportAgent:
                 messages.append({"role": "user", "content": REACT_WRITE_NOW_MSG})
                 continue
             logger.info(t('report.sectionNoPrefix', title=section.title, count=tool_calls_count))
-            final_answer = cleaned_response
+            final_answer = self._in_scribe_voice(cleaned_response, f"chapter {section_index}")
 
             if self.report_logger:
                 self.report_logger.log_section_content(
@@ -1649,11 +2209,11 @@ class ReportAgent:
         # 检查强制收尾时 LLM 返回是否为 None
         if response is None:
             logger.error(t('report.sectionForceFailed', title=section.title))
-            final_answer = t('report.sectionGenFailedContent')
+            final_answer = t('scribe.chapterUnwritten')
         elif "Final Answer:" in response:
-            final_answer = _final_answer_text(response)
+            final_answer = self._in_scribe_voice(_final_answer_text(response), f"chapter {section_index}")
         else:
-            final_answer = response
+            final_answer = self._in_scribe_voice(response, f"chapter {section_index}")
         
         # 记录章节内容生成完成日志
         if self.report_logger:
@@ -1933,16 +2493,30 @@ class ReportAgent:
                 # 限制报告长度，避免上下文过长
                 report_content = report.markdown_content[:15000]
                 if len(report.markdown_content) > 15000:
-                    report_content += "\n\n... [报告内容已截断] ..."
+                    report_content += CHAT_CHRONICLE_CUT
         except Exception as e:
             logger.warning(t('report.fetchReportFailed', error=e))
+
+        # A Chronicle written before the Scribe kept to the city's words gets the
+        # same backstop here, so she does not read the machine's words back.
+        if report_content:
+            try:
+                city = self._city_facts()
+                report_content = scribe_voice(
+                    report_content,
+                    roster=city["roster"],
+                    time_unit=city["time_unit"],
+                    question=self.simulation_requirement or "",
+                )[0]
+            except Exception as e:
+                logger.info("Scribe's words (symposium): Chronicle left as written: %s", e)
         
         system_prompt = CHAT_SYSTEM_PROMPT_TEMPLATE.format(
             simulation_requirement=self.simulation_requirement,
-            report_content=report_content if report_content else "（暂无报告）",
+            report_content=report_content if report_content else CHAT_NO_CHRONICLE,
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
+        system_prompt = f"{system_prompt}\n\n{_language_lines()}"
 
         # 构建消息
         messages = [{"role": "system", "content": system_prompt}]
@@ -1977,7 +2551,7 @@ class ReportAgent:
                 clean_response = ReportAgent._strip_fake_tool_results(clean_response)
                 
                 return {
-                    "response": clean_response.strip(),
+                    "response": self._in_scribe_voice(clean_response.strip(), "symposium"),
                     "tool_calls": tool_calls_made,
                     "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
                 }
@@ -1997,7 +2571,10 @@ class ReportAgent:
             # 将结果添加到消息
             cleaned_response = ReportAgent._strip_fake_tool_results(response)
             messages.append({"role": "assistant", "content": cleaned_response})
-            observation = "\n".join([f"[{r['tool']}结果]\n{r['result']}" for r in tool_results])
+            observation = "\n".join([
+                CHAT_OBSERVATION_TEMPLATE.format(tool=_tool_label(r['tool']), result=observation_in_city_words(r['result']))
+                for r in tool_results
+            ])
             messages.append({
                 "role": "user",
                 "content": observation + CHAT_OBSERVATION_SUFFIX
@@ -2015,7 +2592,7 @@ class ReportAgent:
         clean_response = ReportAgent._strip_fake_tool_results(clean_response)
         
         return {
-            "response": clean_response.strip(),
+            "response": self._in_scribe_voice(clean_response.strip(), "symposium"),
             "tool_calls": tool_calls_made,
             "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
         }

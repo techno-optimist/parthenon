@@ -6,23 +6,41 @@ a custom stage from the "Build your own stage" panel.
 GET /api/parthenon/status tells the home page what this instance can run.
 /api/parthenon/chronicle/<report_id>/film turns a finished Chronicle into a
 narrated short film made with Grok (see services/chronicle_film.py).
+/api/parthenon/gathering/<simulation_id>/portraits paints every citizen of a
+gathering (see services/citizen_portraits.py).
+/api/parthenon/gathering/<simulation_id>/stances reads where each citizen
+stood, period by period, from what they said (the Agora's "who moved").
+POST /api/parthenon/voice speaks an answer in the speaker's own voice (the
+Symposium), and GET /api/parthenon/voice/<file> serves the recording.
+GET /api/parthenon/gathering/<id> tells where a gathering stands from any of
+its ids (project, simulation or report).
+
+The Chronicle routes of the report blueprint are served in the Scribe's voice
+(see _serve_in_city_words below): Chronicles written before the Scribe learnt
+the city's words are put into them on the way out, never on disk.
 """
 
+import csv
 import hashlib
+import json
 import os
 import re
 import threading
 import time
+from collections import OrderedDict
 from urllib.parse import urlsplit
 
 import httpx
-from flask import jsonify, request, send_file, url_for
+from flask import current_app, jsonify, request, send_file, url_for
 from openai import APIConnectionError, AuthenticationError, PermissionDeniedError
 
 from . import parthenon_bp
 from ..config import Config
-from ..services import chronicle_film
-from ..services.report_agent import ReportManager, ReportStatus
+from ..models.project import ProjectManager
+from ..services import chronicle_film, citizen_portraits
+from ..services.report_agent import ReportManager, ReportStatus, scribe_voice
+from ..services.simulation_manager import SimulationManager
+from ..services.simulation_runner import SimulationRunner
 from ..services.stage_oracle import (
     OracleUnavailableError,
     StageOracle,
@@ -451,4 +469,736 @@ def chronicle_film_file(report_id, name):
         path, mimetype=chronicle_film.film_file_type(name), conditional=True, max_age=0
     )
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+# ============== Citizens' portraits ==============
+
+def _force_option(what):
+    """(force, None) from a POST body of {"force": true|false}, or (None, a 400 response)."""
+
+    body = request.get_json(silent=True)
+    if body is None:
+        if request.get_data(cache=True):
+            return None, _error(f'Send a JSON object with the {what} options.', 400)
+        body = {}
+    if not isinstance(body, dict):
+        return None, _error(f'Send a JSON object with the {what} options.', 400)
+    force = body.get('force')
+    if force is None:
+        force = False
+    if not isinstance(force, bool):
+        return None, _error('force must be true or false.', 400)
+    return force, None
+
+
+def _portrait_url(simulation_id, name):
+    path = citizen_portraits.portrait_file_path(simulation_id, name)
+    if path is None:
+        return None
+    # The version stamp keeps browsers from showing an earlier portrait of the citizen.
+    version = os.stat(path).st_mtime_ns // 1_000_000
+    return url_for(
+        'parthenon.citizen_portrait_file', simulation_id=simulation_id, name=name, v=version
+    )
+
+
+@parthenon_bp.route('/gathering/<simulation_id>/portraits', methods=['POST'])
+def start_citizen_portraits(simulation_id):
+    """Paint every citizen of a gathering in the background.
+
+    Request JSON (optional): {"force": true} repaints everyone.
+    202: {"success": true, "data": {"status": "running", "simulation_id": "..."}}
+    200: the same with status "completed" when the cast is already painted.
+    Idempotent: a painting already running (or finished for the same cast) is
+    left as it is unless force; a failed painting resumes where it stopped.
+    400 bad body, 404 unknown gathering, 409 citizens not ready yet or a
+    forced repaint while a painting runs.
+    """
+
+    force, failure = _force_option('painting')
+    if failure:
+        return failure
+
+    try:
+        manifest = citizen_portraits.start_portraits(simulation_id, force=force)
+    except citizen_portraits.PortraitsNotFound as error:
+        return _error(str(error), 404)
+    except (citizen_portraits.PortraitsNotReady, citizen_portraits.PortraitsConflict) as error:
+        return _error(str(error), 409)
+    except OSError as error:
+        logger.error(
+            'Could not start the portraits of %s: type=%s', simulation_id, type(error).__name__
+        )
+        return _error('The painters could not start; check the server logs.', 500)
+
+    status = manifest.get('status') or 'running'
+    data = {'status': status, 'simulation_id': manifest.get('simulation_id')}
+    return jsonify({'success': True, 'data': data}), 200 if status == 'completed' else 202
+
+
+@parthenon_bp.route('/gathering/<simulation_id>/portraits', methods=['GET'])
+def citizen_portraits_status(simulation_id):
+    """The portraits manifest with a versioned URL for every finished portrait.
+
+    data: {simulation_id, status: none|running|completed|failed, progress,
+    error, created_at, updated_at, portraits: [{agent_id, name, entity_type,
+    status: pending|painting|done|failed, url}]}
+    """
+
+    canonical = citizen_portraits.find_simulation(simulation_id)
+    if canonical is None:
+        return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
+    manifest = citizen_portraits.get_portraits(canonical)
+    types = None
+    portraits = []
+    for item in manifest.get('portraits') or []:
+        if not isinstance(item, dict):
+            continue
+        entity_type = item.get('entity_type')
+        if not entity_type:
+            # Painting may start before the gathering's configuration names every type.
+            if types is None:
+                types = citizen_portraits.entity_types(canonical)
+            entity_type = types.get(item.get('agent_id'))
+        name = item.get('file')
+        done = item.get('status') == 'done' and isinstance(name, str)
+        portraits.append({
+            'agent_id': item.get('agent_id'),
+            'name': item.get('name'),
+            'entity_type': entity_type or None,
+            'status': item.get('status'),
+            'url': _portrait_url(canonical, name) if done else None,
+        })
+    data = {
+        'simulation_id': canonical,
+        'status': manifest.get('status'),
+        'progress': manifest.get('progress'),
+        'error': manifest.get('error'),
+        'created_at': manifest.get('created_at'),
+        'updated_at': manifest.get('updated_at'),
+        'portraits': portraits,
+    }
+    return jsonify({'success': True, 'data': data})
+
+
+@parthenon_bp.route('/gathering/<simulation_id>/portraits/<name>', methods=['GET'])
+def citizen_portrait_file(simulation_id, name):
+    """<agent_id>.jpg; a versioned URL (?v=) may be cached for good."""
+
+    canonical = citizen_portraits.find_simulation(simulation_id)
+    path = citizen_portraits.portrait_file_path(canonical, name) if canonical else None
+    if path is None:
+        return _error('Portrait not found.', 404)
+    versioned = bool(request.args.get('v'))
+    response = send_file(
+        path, mimetype='image/jpeg', conditional=True, max_age=31536000 if versioned else 0
+    )
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+# ============== Where the citizens stood ==============
+
+STANCE_FIELDS = (
+    'status', 'error', 'stale', 'created_at', 'updated_at', 'through_round',
+    'minutes_per_round', 'periods', 'citizens',
+)
+
+
+@parthenon_bp.route('/gathering/<simulation_id>/stances', methods=['POST'])
+def start_citizen_stances(simulation_id):
+    """Read where each citizen stood, period by period, in the background.
+
+    Request JSON (optional): {"force": true} reads the record again.
+    202: {"success": true, "data": {"status": "reading", "simulation_id": "..."}}
+    200: the same with status "completed" when the record has not grown since
+    the last reading. Idempotent: a reading already running is left alone.
+    400 bad body, 404 unknown gathering, 409 nobody has spoken yet or a
+    forced reading while one runs.
+    """
+
+    force, failure = _force_option('reading')
+    if failure:
+        return failure
+    try:
+        reading = citizen_portraits.start_stances(simulation_id, force=force)
+    except citizen_portraits.PortraitsNotFound as error:
+        return _error(str(error), 404)
+    except (citizen_portraits.StancesNotReady, citizen_portraits.StancesConflict) as error:
+        return _error(str(error), 409)
+    except OSError as error:
+        logger.error(
+            'Could not start reading the stances of %s: type=%s', simulation_id, type(error).__name__
+        )
+        return _error('The record could not be read; check the server logs.', 500)
+
+    status = reading.get('status') or 'reading'
+    data = {'status': status, 'simulation_id': reading.get('simulation_id')}
+    return jsonify({'success': True, 'data': data}), 200 if status == 'completed' else 202
+
+
+@parthenon_bp.route('/gathering/<simulation_id>/stances', methods=['GET'])
+def citizen_stances(simulation_id):
+    """Where the citizens stood.
+
+    data: {simulation_id, status: none|reading|completed|failed, error, stale,
+    created_at, updated_at, through_round, minutes_per_round, periods:
+    [{period, from_round, to_round}], citizens: [{agent_id, name, entity_type,
+    stance (where they began), spoke, stance_history: [{period, from_round,
+    to_round, stance}], final_stance, moved, turn}]}. Stances are supportive,
+    opposing or neutral; stale means more was said after the reading.
+    """
+
+    canonical = citizen_portraits.find_simulation(simulation_id)
+    if canonical is None:
+        return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
+    reading = citizen_portraits.get_stances(canonical)
+    data = {'simulation_id': canonical, **{key: reading.get(key) for key in STANCE_FIELDS}}
+    return jsonify({'success': True, 'data': data})
+
+
+# ============== The citizens' voices ==============
+
+VOICE_TEXT_FIELDS = ('voice', 'simulation_id', 'name', 'lang')
+
+
+@parthenon_bp.route('/voice', methods=['POST'])
+def speak_words():
+    """Speak an answer in the speaker's voice (the Symposium).
+
+    Request JSON: {"text": "...", "voice": "scribe" | "elder" | "official" |
+    "common" | "machine" (or a role family, or "plain"), "simulation_id",
+    "agent_id" or "name" (the citizen speaking: their role and how their
+    portrait presents them choose the voice when "voice" is left out, and a
+    man's or a woman's voice either way), "lang": "en" | "zh" | ..., "part":
+    0 (the default) .. parts - 1}.
+    200: {"success": true, "data": {url, voice, voice_id, language, part,
+    parts, cached, truncated}}; url is backend-relative. A long answer is
+    spoken in parts so the first words come in seconds: play part 0, and ask
+    for the next part while it plays. The same words in the same voice are
+    recorded once.
+    400 nothing to speak, too much, no such part or an unknown voice; 502
+    the words could not be spoken; 503 no voice service, busy or signed out
+    (the page can fall back to the browser's own voice).
+    """
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _error('Send a JSON object with the words to speak.', 400)
+    for key in VOICE_TEXT_FIELDS:
+        if body.get(key) is not None and not isinstance(body.get(key), str):
+            return _error(f'{key} must be text.', 400)
+    agent_id = body.get('agent_id')
+    if agent_id is not None and (isinstance(agent_id, bool) or not isinstance(agent_id, (int, str))):
+        return _error('agent_id must be a number.', 400)
+    part = body.get('part')
+    if part is not None and (isinstance(part, bool) or not isinstance(part, int)):
+        return _error('part must be a number.', 400)
+    try:
+        spoken = citizen_portraits.speak(
+            body.get('text'), voice=body.get('voice'), simulation_id=body.get('simulation_id'),
+            agent_id=agent_id, name=body.get('name'), lang=body.get('lang'), part=part,
+        )
+    except citizen_portraits.VoiceValidationError as error:
+        return _error(str(error), 400)
+    except citizen_portraits.VoiceUnavailable as error:
+        return _error(str(error), 503)
+    except citizen_portraits.VoiceError as error:
+        return _error(str(error), 502)
+    except OSError as error:
+        logger.error('Could not keep a recording: type=%s', type(error).__name__)
+        return _error('The words could not be spoken; check the server logs.', 500)
+
+    data = {
+        'url': url_for('parthenon.voice_file', name=spoken['file']),
+        **{key: spoken[key] for key in (
+            'voice', 'voice_id', 'language', 'part', 'parts', 'cached', 'truncated'
+        )},
+    }
+    return jsonify({'success': True, 'data': data})
+
+
+@parthenon_bp.route('/voice/<name>', methods=['GET'])
+def voice_file(name):
+    """A recording, named by its content (so it may be cached for good), with Range support."""
+
+    path = citizen_portraits.voice_file_path(name)
+    if path is None:
+        return _error('Voice not found.', 404)
+    response = send_file(
+        path, mimetype=citizen_portraits.voice_file_type(name), conditional=True, max_age=31536000
+    )
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+# ============== Gatherings ==============
+
+GATHERING_ID_PATTERN = re.compile(r'(proj|sim|report)_[A-Za-z0-9_-]{1,120}')
+# Simulation statuses that mean a run was started at some point.
+RAN_SIMULATION_STATUSES = {'running', 'stopping', 'paused', 'stopped', 'completed'}
+
+
+def _project_simulations(project_id):
+    """Every readable simulation of the project (a corrupt state.json is skipped)."""
+
+    root = SimulationManager.SIMULATION_DATA_DIR
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return []
+    manager = SimulationManager()
+    found = []
+    for name in names:
+        if (
+            name.startswith('.')
+            or not citizen_portraits.valid_simulation_id(name)
+            or not os.path.isfile(os.path.join(root, name, 'state.json'))
+        ):
+            continue
+        try:
+            state = manager.get_simulation(name)
+        except Exception as error:  # noqa: BLE001 - one corrupt state.json must not hide the rest
+            logger.warning('Simulation %s could not be read: type=%s', name, type(error).__name__)
+            continue
+        if state is not None and state.project_id == project_id:
+            found.append(state)
+    return found
+
+
+def _furthest_night(project_id):
+    """(simulation, report_id, report_status) of the project's night that got furthest.
+
+    A project resolves to the night with the highest act, and among those to
+    the newest: a Chronicle already written is never hidden behind a later
+    night that was prepared and then left, and nobody's abandoned gathering
+    is opened (and painted) from a project link. (None, None, None) when the
+    project has no simulation yet.
+    """
+
+    best = None
+    for state in _project_simulations(project_id):
+        report_id, report_status = _latest_report(state.simulation_id)
+        runner_status, current_round = _run_progress(state.simulation_id)
+        act = gathering_act(
+            state.simulation_id, getattr(state.status, 'value', None),
+            runner_status, current_round, report_status,
+        )
+        key = (act, state.created_at or '', state.simulation_id)
+        if best is None or key > best[0]:
+            best = (key, state, report_id, report_status)
+    if best is None:
+        return None, None, None
+    return best[1], best[2], best[3]
+
+
+def _latest_report(simulation_id):
+    """(report_id, status) of the simulation's newest Chronicle, or (None, None).
+
+    Reads only each Chronicle's meta.json, as the history shelf does.
+    """
+
+    root = ReportManager.REPORTS_DIR
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return None, None
+    latest = None
+    for name in names:
+        if not chronicle_film.valid_report_id(name):
+            continue
+        meta_path = os.path.join(root, name, 'meta.json')
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as handle:
+                meta = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(meta, dict) or meta.get('simulation_id') != simulation_id:
+            continue
+        report_id = meta.get('report_id')
+        if not chronicle_film.valid_report_id(report_id):
+            continue
+        key = (str(meta.get('created_at') or ''), report_id)
+        if latest is None or key > latest[0]:
+            latest = (key, report_id, meta.get('status'))
+    if latest is None:
+        return None, None
+    status = latest[2] if isinstance(latest[2], str) else None
+    return latest[1], status
+
+
+def _run_progress(simulation_id):
+    """(runner_status, current_round) of the simulation's run; (None, 0) when it never ran."""
+
+    try:
+        run_state = SimulationRunner.get_run_state(simulation_id)
+    except Exception as error:  # noqa: BLE001 - an unreadable run state means no run to show
+        logger.warning('Run state of %s could not be read: type=%s', simulation_id, type(error).__name__)
+        return None, 0
+    if run_state is None:
+        return None, 0
+    status = getattr(run_state.runner_status, 'value', run_state.runner_status)
+    round_number = run_state.current_round if isinstance(run_state.current_round, int) else 0
+    return (status if isinstance(status, str) else None), round_number
+
+
+def gathering_act(simulation_id, simulation_status, runner_status, current_round, report_status):
+    """The furthest act a gathering has reached (the Symposium, 5, is chosen by the visitor).
+
+    1 before a simulation exists; 2 while it is prepared but never run; 3 once
+    a run exists and no Chronicle stands (a failed Chronicle sends the visitor
+    back to the Agora to commission another); 4 once a Chronicle exists, also
+    while the Scribe is still writing it.
+    """
+
+    if not simulation_id and not report_status:
+        return 1
+    if report_status and report_status != ReportStatus.FAILED.value:
+        return 4
+    ran = (
+        (runner_status is not None and runner_status != 'idle')
+        or current_round > 0
+        or simulation_status in RAN_SIMULATION_STATUSES
+    )
+    return 3 if ran or report_status else 2
+
+
+@parthenon_bp.route('/gathering/<gathering_id>', methods=['GET'])
+def resolve_gathering(gathering_id):
+    """Where a gathering stands, from its project, simulation or report id.
+
+    data: {project_id, simulation_id, report_id, act: 1..4, runner_status,
+    report_status}. A project resolves to the night that got furthest (the
+    newest of those), a simulation to its newest Chronicle; a report id
+    resolves to that Chronicle.
+    404 when nothing matches.
+    """
+
+    match = GATHERING_ID_PATTERN.fullmatch(gathering_id or '')
+    if match is None:
+        return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
+    kind = match.group(1)
+    project_id = simulation_id = report_id = report_status = None
+    simulation = None
+    try:
+        if kind == 'report':
+            report = ReportManager.get_report(gathering_id)
+            if report is None or not chronicle_film.valid_report_id(report.report_id):
+                return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
+            report_id = report.report_id
+            report_status = report.status.value
+            simulation_id = report.simulation_id or None
+            canonical = citizen_portraits.find_simulation(simulation_id)
+            if canonical is not None:
+                simulation_id = canonical
+                simulation = SimulationManager().get_simulation(canonical)
+        elif kind == 'sim':
+            canonical = citizen_portraits.find_simulation(gathering_id)
+            simulation = SimulationManager().get_simulation(canonical) if canonical else None
+            if simulation is None:
+                return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
+            simulation_id = canonical
+            report_id, report_status = _latest_report(simulation_id)
+        else:
+            project = ProjectManager.get_project(gathering_id)
+            if project is None:
+                return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
+            project_id = project.project_id
+            simulation, report_id, report_status = _furthest_night(project_id)
+            if simulation is not None:
+                simulation_id = simulation.simulation_id
+        if simulation is not None and not project_id:
+            project_id = simulation.project_id or None
+    except Exception as error:  # noqa: BLE001 - a corrupt meta file
+        logger.error('Gathering %s could not be resolved: type=%s', gathering_id, type(error).__name__)
+        return _error('The gathering could not be read.', 500)
+
+    runner_status, current_round = _run_progress(simulation_id) if simulation_id else (None, 0)
+    simulation_status = getattr(simulation.status, 'value', None) if simulation is not None else None
+    data = {
+        'project_id': project_id,
+        'simulation_id': simulation_id,
+        'report_id': report_id,
+        'act': gathering_act(
+            simulation_id, simulation_status, runner_status, current_round, report_status
+        ),
+        'runner_status': runner_status,
+        'report_status': report_status,
+    }
+    return jsonify({'success': True, 'data': data})
+
+
+# ============== The Chronicle in the city's words ==============
+#
+# The Scribe now writes in the city's words (report_agent.scribe_voice runs
+# over everything she hands back). Chronicles written before that are stored
+# as they were written, "In the simulated month..." and all. The routes below
+# read them, so their JSON goes through the same pass on the way out: every
+# older Chronicle reads in the city's words wherever it is shown (the
+# Chronicle, the Symposium, the shelf) and nothing on disk changes. For a
+# Chronicle already in the city's words the pass changes nothing.
+
+CITY_WORDS_ENDPOINTS = frozenset({
+    'report.get_report',
+    'report.get_report_by_simulation',
+    'report.list_reports',
+    'report.get_report_sections',
+    'report.get_single_section',
+    'report.get_agent_log',
+    'simulation.get_simulation_history',
+})
+# Agent log entries whose details carry what the Scribe wrote.
+SCRIBE_LOG_ACTIONS = frozenset({'planning_complete', 'section_content', 'section_complete'})
+CITY_FACTS_CACHE_SIZE = 32
+CHRONICLE_FACTS_CACHE_SIZE = 256
+_BARE_HANDLE_NAME = re.compile(r'[a-z0-9]+(?:_[a-z0-9]+)*_\d+', re.I)
+
+_city_facts_lock = threading.Lock()
+_city_facts_cache = OrderedDict()
+_chronicle_facts_cache = OrderedDict()
+
+
+def _remember(cache, key, value, size):
+    with _city_facts_lock:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > size:
+            cache.popitem(last=False)
+
+
+def _recall(cache, key):
+    with _city_facts_lock:
+        return cache.get(key)
+
+
+def _file_stamp(path):
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return info.st_mtime_ns, info.st_size
+
+
+def city_facts(simulation_id):
+    """(roster, time_unit) of a gathering, as the Scribe reads them.
+
+    roster maps citizen handles (lower case, with and without their number)
+    to names; time_unit is "hour" or "day" when one step of the argument is
+    that long. Read from the gathering's folder, never created; cached until
+    those files change. ({}, None) for an unknown gathering.
+    """
+
+    canonical = citizen_portraits.find_simulation(simulation_id)
+    if canonical is None:
+        return {}, None
+    folder = os.path.join(SimulationManager.SIMULATION_DATA_DIR, canonical)
+    names = ('simulation_config.json', 'reddit_profiles.json', 'twitter_profiles.csv')
+    stamp = tuple(_file_stamp(os.path.join(folder, name)) for name in names)
+    cached = _recall(_city_facts_cache, canonical)
+    if cached is not None and cached[0] == stamp:
+        return cached[1], cached[2]
+
+    time_unit = None
+    try:
+        with open(os.path.join(folder, names[0]), 'r', encoding='utf-8') as handle:
+            minutes = (json.load(handle).get('time_config') or {}).get('minutes_per_round')
+        time_unit = {60: 'hour', 1440: 'day'}.get(int(minutes)) if minutes else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    profiles = []
+    try:
+        with open(os.path.join(folder, names[1]), 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        profiles.extend(item for item in data if isinstance(item, dict))
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        with open(os.path.join(folder, names[2]), 'r', encoding='utf-8', newline='') as handle:
+            profiles.extend(csv.DictReader(handle))
+    except (OSError, ValueError, csv.Error):
+        pass
+    roster = {}
+    for profile in profiles:
+        handle = str(profile.get('username') or '').strip().lstrip('@')
+        name = str(profile.get('name') or '').strip()
+        if not handle or not name or _BARE_HANDLE_NAME.fullmatch(name):
+            continue
+        roster.setdefault(handle.lower(), name)
+        roster.setdefault(re.sub(r'_\d+$', '', handle).lower(), name)
+    _remember(_city_facts_cache, canonical, (stamp, roster, time_unit), CITY_FACTS_CACHE_SIZE)
+    return roster, time_unit
+
+
+def _chronicle_facts(report_id):
+    """(simulation_id, question) of a Chronicle from its meta.json, or (None, '')."""
+
+    if not chronicle_film.valid_report_id(report_id):
+        return None, ''
+    cached = _recall(_chronicle_facts_cache, report_id)
+    if cached is not None:
+        return cached
+    try:
+        with open(os.path.join(ReportManager.REPORTS_DIR, report_id, 'meta.json'), 'r',
+                  encoding='utf-8') as handle:
+            meta = json.load(handle)
+    except (OSError, ValueError):
+        return None, ''
+    if not isinstance(meta, dict):
+        return None, ''
+    simulation_id = meta.get('simulation_id') if isinstance(meta.get('simulation_id'), str) else None
+    question = meta.get('simulation_requirement')
+    facts = (simulation_id, question if isinstance(question, str) else '')
+    # Neither changes once the Chronicle is begun.
+    _remember(_chronicle_facts_cache, report_id, facts, CHRONICLE_FACTS_CACHE_SIZE)
+    return facts
+
+
+class _CityWords:
+    """scribe_voice() with one gathering's roster, clock and question."""
+
+    def __init__(self, simulation_id, question):
+        self.roster, self.time_unit = city_facts(simulation_id) if simulation_id else ({}, None)
+        self.question = question if isinstance(question, str) else ''
+        self.rewrites = 0
+
+    def __call__(self, text):
+        if not isinstance(text, str) or not text.strip():
+            return text
+        voiced, notes = scribe_voice(
+            text, roster=self.roster, time_unit=self.time_unit, question=self.question
+        )
+        self.rewrites += sum(1 for note in notes if note.get('kind') == 'rewrote')
+        return voiced
+
+
+def _outline_in_city_words(outline, words):
+    if not isinstance(outline, dict):
+        return outline
+    outline = dict(outline)
+    for key in ('title', 'summary'):
+        outline[key] = words(outline.get(key))
+    sections = outline.get('sections')
+    if isinstance(sections, list):
+        outline['sections'] = [
+            {**section, 'title': words(section.get('title')), 'content': words(section.get('content'))}
+            if isinstance(section, dict) else section
+            for section in sections
+        ]
+    return outline
+
+
+def _record_in_city_words(record):
+    """A report's to_dict() in the city's words."""
+
+    if not isinstance(record, dict):
+        return record, 0
+    words = _CityWords(record.get('simulation_id'), record.get('simulation_requirement'))
+    record = dict(record)
+    outline = record.get('outline')
+    markdown = record.get('markdown_content')
+    if 'outline' in record:
+        record['outline'] = _outline_in_city_words(outline, words)
+    if isinstance(markdown, str):
+        # The whole Chronicle opens with her summary as a quotation (> ...), which
+        # the pass would keep as a citizen's words: it is hers, so it takes the
+        # summary as voiced above.
+        before = outline.get('summary') if isinstance(outline, dict) else None
+        after = record['outline'].get('summary') if isinstance(record.get('outline'), dict) else None
+        if isinstance(before, str) and isinstance(after, str) and before.strip() and before != after:
+            markdown = markdown.replace(f'> {before}', f'> {after}', 1)
+        record['markdown_content'] = words(markdown)
+    return record, words.rewrites
+
+
+def _log_in_city_words(entry, words):
+    if not isinstance(entry, dict):
+        return entry
+    entry = dict(entry)
+    if isinstance(entry.get('section_title'), str):
+        entry['section_title'] = words(entry['section_title'])
+    details = entry.get('details')
+    if entry.get('action') in SCRIBE_LOG_ACTIONS and isinstance(details, dict):
+        details = dict(details)
+        if 'outline' in details:
+            details['outline'] = _outline_in_city_words(details.get('outline'), words)
+        if 'content' in details:
+            details['content'] = words(details.get('content'))
+        entry['details'] = details
+    return entry
+
+
+def chronicle_in_city_words(endpoint, view_args, payload):
+    """The JSON body of a Chronicle route with what the Scribe wrote in the city's words.
+
+    Returns (payload, rewrites); the payload is a new object, the one given is
+    left as it was.
+    """
+
+    if not isinstance(payload, dict) or payload.get('success') is not True:
+        return payload, 0
+    data = payload.get('data')
+    rewrites = 0
+    if endpoint in ('report.get_report', 'report.get_report_by_simulation'):
+        data, rewrites = _record_in_city_words(data)
+    elif endpoint == 'report.list_reports' and isinstance(data, list):
+        voiced = []
+        for record in data:
+            record, count = _record_in_city_words(record)
+            voiced.append(record)
+            rewrites += count
+        data = voiced
+    elif endpoint == 'simulation.get_simulation_history' and isinstance(data, list):
+        voiced = []
+        for item in data:
+            if isinstance(item, dict) and isinstance(item.get('report_title'), str):
+                words = _CityWords(item.get('simulation_id'), item.get('simulation_requirement'))
+                item = {**item, 'report_title': words(item['report_title'])}
+                rewrites += words.rewrites
+            voiced.append(item)
+        data = voiced
+    elif endpoint in ('report.get_report_sections', 'report.get_single_section', 'report.get_agent_log'):
+        if not isinstance(data, dict):
+            return payload, 0
+        words = _CityWords(*_chronicle_facts((view_args or {}).get('report_id')))
+        data = dict(data)
+        if endpoint == 'report.get_report_sections' and isinstance(data.get('sections'), list):
+            data['sections'] = [
+                {**section, 'content': words(section.get('content'))}
+                if isinstance(section, dict) else section
+                for section in data['sections']
+            ]
+        elif endpoint == 'report.get_single_section':
+            data['content'] = words(data.get('content'))
+        elif endpoint == 'report.get_agent_log' and isinstance(data.get('logs'), list):
+            data['logs'] = [_log_in_city_words(entry, words) for entry in data['logs']]
+        rewrites = words.rewrites
+    else:
+        return payload, 0
+    return {**payload, 'data': data}, rewrites
+
+
+@parthenon_bp.after_app_request
+def _serve_in_city_words(response):
+    """Put the Chronicle routes' JSON in the city's words on the way out."""
+
+    endpoint = request.endpoint
+    if (
+        endpoint not in CITY_WORDS_ENDPOINTS
+        or request.method != 'GET'
+        or response.status_code != 200
+        or response.direct_passthrough
+        or not response.is_json
+    ):
+        return response
+    try:
+        payload = response.get_json(silent=True)
+        voiced, rewrites = chronicle_in_city_words(endpoint, request.view_args, payload)
+        if rewrites:
+            response.set_data(current_app.json.dumps(voiced))
+    except Exception as error:  # noqa: BLE001 - the Chronicle is never lost to its proofreading
+        logger.warning(
+            'The Chronicle could not be put in the city\'s words on %s: type=%s',
+            endpoint, type(error).__name__,
+        )
     return response
