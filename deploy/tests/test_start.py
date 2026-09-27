@@ -658,3 +658,12 @@ def test_the_image_files_agree():
                 'GROK_BRIDGE_TOKEN_FILE', 'PARTHENON_INVITE_CODE', 'PARTHENON_QUESTION_SECONDS'):
         assert f'key: {key}\n' in blueprint, key
     assert 'type: pserv' in blueprint and 'mountPath: /data' in blueprint
+
+
+def test_oasis_keeps_its_default_database_on_the_data_disk(tmp_path):
+    """Live failure: PermissionError making site-packages/oasis/data at a gathering's round 8."""
+    env = start.child_env({'PATH': '/bin'}, tmp_path, 8091, 5057)
+    assert env['OASIS_DB_PATH'] == str(tmp_path / 'cache' / 'oasis' / 'social_media.db')
+    assert start.child_env({'OASIS_DB_PATH': '/elsewhere.db'}, tmp_path, 1, 2)['OASIS_DB_PATH'] == '/elsewhere.db'
+    start.prepare_data(tmp_path)
+    assert (tmp_path / 'cache' / 'oasis').is_dir()

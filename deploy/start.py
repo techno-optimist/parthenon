@@ -62,6 +62,7 @@ DATA_LAYOUT = (
     'uploads/voices',
     'logs',
     'cache/huggingface',
+    'cache/oasis',
     'exhibits',
     'run',
 )
@@ -143,6 +144,13 @@ def child_env(environ: Mapping[str, str], data: Path, port: int, bridge_port: in
     env.setdefault('MEMORY_BACKEND', 'local')
     env.setdefault('LOCAL_MEMORY_DB_PATH', str(data / 'uploads' / 'memory' / 'local_memory.sqlite3'))
     env.setdefault('HF_HOME', str(data / 'cache' / 'huggingface'))
+    # OASIS reads its agents' follower counts from a default database, and
+    # without this makes a folder for it inside its own installed package,
+    # which the image's user cannot write: a gathering then dies the first
+    # time a citizen's prompt asks for followers. Here it is an empty file
+    # on the data disk, so the count reads 0 as it always has on the owner's
+    # machine (the run's own databases are passed to OASIS by path).
+    env.setdefault('OASIS_DB_PATH', str(data / 'cache' / 'oasis' / 'social_media.db'))
     env.setdefault('GROK_BRIDGE_TOKEN_FILE', str(default_sign_in_file(data)))
     # The backend and the simulations reach every model through the bridge,
     # which puts the provider's own model in place of this name.
