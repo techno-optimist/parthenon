@@ -140,7 +140,7 @@
               @pointerenter="warmLapse"
               @focusin="warmLapse"
             >
-              <span class="era-caption">{{ label('parthenon.hero.eraCaption', 'The same steps, 2,425 years apart') }}</span>
+              <span class="era-caption">{{ label('parthenon.hero.eraCaption', 'The same steps, 2,424 years apart') }}</span>
               <span class="era-options">
                 <button
                   v-for="(scene, key) in scenes"
@@ -291,7 +291,7 @@ const { t, te, tm, locale } = useI18n()
 const label = (key, fallback) => (te(key) ? t(key) : fallback)
 const zh = computed(() => String(locale.value).startsWith('zh'))
 
-// Same camera, 2,425 years apart: the Propylaea at dawn in 399 BC, and today.
+// Same camera, 2,424 years apart (there is no year 0): the Propylaea at dawn in 399 BC, and today.
 const scenes = {
   ancient: {
     still1280: withBase('/media/hero/acropolis-399bc-1280.jpg'),
