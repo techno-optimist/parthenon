@@ -56,6 +56,7 @@ __all__ = [
     "conflict",
     "decode_cursor",
     "encode_cursor",
+    "existing_local_memory_client",
     "get_local_memory_client",
     "is_busy_sqlite_error",
     "load_ontology",
@@ -98,6 +99,21 @@ def get_local_memory_client(db_path: PathLike | None = None) -> LocalZep:
         if client is None or client.closed:
             client = LocalZep(db_path=path)
             _clients[path] = client
+        return client
+
+
+def existing_local_memory_client(db_path: PathLike | None = None) -> LocalZep | None:
+    """The shared ``LocalZep`` for ``db_path`` when one is already open, else None.
+
+    Never constructs a client: readers that must not open the memory database
+    themselves (the Symposium's remembered answers) use this.
+    """
+
+    path = _normalized_path(db_path)
+    with _clients_lock:
+        client = _clients.get(path)
+        if client is None or client.closed:
+            return None
         return client
 
 

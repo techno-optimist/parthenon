@@ -12,6 +12,10 @@ gathering (see services/citizen_portraits.py).
 stood, period by period, from what they said (the Agora's "who moved").
 POST /api/parthenon/voice speaks an answer in the speaker's own voice (the
 Symposium), and GET /api/parthenon/voice/<file> serves the recording.
+POST /api/parthenon/gathering/<simulation_id>/speaker lets the visitor question
+the one who had the floor on the steps, after the square has closed: they
+answer from the record, in their own manner (see services/symposium_memory.py
+and services/floor.py).
 GET /api/parthenon/gathering/<id> tells where a gathering stands from any of
 its ids (project, simulation or report).
 
@@ -37,7 +41,8 @@ from openai import APIConnectionError, AuthenticationError, PermissionDeniedErro
 from . import parthenon_bp
 from ..config import Config
 from ..models.project import ProjectManager
-from ..services import chronicle_film, citizen_portraits
+from ..services import chronicle_film, citizen_portraits, symposium_memory
+from ..services.floor import speaker_for_file
 from ..services.report_agent import ReportManager, ReportStatus, scribe_voice
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner
@@ -47,7 +52,7 @@ from ..services.stage_oracle import (
     StageValidationError,
 )
 from ..utils.llm_client import LLMResponseError
-from ..utils.locale import get_locale
+from ..utils.locale import get_locale, t
 from ..utils.logger import get_logger
 from ..utils.zep import ZepApiError, get_zep_client
 
@@ -602,7 +607,7 @@ def citizen_portrait_file(simulation_id, name):
 
 STANCE_FIELDS = (
     'status', 'error', 'stale', 'created_at', 'updated_at', 'through_round',
-    'minutes_per_round', 'periods', 'citizens',
+    'minutes_per_round', 'lang', 'periods', 'citizens',
 )
 
 
@@ -646,8 +651,10 @@ def citizen_stances(simulation_id):
     created_at, updated_at, through_round, minutes_per_round, periods:
     [{period, from_round, to_round}], citizens: [{agent_id, name, entity_type,
     stance (where they began), spoke, stance_history: [{period, from_round,
-    to_round, stance}], final_stance, moved, turn}]}. Stances are supportive,
-    opposing or neutral; stale means more was said after the reading.
+    to_round, stance}], final_stance, moved, turn}], lang}. Stances are supportive,
+    opposing or neutral; stale means more was said after the reading. lang is
+    the gathering's language, the one turns are written in: a turn stored in
+    another language (by an older reader) comes back as "".
     """
 
     canonical = citizen_portraits.find_simulation(simulation_id)
@@ -656,6 +663,96 @@ def citizen_stances(simulation_id):
     reading = citizen_portraits.get_stances(canonical)
     data = {'simulation_id': canonical, **{key: reading.get(key) for key in STANCE_FIELDS}}
     return jsonify({'success': True, 'data': data})
+
+
+# ============== The one who had the floor ==============
+
+SPEAKER_ERRORS = {
+    'unreachable': ('api.speaker.unreachable', 503),
+    'timed_out': ('api.speaker.unreachable', 503),
+    'signed_out': ('api.speaker.signedOut', 503),
+    'no_scribe': ('api.speaker.noScribe', 503),
+    'silent': ('api.speaker.silent', 502),
+    'failed': ('api.speaker.silent', 502),
+}
+
+
+def _speaker_error(key, status, **kwargs):
+    return jsonify(symposium_memory.error_body(t(key, **kwargs))), status
+
+
+def _text_field(body, key):
+    value = body.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+@parthenon_bp.route('/gathering/<simulation_id>/speaker', methods=['POST'])
+def ask_the_speaker(simulation_id):
+    """Question the one who had the floor on the steps; they answer from the record.
+
+    Request JSON: {"question": "...", "history"?: [{"role": "user" |
+    "assistant", "content": "..."}], "lang"?: "en" | "zh" | ..., "name"?,
+    "file_name"?, "report_id"?}. The backend decides who answers, from the
+    gathering's own first scroll; name and file_name only check that the page
+    is current (a mismatch is a 404). report_id picks the Chronicle the
+    visitor is reading when it belongs to this gathering.
+    200: {"success": true, "data": {"answer", "from_memory": true, "lang",
+    "speaker": {name, zh, file_name, agent_id, voice: "speaker", voice_id}}}.
+    Every error body is {"success": false, "error": "<city words>",
+    "from_memory": true}: 400 no question, too long or a bad history; 404 no
+    such gathering, nobody had the floor, or not the one named; 502 no answer;
+    503 unreachable, signed out or no Scribe; 500 anything else.
+    """
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _speaker_error('api.speaker.needQuestion', 400)
+    question = body.get('question')
+    if not isinstance(question, str) or not question.strip():
+        return _speaker_error('api.speaker.needQuestion', 400)
+    if len(question) > symposium_memory.MAX_QUESTION_INPUT:
+        return _speaker_error('api.memory.tooLong', 400)
+    try:
+        history = symposium_memory.clean_history(body.get('history'))
+    except ValueError:
+        return _speaker_error('api.memory.badHistory', 400)
+    sent_name = _text_field(body, 'name')
+    try:
+        answer = symposium_memory.answer_as_speaker(
+            simulation_id, question=question.strip(), history=history, lang=_text_field(body, 'lang'),
+            name=sent_name, file_name=_text_field(body, 'file_name'),
+            report_id=_text_field(body, 'report_id'),
+        )
+    except symposium_memory.GatheringNotFound:
+        return _speaker_error('api.memory.notFound', 404)
+    except symposium_memory.FloorNotFound:
+        return _speaker_error('api.speaker.noFloor', 404)
+    except symposium_memory.WrongSpeaker:
+        return _speaker_error('api.speaker.wrongSpeaker', 404)
+    except symposium_memory.RecordError as error:
+        key, status = SPEAKER_ERRORS.get(error.code, ('api.speaker.failed', 500))
+        return _speaker_error(key, status, name=_speaker_name(error.entry, sent_name))
+    except Exception as error:  # noqa: BLE001 - never str(e) or a traceback
+        logger.error('The speaker of %s could not answer: type=%s', simulation_id, type(error).__name__)
+        try:
+            entry = speaker_for_file(citizen_portraits.gathering_scroll_name(simulation_id))
+        except Exception:  # noqa: BLE001 - only the name is missing then
+            entry = None
+        return _speaker_error('api.speaker.failed', 500, name=_speaker_name(entry, sent_name))
+    return jsonify({'success': True, 'data': {
+        'answer': answer['answer'],
+        'from_memory': True,
+        'lang': answer['lang'],
+        'speaker': answer['speaker'],
+    }})
+
+
+def _speaker_name(entry, sent_name):
+    """The one who had the floor, named in the visitor's language."""
+
+    if entry:
+        return entry['zh'] if get_locale() == 'zh' else entry['name']
+    return sent_name or ''
 
 
 # ============== The citizens' voices ==============
@@ -668,7 +765,11 @@ def speak_words():
     """Speak an answer in the speaker's voice (the Symposium).
 
     Request JSON: {"text": "...", "voice": "scribe" | "elder" | "official" |
-    "common" | "machine" (or a role family, or "plain"), "simulation_id",
+    "common" | "machine" (or a role family, or "plain") | "speaker" (the one
+    who had the floor: with simulation_id, the voice of the gathering's
+    scroll's narrator clip, e.g. rex for the Apology, ara for When Sand
+    Speaks; for a scroll the city does not know, the voice chosen as if none
+    were named), "simulation_id",
     "agent_id" or "name" (the citizen speaking: their role and how their
     portrait presents them choose the voice when "voice" is left out, and a
     man's or a woman's voice either way), "lang": "en" | "zh" | ..., "part":

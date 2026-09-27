@@ -19,6 +19,7 @@ from ..services.simulation_runner import (
     SimulationStopPending,
 )
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
+from ..services import citizen_portraits, symposium_memory
 from ..utils.logger import get_logger
 from ..utils.locale import t, get_locale, set_locale
 from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
@@ -2444,6 +2445,147 @@ def get_simulation_comments(simulation_id: str):
 
 
 # ============== Interview 采访接口 ==============
+#
+# Live answers need the run's environment (check_env_alive). Once the square
+# has closed, the three interview routes answer from each citizen's record
+# instead (services/symposium_memory.py): the same JSON shape, marked
+# from_memory, with every error body in the city's words and marked too.
+
+
+def _memory_error(key, status, **kwargs):
+    return jsonify(symposium_memory.error_body(t(key, **kwargs))), status
+
+
+def _memory_request(data):
+    """(lang, report_id) of a memory answer: used only when they are non-empty text."""
+
+    lang = data.get('lang') if isinstance(data.get('lang'), str) and data.get('lang').strip() else None
+    report_id = data.get('report_id')
+    report_id = report_id if isinstance(report_id, str) and report_id.strip() else None
+    return lang, report_id
+
+
+def _memory_ask(item):
+    """(agent_id, question, history) of one ask, or (None, error response)."""
+
+    agent_id = citizen_portraits._agent_id(item.get('agent_id')) if isinstance(item, dict) else None
+    if agent_id is None:
+        return None, _memory_error('api.memory.needCitizen', 400)
+    prompt = item.get('prompt')
+    if prompt is None:
+        prompt = ''
+    if not isinstance(prompt, str):
+        return None, _memory_error('api.memory.needQuestion', 400)
+    if len(prompt) > symposium_memory.MAX_PROMPT_INPUT:
+        return None, _memory_error('api.memory.tooLong', 400)
+    question = item.get('question')
+    if question is not None:
+        if not isinstance(question, str) or not question.strip():
+            return None, _memory_error('api.memory.needQuestion', 400)
+        if len(question) > symposium_memory.MAX_QUESTION_INPUT:
+            return None, _memory_error('api.memory.tooLong', 400)
+    try:
+        history = symposium_memory.clean_history(item.get('history'))
+    except ValueError:
+        return None, _memory_error('api.memory.badHistory', 400)
+    asked, told = symposium_memory.split_conversation(prompt)
+    question = question.strip() if question is not None else asked
+    if not question:
+        return None, _memory_error('api.memory.needQuestion', 400)
+    if not history:
+        history = told
+    return (agent_id, question, history), None
+
+
+def _memory_failed(route, error):
+    logger.error('Answering from memory (%s) failed: type=%s', route, type(error).__name__)
+    return _memory_error('api.memory.failed', 500)
+
+
+def _answer_from_memory_single(data, simulation_id, platform):
+    """/interview once the square has closed: one citizen answers from the record."""
+
+    try:
+        ask, failure = _memory_ask(data)
+        if failure:
+            return failure
+        if citizen_portraits.find_simulation(simulation_id) is None:
+            return _memory_error('api.memory.notFound', 404)
+        lang, report_id = _memory_request(data)
+        outcome = symposium_memory.answer_citizens(
+            simulation_id, [ask], kind='single', lang=lang, platform=platform,
+            deadline_seconds=symposium_memory.deadline(data.get('timeout'), 'single'), report_id=report_id,
+        )
+        body, status = symposium_memory.single_payload(outcome, data.get('prompt'), platform)
+        return jsonify(body), status
+    except symposium_memory.GatheringNotFound:
+        return _memory_error('api.memory.notFound', 404)
+    except Exception as error:  # noqa: BLE001 - never str(e) or a traceback
+        return _memory_failed('single', error)
+
+
+def _answer_from_memory_batch(data, simulation_id, interviews, platform):
+    """/interview/batch once the square has closed: each citizen answers from the record."""
+
+    try:
+        asks = []
+        item_platforms = {}
+        for item in interviews:
+            ask, failure = _memory_ask(item)
+            if failure:
+                return failure
+            asks.append(ask)
+            if item.get('platform'):
+                item_platforms.setdefault(ask[0], item.get('platform'))
+        distinct = len({ask[0] for ask in asks})
+        if distinct > symposium_memory.MAX_MEMORY_CROWD:
+            return _memory_error('api.memory.tooMany', 400, n=symposium_memory.MAX_MEMORY_CROWD)
+        if citizen_portraits.find_simulation(simulation_id) is None:
+            return _memory_error('api.memory.notFound', 404)
+        lang, report_id = _memory_request(data)
+        # The page asks one citizen at their couch through this route: that is one answer's wait.
+        wait_kind = 'single' if distinct == 1 else 'batch'
+        outcome = symposium_memory.answer_citizens(
+            simulation_id, asks, kind='batch', lang=lang, platform=platform,
+            deadline_seconds=symposium_memory.deadline(data.get('timeout'), wait_kind), report_id=report_id,
+        )
+        body, status = symposium_memory.batch_payload(
+            outcome, distinct, symposium_memory.message, item_platforms,
+        )
+        return jsonify(body), status
+    except symposium_memory.GatheringNotFound:
+        return _memory_error('api.memory.notFound', 404)
+    except Exception as error:  # noqa: BLE001 - never str(e) or a traceback
+        return _memory_failed('batch', error)
+
+
+def _answer_from_memory_all(data, simulation_id, prompt, platform):
+    """/interview/all once the square has closed: every citizen answers the one question."""
+
+    try:
+        if not isinstance(prompt, str):
+            return _memory_error('api.memory.needQuestion', 400)
+        if len(prompt) > symposium_memory.MAX_PROMPT_INPUT:
+            return _memory_error('api.memory.tooLong', 400)
+        question, history = symposium_memory.split_conversation(prompt)
+        if not question:
+            return _memory_error('api.memory.needQuestion', 400)
+        if citizen_portraits.find_simulation(simulation_id) is None:
+            return _memory_error('api.memory.notFound', 404)
+        ids = symposium_memory.citizen_ids(simulation_id)
+        lang, report_id = _memory_request(data)
+        outcome = symposium_memory.answer_citizens(
+            simulation_id, [(agent_id, question, history) for agent_id in ids], kind='all', lang=lang,
+            platform=platform, deadline_seconds=symposium_memory.deadline(data.get('timeout'), 'all'),
+            report_id=report_id,
+        )
+        body, status = symposium_memory.batch_payload(outcome, len(ids), symposium_memory.message)
+        return jsonify(body), status
+    except symposium_memory.GatheringNotFound:
+        return _memory_error('api.memory.notFound', 404)
+    except Exception as error:  # noqa: BLE001 - never str(e) or a traceback
+        return _memory_failed('all', error)
+
 
 @simulation_bp.route('/interview', methods=['POST'])
 def interview_agent():
@@ -2451,6 +2593,11 @@ def interview_agent():
     采访单个Agent
 
     注意：此功能需要模拟环境处于运行状态（完成模拟循环后进入等待命令模式）
+    Once the environment has closed, the citizen answers from the record
+    (services/symposium_memory.py): the same shape plus from_memory: true.
+    Memory-only fields: "question" (the bare question), "history" ([{role,
+    content}]), "lang" and "report_id"; the live run never sees them. Every
+    memory error body is {success: false, error, from_memory: true}.
 
     请求（JSON）：
         {
@@ -2530,12 +2677,13 @@ def interview_agent():
                 "error": t('api.invalidInterviewPlatform')
             }), 400
         
-        # 检查环境状态
+        # Ids that can never be gatherings (this also closes the path join below).
+        if not citizen_portraits.valid_simulation_id(simulation_id):
+            return _memory_error('api.memory.notFound', 404)
+
+        # 检查环境状态: once the square has closed, the citizen answers from the record.
         if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": t('api.envNotRunning')
-            }), 400
+            return _answer_from_memory_single(data, simulation_id, platform)
         
         # 优化prompt，添加前缀避免Agent调用工具
         optimized_prompt = optimize_interview_prompt(prompt)
@@ -2580,6 +2728,11 @@ def interview_agents_batch():
     批量采访多个Agent
 
     注意：此功能需要模拟环境处于运行状态
+    Once the environment has closed, each citizen answers from the record:
+    results["<platform>_<id>"] = {agent_id, response, platform, from_memory:
+    true, timestamp, error?}, plus result.unanswered (the ids without an
+    answer). Items may carry "question" and "history"; the top level may carry
+    "lang" and "report_id". The live run receives neither question nor history.
 
     请求（JSON）：
         {
@@ -2665,17 +2818,22 @@ def interview_agents_batch():
                     "error": t('api.interviewListInvalidPlatform', index=i+1)
                 }), 400
 
-        # 检查环境状态
+        # Ids that can never be gatherings (this also closes the path join below).
+        if not citizen_portraits.valid_simulation_id(simulation_id):
+            return _memory_error('api.memory.notFound', 404)
+
+        # 检查环境状态: once the square has closed, the citizens answer from the record.
         if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": t('api.envNotRunning')
-            }), 400
+            return _answer_from_memory_batch(data, simulation_id, interviews, platform)
 
         # 优化每个采访项的prompt，添加前缀避免Agent调用工具
+        # (question and history are for memory answers only: the live run never sees them)
         optimized_interviews = []
         for interview in interviews:
-            optimized_interview = interview.copy()
+            optimized_interview = {
+                key: value for key, value in interview.items()
+                if key not in symposium_memory.MEMORY_ONLY_KEYS
+            }
             optimized_interview['prompt'] = optimize_interview_prompt(interview.get('prompt', ''))
             optimized_interviews.append(optimized_interview)
 
@@ -2718,6 +2876,8 @@ def interview_all_agents():
     全局采访 - 使用相同问题采访所有Agent
 
     注意：此功能需要模拟环境处于运行状态
+    Once the environment has closed, every citizen (at most 60) answers from
+    the record, in the batch route's memory shape.
 
     请求（JSON）：
         {
@@ -2772,12 +2932,13 @@ def interview_all_agents():
                 "error": t('api.invalidInterviewPlatform')
             }), 400
 
-        # 检查环境状态
+        # Ids that can never be gatherings (this also closes the path join below).
+        if not citizen_portraits.valid_simulation_id(simulation_id):
+            return _memory_error('api.memory.notFound', 404)
+
+        # 检查环境状态: once the square has closed, every citizen answers from the record.
         if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": t('api.envNotRunning')
-            }), 400
+            return _answer_from_memory_all(data, simulation_id, prompt, platform)
 
         # 优化prompt，添加前缀避免Agent调用工具
         optimized_prompt = optimize_interview_prompt(prompt)
@@ -2907,7 +3068,8 @@ def get_env_status():
                 "env_alive": true,
                 "twitter_available": true,
                 "reddit_available": true,
-                "message": "环境正在运行，可以接收Interview命令"
+                "message": "环境正在运行，可以接收Interview命令",
+                "answers_from_memory": true   // the citizens can answer from the record when it is closed
             }
         }
     """
@@ -2939,7 +3101,9 @@ def get_env_status():
                 "env_alive": env_alive,
                 "twitter_available": env_status.get("twitter_available", False),
                 "reddit_available": env_status.get("reddit_available", False),
-                "message": message
+                "message": message,
+                # The citizens can answer from the record once the square has closed.
+                "answers_from_memory": bool(Config.LLM_API_KEY),
             }
         })
 

@@ -140,8 +140,10 @@ export const resolveGathering = (id) => {
  * Speak an answer in the speaker's voice. A long answer comes in parts: play
  * part 0 and ask for the next while it plays.
  *
- * @param {{ text: string, voice?: 'scribe'|'elder'|'official'|'common'|'machine'|'plain',
+ * @param {{ text: string, voice?: 'scribe'|'elder'|'official'|'common'|'machine'|'plain'|'speaker',
  *   simulation_id?: string, agent_id?: number|string, name?: string, lang?: string, part?: number }} body
+ *   voice 'speaker' is the gathering's speaker (the one who had the floor), in their narrator's
+ *   voice; it needs simulation_id.
  * @returns {Promise<{ success: true, data: { url: string, voice: string, voice_id: string,
  *   language: string, part: number, parts: number, cached: boolean, truncated: boolean } }>}
  *   url is backend-relative (filmAssetUrl). Rejects 503 when no voice service is
@@ -173,10 +175,20 @@ export const startCitizenStances = (simulationId, options = {}) => {
  *   through_round: number, minutes_per_round: number,
  *   periods: Array<{ period: number, from_round: number, to_round: number }>,
  *   citizens: Array<{ agent_id: number, name: string, entity_type: string|null,
- *     stance: string, spoke: boolean, final_stance: string, moved: boolean, turn: number|null,
- *     stance_history: Array<{ period: number, from_round: number, to_round: number, stance: string }> }>
- * } }>}
+ *     stance: string, spoke: number, final_stance: string, moved: boolean, turn: string,
+ *     stance_history: Array<{ period: number, from_round: number, to_round: number, stance: string }> }>,
+ *   lang: 'en'|'zh'
+ * } }>} turn is written in the gathering's language (lang); a turn stored in another language reads ''.
  */
 export const getCitizenStances = (simulationId) => {
   return service.get(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/stances`, { timeout: 30000 })
 }
+
+/**
+ * Ask the one who had the floor (the seat of honour); answered from the scroll and the night.
+ * The backend decides who answers from the gathering's own scroll; name and file_name only check the page is not stale.
+ * @param {string} simulationId
+ * @param {{ question: string, history?: Array<{role:'user'|'assistant', content:string}>, lang?: string, name?: string, file_name?: string, report_id?: string }} body
+ * @returns {Promise<{ success: true, data: { answer: string, from_memory: true, lang: string, speaker: { name: string, zh: string, file_name: string, agent_id: number|null, voice: 'speaker', voice_id: string } } }>} Errors carry from_memory: true: 400 bad question, 404 not this gathering's speaker, 502/503 could not answer.
+ */
+export const askSpeaker = (simulationId, body) => service.post(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/speaker`, body, { timeout: 200000 })

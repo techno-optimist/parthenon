@@ -67,3 +67,14 @@ def get_language_instruction() -> str:
     locale = get_locale()
     lang_config = _languages.get(locale, _languages.get('zh', {}))
     return lang_config.get('llmInstruction', '请使用中文回答。')
+
+
+def known_language(value) -> 'str | None':
+    """The language code a value names ('en', 'zh-CN' -> 'zh'), or None when the city has no such language."""
+    code = str(value or '').strip().lower().replace('_', '-').split('-')[0]
+    return code if code in _languages else None
+
+
+def language_instruction_for(code: str) -> str:
+    """The model's language instruction for a known language code (English for anything else)."""
+    return _languages.get(code, _languages['en'])['llmInstruction']

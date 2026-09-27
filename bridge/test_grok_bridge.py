@@ -323,3 +323,41 @@ def test_missing_sign_in_is_a_clear_401(tmp_path):
         "/v1/chat/completions", json={"model": "grok", "messages": []})
     assert response.status_code == 401
     assert "grok:login" in response.get_json()["error"]["message"]
+
+
+def test_a_caller_with_a_deadline_is_not_queued_past_it(tmp_path):
+    """A busy bridge answers a timed caller with its own 429 instead of calling xAI after the caller left."""
+    calls = []
+
+    def fake_request(self, method, path, body=None):
+        calls.append(path)
+        return 200, chat_ok("late")
+
+    store = make_store(tmp_path / "t.json", no_network)
+    upstream = gb.Upstream(store, store.http, mode="chat", max_concurrency=1)
+    upstream._request = fake_request.__get__(upstream)
+    upstream._slots.acquire()  # the only slot is busy
+    try:
+        status, data = upstream.chat_completion({"model": "grok", "messages": []}, budget=0.2)
+    finally:
+        upstream._slots.release()
+    assert status == 429
+    assert data["error"]["code"] == "bridge_throttled"
+    assert calls == []
+    status, data = upstream.chat_completion({"model": "grok", "messages": []}, budget=30)
+    assert status == 200 and calls == ["/chat/completions"]
+
+
+def test_the_route_passes_the_sdk_read_timeout_as_the_budget(tmp_path):
+    seen = []
+
+    class Timed(FakeUpstream):
+        def chat_completion(self, body, budget=None):
+            seen.append(budget)
+            return 200, chat_ok("ok")
+
+    client = gb.create_app(Timed(make_store(tmp_path / "t.json", no_network))).test_client()
+    client.post("/v1/chat/completions", json={"model": "grok", "messages": []})
+    client.post("/v1/chat/completions", json={"model": "grok", "messages": []},
+                headers={"x-stainless-read-timeout": "90"})
+    assert seen == [None, 90 - gb.CALLER_TIMEOUT_MARGIN]

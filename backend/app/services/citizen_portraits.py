@@ -33,7 +33,9 @@ The same cast also speaks and is read (the sections at the end):
             voice for the speaker (frontend vocabulary.js voiceOf) and, for a
             person, by how the casting saw them. A long answer is spoken in
             parts so the first words come in seconds. Recordings are kept by
-            content in <uploads>/voices/, so a line is recorded once.
+            content in <uploads>/voices/, so a line is recorded once. The
+            one who had the floor on the steps speaks in the voice of their
+            scroll's narrator clip (voice "speaker", services/floor.py).
   stances   a fast model (LLMClient.chat_json) reads what each citizen said in
             the Agora and the Stoa, period by period, and says where their words
             placed them on the question: <simulation dir>/stances.json holds
@@ -62,7 +64,7 @@ import httpx
 from ..config import Config
 from ..models.project import ProjectManager
 from ..utils.llm_client import LLMClient, LLMResponseError
-from ..utils.locale import get_language_instruction, get_locale, set_locale
+from ..utils.locale import get_language_instruction, set_locale
 from ..utils.logger import get_logger
 from .chronicle_film import (
     CJK_PATTERN,
@@ -74,6 +76,7 @@ from .chronicle_film import (
     FilmBridge,
     film_image_model,
 )
+from .floor import SPEAKER_VOICE, speaker_for_file
 from .report_agent import scribe_voice
 from .simulation_manager import SimulationManager
 
@@ -1639,6 +1642,35 @@ def _prune_voices(folder: str, keep: Optional[str] = None) -> None:
         total -= size
 
 
+def gathering_scroll_name(simulation_id: Any) -> Optional[str]:
+    """The file name of the scroll read on the steps (the project's first file), or None."""
+
+    canonical = find_simulation(simulation_id)
+    if canonical is None:
+        return None
+    state = _read_json(os.path.join(_simulation_dir(canonical), 'state.json'))
+    project_id = state.get('project_id') if isinstance(state, dict) else None
+    if not valid_simulation_id(project_id):
+        return None
+    try:
+        project = ProjectManager.get_project(project_id)
+    except Exception:  # noqa: BLE001 - a corrupt project.json only costs the scroll's name
+        return None
+    files = getattr(project, 'files', None) if project is not None else None
+    first = files[0] if isinstance(files, list) and files and isinstance(files[0], dict) else {}
+    name = first.get('filename')
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name.strip()
+
+
+def speaker_voice_id(simulation_id: Any) -> Optional[str]:
+    """The voice of the one who had the floor at this gathering (their scroll's narrator clip), or None."""
+
+    entry = speaker_for_file(gathering_scroll_name(simulation_id))
+    return entry['voice_id'] if entry else None
+
+
 def speak(text: Any, *, voice: Any = None, simulation_id: Any = None, agent_id: Any = None,
           name: Any = None, lang: Any = None, part: Any = 0, wait=time.sleep) -> Dict[str, Any]:
     """Record one part of an answer in the speaker's voice (once: the same words come back from disk).
@@ -1662,11 +1694,20 @@ def speak(text: Any, *, voice: Any = None, simulation_id: Any = None, agent_id: 
         raise VoiceValidationError(VOICE_NO_PART_MESSAGE)
     words = parts[index]
 
-    citizen, entity_type, presentation = False, None, None
-    if simulation_id is not None and (agent_id is not None or name):
-        citizen, entity_type, presentation = citizen_voice_facts(simulation_id, agent_id, name)
-    family = voice_family(voice, entity_type, citizen=citizen)
-    voice_id = VOICE_CAST[family].get(presentation) or VOICE_CAST[family][None]
+    # The one who had the floor keeps the voice of their scroll's narrator clip;
+    # for a scroll the table does not know, the voice is chosen as if none were named.
+    speaker_id = None
+    if isinstance(voice, str) and voice.strip().lower() == SPEAKER_VOICE:
+        speaker_id = speaker_voice_id(simulation_id) if simulation_id is not None else None
+        voice = None
+    if speaker_id:
+        family, voice_id = SPEAKER_VOICE, speaker_id
+    else:
+        citizen, entity_type, presentation = False, None, None
+        if simulation_id is not None and (agent_id is not None or name):
+            citizen, entity_type, presentation = citizen_voice_facts(simulation_id, agent_id, name)
+        family = voice_family(voice, entity_type, citizen=citizen)
+        voice_id = VOICE_CAST[family].get(presentation) or VOICE_CAST[family][None]
     # The whole answer decides the language, so every part is read alike.
     language = speech_language(lang, spoken)
     result = {
@@ -1936,7 +1977,7 @@ def build_stance_messages(requirement: str, citizens: List[Dict[str, Any]],
     )
     system = STANCE_SYSTEM_PROMPT
     if language_instruction:
-        system += f'\nWrite each "turn" sentence in the visitor\'s language: {language_instruction}\n'
+        system += f'\nWrite each "turn" sentence in the gathering\'s language: {language_instruction}\n'
     return [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]
 
 
@@ -1977,6 +2018,59 @@ def normalise_reading(data: Any, citizens: List[Dict[str, Any]],
     return found
 
 
+def text_language(text: Any) -> str:
+    """'zh' when CJK characters are at least a third of the text (spaces aside), else 'en'."""
+
+    if not isinstance(text, str):
+        return 'en'
+    letters = [char for char in text if not char.isspace()]
+    if letters and 3 * len(CJK_PATTERN.findall(text)) >= len(letters):
+        return 'zh'
+    return 'en'
+
+
+def gathering_language(requirement: Any, samples: Any = ()) -> str:
+    """The gathering's language: its question's, else its citizens' words', else English."""
+
+    if isinstance(requirement, str) and requirement.strip():
+        return text_language(requirement)
+    words = [sample for sample in (samples or ()) if isinstance(sample, str) and sample.strip()]
+    if words:
+        return text_language(' '.join(words)[:2000])
+    return 'en'
+
+
+def gathering_language_of(simulation_id: str) -> str:
+    """gathering_language() of a gathering on disk: its question, else its first personas."""
+
+    folder = _simulation_dir(simulation_id)
+    config = _read_json(os.path.join(folder, 'simulation_config.json'))
+    requirement = config.get('simulation_requirement') if isinstance(config, dict) else None
+    if isinstance(requirement, str) and requirement.strip():
+        return gathering_language(requirement)
+    personas = [row.get('persona') for row in _read_profiles(folder)[:3]]
+    return gathering_language(requirement, personas)
+
+
+def hide_foreign_turns(citizens: Any, lang: str) -> List[Any]:
+    """The ledger's citizens (new shallow copies) without turns written in another language.
+
+    A reading made before the reader wrote turns in the gathering's language
+    may hold turns in the visitor's language of that night; they are hidden
+    on the way out, never rewritten on disk.
+    """
+
+    kept = []
+    for citizen in citizens or []:
+        if isinstance(citizen, dict):
+            citizen = dict(citizen)
+            turn = citizen.get('turn')
+            if isinstance(turn, str) and turn.strip() and text_language(turn) != lang:
+                citizen['turn'] = ''
+        kept.append(citizen)
+    return kept
+
+
 def empty_stances() -> Dict[str, Any]:
     return {
         'status': 'none',
@@ -1985,6 +2079,7 @@ def empty_stances() -> Dict[str, Any]:
         'updated_at': None,
         'through_round': None,
         'minutes_per_round': None,
+        'lang': None,
         'source': [],
         'periods': [],
         'citizens': [],
@@ -2036,6 +2131,10 @@ def get_stances(simulation_id: str) -> Dict[str, Any]:
                 logger.warning('Could not mark the interrupted reading of %s as failed', simulation_id)
     source = action_log_source(_simulation_dir(simulation_id))
     reading['stale'] = bool(reading['citizens']) and reading.get('source') != source
+    # Only the object returned: turns in another language are hidden, never rewritten here.
+    lang = reading.get('lang') or gathering_language_of(simulation_id)
+    reading['lang'] = lang
+    reading['citizens'] = hide_foreign_turns(reading['citizens'], lang)
     return reading
 
 
@@ -2086,7 +2185,6 @@ class StanceReader:
         self.simulation_id = simulation_id
         self.folder = _simulation_dir(simulation_id)
         self.llm = llm
-        self.locale = locale or get_locale()
         self.source = action_log_source(self.folder)
         sayings, names = read_sayings(self.folder)
         if not sayings:
@@ -2099,6 +2197,11 @@ class StanceReader:
         self.minutes_per_round = minutes or None
         requirement = config.get('simulation_requirement')
         self.requirement = requirement if isinstance(requirement, str) else ''
+        # Turns are written in the gathering's language, whoever asked for the reading.
+        first_words = [words for _round, _stamp, words in sorted(
+            (saying for spoken in sayings.values() for saying in spoken), key=lambda saying: saying[:2]
+        )[:12]]
+        self.locale = locale or gathering_language(self.requirement, first_words)
 
         citizens: Dict[int, Dict[str, Any]] = {}
         for item in config.get('agent_configs') or []:
@@ -2135,6 +2238,7 @@ class StanceReader:
             ) if previous.get(key) is not None},
             'status': 'reading',
             'error': None,
+            'lang': self.locale,
             'created_at': now,
             'updated_at': now,
         }
@@ -2252,7 +2356,7 @@ class StanceReader:
             })
         self._save(
             status='completed', error=None, through_round=self.last_round,
-            minutes_per_round=self.minutes_per_round, source=self.source,
+            minutes_per_round=self.minutes_per_round, lang=self.locale, source=self.source,
             periods=self.periods, citizens=citizens,
         )
 

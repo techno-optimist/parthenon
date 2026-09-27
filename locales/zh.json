@@ -322,8 +322,8 @@
       "thinking": "{name} 正在思考",
       "scribeWriting": "书记官正在书写",
       "crowdAnswering": "众人正在作答",
-      "asleep": "广场散去时众人已回家。书记官仍在席前。",
-      "asleepCitizen": "广场散去时，{name}已经回家。这是他们说过的话；城邦的事可以问书记官。",
+      "asleep": "此刻众人还不能作答。书记官仍在席前。",
+      "asleepCitizen": "此刻{name}还不能作答。这是他们说过的话；城邦的事可以问书记官。",
       "sitWithScribe": "与书记官同坐",
       "placeholder": "提出你的问题",
       "placeholderScribe": "向书记官提问",
@@ -358,9 +358,10 @@
         "crowdAnswered": "{n} 人作答",
         "failed": "没有回答：{error}",
         "awake": "城邦醒着，可以向市民发问",
-        "asleep": "城邦已眠，只有书记官在席",
+        "asleep": "广场已散，此刻只有书记官在席",
         "read": "书记官读完了众人的回答",
-        "voices": "已从广场与柱廊收集市民们的原话"
+        "voices": "已从广场与柱廊收集市民们的原话",
+        "remembering": "广场已散，市民们凭记忆作答"
       },
       "needSeat": "请先与某人同坐。",
       "seeAll": "查看全部 {n} 位市民",
@@ -371,10 +372,11 @@
       "scribeSaw": "她所见",
       "city": {
         "awake": "城邦醒着。厅中每位市民都会作答。",
-        "asleep": "广场已散，市民们都回家了。他们的话还在：与任何一位同坐，读读他们说过什么；有问题就问书记官。",
+        "asleep": "广场已散。此刻只有书记官能作答；与任何一位市民同坐，可以读到他们说过的话。",
         "listening": "正在聆听城邦。",
         "statusAwake": "城邦醒着",
-        "statusAsleep": "城邦已眠"
+        "statusAsleep": "广场已散",
+        "remembering": "广场已散。市民们凭着对这一夜的记忆作答。"
       },
       "stance": {
         "forFirm": "坚定支持",
@@ -388,7 +390,8 @@
       },
       "saidIn": {
         "agora": "在广场上所言",
-        "stoa": "在柱廊里所言"
+        "stoa": "在柱廊里所言",
+        "steps": "在台阶上所言"
       },
       "hear": "听 {name} 亲口说",
       "stopHearing": "停止朗读",
@@ -447,7 +450,18 @@
         "brokeOff": "声音在说完之前沉寂了"
       },
       "honour": {
-        "floor": "{name}曾发言"
+        "floor": "{name}曾发言",
+        "ask": "向{name}提问",
+        "role": "曾在台阶上发言"
+      },
+      "remembering": "{name} 正在回想",
+      "crowdRemembering": "众人正在回想",
+      "emptySpeaker": "问问{name}在台阶上说了什么，城邦又怎样看待。",
+      "placeholderSpeaker": "向{name}提出你的问题",
+      "tryAgain": "请稍后再试。",
+      "crowdTrouble": "众人没有回答。{error}",
+      "memory": {
+        "mark": "凭记忆"
       }
     },
     "socraticLabel": "像苏格拉底那样发问",
@@ -574,7 +588,35 @@
     "envRunning": "环境正在运行，可以接收Interview命令",
     "envNotRunningShort": "环境未运行或已关闭",
     "requireGraphIdAndQuery": "请提供 graph_id 和 query",
-    "initReportAgent": "初始化Report Agent..."
+    "initReportAgent": "初始化Report Agent...",
+    "memory": {
+      "notFound": "找不到这场集会。",
+      "needCitizen": "每个问题都需要注明是哪位市民。",
+      "needQuestion": "请先提出一个问题。",
+      "noCitizen": "这场集会中没有这位市民。",
+      "tooLong": "这个问题太长了。",
+      "badHistory": "之前的对话格式不对。",
+      "tooMany": "一次最多向 {n} 位市民提问。",
+      "notAsked": "{name} 没有被问到：席上一次只能坐 {n} 位。",
+      "noScribe": "这里的市民无法凭记忆作答：书记官尚未就位。",
+      "signedOut": "需要主人重新登录后，市民们才能作答。",
+      "unreachable": "暂时联系不上市民们，请稍后再试。",
+      "unreachableOne": "暂时联系不上{name}，请稍后再试。",
+      "silent": "{name} 这次没有作答。",
+      "timedOut": "时间到时，{name} 还没有作答。",
+      "timedOutAll": "时间到时，市民们还没有作答。",
+      "failed": "市民们无法作答，详情见服务器日志。"
+    },
+    "speaker": {
+      "noFloor": "这场集会中没有人登台发言。",
+      "wrongSpeaker": "在这场集会中发言的不是这位。",
+      "needQuestion": "请先提出一个问题。",
+      "unreachable": "暂时联系不上{name}，请稍后再试。",
+      "noScribe": "{name}在这里无法作答：书记官尚未就位。",
+      "signedOut": "需要主人重新登录后，{name}才能作答。",
+      "silent": "{name} 这次没有作答。",
+      "failed": "{name}无法作答，详情见服务器日志。"
+    }
   },
   "progress": {
     "initGraphService": "初始化图谱构建服务...",
@@ -1526,7 +1568,7 @@
         "filmDone": "已制成",
         "filmRunning": "正在拍摄",
         "filmNone": "尚未拍摄",
-        "symposiumOpen": "与书记官同坐",
+        "symposiumOpen": "向市民与书记官提问",
         "symposiumWaiting": "编年史写成后开启",
         "closed": "尚未到达",
         "chronicleTrouble": "遇到了麻烦"

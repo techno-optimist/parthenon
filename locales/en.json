@@ -331,8 +331,8 @@
       "thinking": "{name} is thinking",
       "scribeWriting": "The Scribe is writing",
       "crowdAnswering": "The crowd is answering",
-      "asleep": "The crowd went home when the square closed. The Scribe is still at the table.",
-      "asleepCitizen": "{name} went home when the square closed. Here is what they said; the Scribe can answer for the city.",
+      "asleep": "For now the crowd cannot answer. The Scribe is still at the table.",
+      "asleepCitizen": "For now {name} cannot answer. Here is what they said; the Scribe can answer for the city.",
       "sitWithScribe": "Sit with the Scribe",
       "placeholder": "Ask your question",
       "placeholderScribe": "Ask the Scribe",
@@ -367,9 +367,10 @@
         "crowdAnswered": "{n} answered",
         "failed": "No answer: {error}",
         "awake": "The city is awake; the citizens can be questioned",
-        "asleep": "The city is asleep; only the Scribe is at the table",
+        "asleep": "The square has closed; for now only the Scribe is at the table",
         "read": "The Scribe read the crowd's answers",
-        "voices": "The citizens' own words were gathered from the Agora and the Stoa"
+        "voices": "The citizens' own words were gathered from the Agora and the Stoa",
+        "remembering": "The square has closed; the citizens answer from memory"
       },
       "needSeat": "Sit down with someone first.",
       "seeAll": "See all {w} citizens",
@@ -380,10 +381,11 @@
       "scribeSaw": "What she saw",
       "city": {
         "awake": "The city is awake. Every citizen in the room will answer.",
-        "asleep": "The square has closed and the citizens have gone home. Their words stay: sit with any of them to read what they said, and put your questions to the Scribe.",
+        "asleep": "The square has closed. For now only the Scribe can answer; sit with any citizen to read what they said.",
         "listening": "Listening for the city.",
         "statusAwake": "City awake",
-        "statusAsleep": "City asleep"
+        "statusAsleep": "Square closed",
+        "remembering": "The square has closed. The citizens answer from what they remember of the night."
       },
       "stance": {
         "forFirm": "Stood firmly for it",
@@ -397,7 +399,8 @@
       },
       "saidIn": {
         "agora": "Said in the Agora",
-        "stoa": "Said in the Stoa"
+        "stoa": "Said in the Stoa",
+        "steps": "Said on the steps"
       },
       "hear": "Hear {name} say it",
       "stopHearing": "Stop reading aloud",
@@ -456,7 +459,18 @@
         "brokeOff": "The voice fell quiet before the end"
       },
       "honour": {
-        "floor": "{name} had the floor"
+        "floor": "{name} had the floor",
+        "ask": "Ask {name}",
+        "role": "Had the floor on the steps"
+      },
+      "remembering": "{name} is remembering",
+      "crowdRemembering": "The crowd is remembering",
+      "emptySpeaker": "Ask {name} about what was said on the steps, and what the city made of it.",
+      "placeholderSpeaker": "Ask {name} your question",
+      "tryAgain": "Try again in a moment.",
+      "crowdTrouble": "The crowd did not answer. {error}",
+      "memory": {
+        "mark": "From memory"
       }
     }
   },
@@ -574,7 +588,35 @@
     "envRunning": "Environment is running and ready for Interview commands",
     "envNotRunningShort": "Environment not running or closed",
     "requireGraphIdAndQuery": "Please provide graph_id and query",
-    "initReportAgent": "Initializing Report Agent..."
+    "initReportAgent": "Initializing Report Agent...",
+    "memory": {
+      "notFound": "Gathering not found.",
+      "needCitizen": "Each question needs a citizen's number.",
+      "needQuestion": "Ask a question first.",
+      "noCitizen": "No such citizen at this gathering.",
+      "tooLong": "That question is too long.",
+      "badHistory": "The conversation so far is not in the right form.",
+      "tooMany": "Put one question to at most {n} citizens at a time.",
+      "notAsked": "{name} was not asked: the table seats {n} at a time.",
+      "noScribe": "The citizens cannot answer from memory here: the city's Scribe is not set up.",
+      "signedOut": "The citizens cannot answer until the owner signs in again.",
+      "unreachable": "The citizens could not be reached; try again in a moment.",
+      "unreachableOne": "{name} could not be reached; try again in a moment.",
+      "silent": "{name} did not answer this time.",
+      "timedOut": "{name} had not answered when the time ran out.",
+      "timedOutAll": "The citizens had not answered when the time ran out.",
+      "failed": "The citizens could not answer; the server log has the details."
+    },
+    "speaker": {
+      "noFloor": "No one took the floor at this gathering.",
+      "wrongSpeaker": "That is not who had the floor at this gathering.",
+      "needQuestion": "Ask a question first.",
+      "unreachable": "{name} could not be reached; try again in a moment.",
+      "noScribe": "{name} cannot answer here: the city's Scribe is not set up.",
+      "signedOut": "{name} cannot answer until the owner signs in again.",
+      "silent": "{name} did not answer this time.",
+      "failed": "{name} could not answer; the server log has the details."
+    }
   },
   "progress": {
     "initGraphService": "Initializing graph build service...",
@@ -2035,7 +2077,7 @@
         "filmDone": "Made",
         "filmRunning": "Being filmed",
         "filmNone": "Not yet filmed",
-        "symposiumOpen": "Sit with the Scribe",
+        "symposiumOpen": "Question the citizens and the Scribe",
         "symposiumWaiting": "Opens with the Chronicle",
         "closed": "Not yet reached",
         "chronicleTrouble": "Ran into trouble"

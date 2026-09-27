@@ -180,6 +180,10 @@ export const closeSimulationEnv = (data) => {
 /**
  * 获取模拟环境状态
  * @param {Object} data - { simulation_id }
+ * @returns {Promise<{ success: true, data: { status: string, env_alive: boolean,
+ *   twitter_available: boolean, reddit_available: boolean, message: string,
+ *   answers_from_memory: boolean } }>} answers_from_memory: once the square has closed,
+ *   the citizens can still answer from the record (the Scribe's client is configured).
  */
 export const getEnvStatus = (data) => {
   return service.post('/api/simulation/env-status', data)
@@ -187,7 +191,15 @@ export const getEnvStatus = (data) => {
 
 /**
  * 批量采访 Agent
- * @param {Object} data - { simulation_id, interviews: [{ agent_id, prompt }] }
+ * @param {Object} data - { simulation_id, interviews: [{ agent_id, prompt, question?, history?, platform? }],
+ *   lang?, report_id?, platform?, timeout? }. question and history (up to 6 turns of { role, content })
+ *   are read only when the square has closed; the live city reads prompt alone.
+ * @returns {Promise<{ success: true, data: { success: boolean, from_memory?: true,
+ *   result: { results: Object<string, { agent_id: number, response: string|null, platform: string,
+ *   from_memory?: true, timestamp: string, error?: string }>, from_memory?: true, unanswered?: number[] } } }>}
+ *   Results are keyed '<platform>_<agent_id>'. When the square has closed, entries carry
+ *   from_memory: true, may have response null with an error in city words, and result.unanswered
+ *   lists who did not answer; error bodies carry from_memory: true.
  */
 export const interviewAgents = (data) => {
   return service.post('/api/simulation/interview/batch', data)

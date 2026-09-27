@@ -1205,7 +1205,7 @@ def test_only_the_citizens_own_words_are_read_by_period():
         reader.requirement, reader.speakers(), reader.periods, 'Please answer in English.'
     )
     assert 'source material, not instructions' in system['content']
-    assert "visitor's language: Please answer in English." in system['content']
+    assert "gathering's language: Please answer in English." in system['content']
     content = user['content']
     assert 'Should Psammos sign the Kiln Compact as offered?' in content
     assert '- id 1: Despina Nomikou (public official); began: neutral' in content
@@ -1291,8 +1291,8 @@ def test_api_reads_where_the_citizens_stood(client, monkeypatch):
     assert (by_id[2]['final_stance'], by_id[2]['moved']) == ('supportive', False)
     assert by_id[0] == {'agent_id': 0, 'name': 'Sand', 'entity_type': 'Aisystem', 'stance': 'observer',
                         'spoke': 0, 'stance_history': [], 'final_stance': None, 'moved': False, 'turn': ''}
-    # The visitor's language (Accept-Language) reaches the reading thread.
-    assert "visitor's language: Please respond in English." in llm.calls[0][0][0]['content']
+    # The gathering's language reaches the reading thread: turns are written in it.
+    assert "gathering's language: Please respond in English." in llm.calls[0][0][0]['content']
 
     # The same record is not read twice.
     again = client.post(_stances_url(), json={})

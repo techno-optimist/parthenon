@@ -1,5 +1,5 @@
 <template>
-  <section ref="rootRef" class="symposium" :class="{ 'crowd-mode': mode === 'crowd', asleep: cityState === 'asleep', missing: chronicleMissing }">
+  <section ref="rootRef" class="symposium" :class="{ 'crowd-mode': mode === 'crowd', asleep: gateShut, remembering, missing: chronicleMissing }">
     <!-- The room's caption. -->
     <header class="room-head">
       <span class="p-eyebrow">{{ t('step5.symposium.room') }}</span>
@@ -87,16 +87,30 @@
         <div class="honour-copy">
           <p id="honour-floor" class="honour-floor">{{ t('step5.symposium.honour.floor', { name: honour.name }) }}</p>
           <blockquote v-if="honour.line" class="honour-line" :lang="langOf(honour.line)">{{ honour.line }}</blockquote>
-          <button type="button" class="honour-hear" :class="{ speaking: honourSpeaking }" @click="hearHonour">
-            <svg v-if="honourSpeaking" viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
-              <rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor" />
-            </svg>
-            <svg v-else viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-              <path d="M3.5 8v4h3l4 3.5v-11L6.5 8z" stroke-linejoin="round" />
-              <path d="M13.5 7.2a4 4 0 0 1 0 5.6M15.6 5a7 7 0 0 1 0 10" stroke-linecap="round" />
-            </svg>
-            <span>{{ honourSpeaking ? t('step5.symposium.hearing.stop') : t('parthenon.hearing.host.hear') }}</span>
-          </button>
+          <div class="honour-actions">
+            <button type="button" class="honour-hear" :class="{ speaking: honourSpeaking }" @click="hearHonour">
+              <svg v-if="honourSpeaking" viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
+                <rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor" />
+              </svg>
+              <svg v-else viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M3.5 8v4h3l4 3.5v-11L6.5 8z" stroke-linejoin="round" />
+                <path d="M13.5 7.2a4 4 0 0 1 0 5.6M15.6 5a7 7 0 0 1 0 10" stroke-linecap="round" />
+              </svg>
+              <span>{{ honourSpeaking ? t('step5.symposium.hearing.stop') : t('parthenon.hearing.host.hear') }}</span>
+            </button>
+            <!-- Once the square has closed, the one who had the floor can be asked too: one seat, one conversation. -->
+            <button
+              v-if="canAskSpeaker"
+              type="button"
+              class="honour-ask"
+              :class="{ seated: speakerSeated }"
+              :aria-pressed="mode === 'chat' ? speakerSeated : undefined"
+              @click="sitWithSpeaker"
+            >
+              <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5.5h12v7H9l-3.5 3v-3H4z" stroke-linejoin="round" /></svg>
+              <span>{{ t('step5.symposium.honour.ask', { name: floorLabel }) }}</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -172,8 +186,8 @@
       <div class="p-meander table-rule" aria-hidden="true"></div>
 
       <ol class="dialogue" role="log" aria-live="polite" aria-relevant="additions">
-        <li v-if="chatHistory.length === 0 && !isSending && !(cityState === 'asleep' && chatTarget === 'agent')" class="dialogue-empty">
-          <p>{{ chatTarget === 'report_agent' ? t('step5.symposium.emptyScribe') : t('step5.symposium.emptyCitizen', { name: companion ? companion.name : '' }) }}</p>
+        <li v-if="chatHistory.length === 0 && !(isSending && sendingKey === currentSeatKey) && !(gateShut && chatTarget === 'agent')" class="dialogue-empty">
+          <p>{{ emptyLine }}</p>
         </li>
         <li
           v-for="(msg, idx) in chatHistory"
@@ -199,6 +213,7 @@
             <div class="answered-body">
               <span class="line-meta">
                 <span class="line-who">{{ speakerName }}</span>
+                <span v-if="msg.memory" class="memory-mark">{{ t('step5.symposium.memory.mark') }}</span>
                 <button
                   v-if="canHear"
                   type="button"
@@ -231,7 +246,7 @@
             </div>
           </template>
         </li>
-        <li v-if="isSending" class="line answered thinking">
+        <li v-if="isSending && sendingKey === currentSeatKey" class="line answered thinking">
           <CitizenCoin
             v-if="companion"
             class="line-face"
@@ -250,7 +265,7 @@
       </ol>
 
       <div class="prompt" :class="{ stuck: chatHistory.length > 0 }">
-        <p v-if="cityState === 'asleep' && chatTarget === 'agent'" class="asleep-note" role="status">
+        <p v-if="gateShut && chatTarget === 'agent'" class="asleep-note" role="status">
           <span>{{ t('step5.symposium.asleepCitizen', { name: companion ? companion.name : '' }) }}</span>
           <button type="button" class="p-button secondary tall" @click="sitWithScribe">{{ t('step5.symposium.sitWithScribe') }}</button>
         </p>
@@ -276,13 +291,13 @@
         </div>
 
         <form class="ask" @submit.prevent="sendMessage">
-          <label class="sr-only" for="symposium-ask">{{ chatTarget === 'report_agent' ? t('step5.symposium.placeholderScribe') : t('step5.symposium.placeholder') }}</label>
+          <label class="sr-only" for="symposium-ask">{{ askPlaceholder }}</label>
           <textarea
             id="symposium-ask"
             ref="chatInputRef"
             v-model="chatInput"
             class="ask-input"
-            :placeholder="chatTarget === 'report_agent' ? t('step5.symposium.placeholderScribe') : t('step5.symposium.placeholder')"
+            :placeholder="askPlaceholder"
             rows="1"
             :disabled="isChatInputDisabled"
             @keydown.enter.exact="onAskEnter"
@@ -329,7 +344,7 @@
           :placeholder="t('step5.symposium.crowdPlaceholder')"
           rows="2"
           :readonly="isSurveying"
-          :disabled="!cityAwake"
+          :disabled="gateShut"
         ></textarea>
         <div class="crowd-submit">
           <!-- Never natively disabled: the button keeps focus while the crowd answers. -->
@@ -338,9 +353,10 @@
             class="p-button"
             :aria-disabled="canAskCrowd ? undefined : 'true'"
             :aria-describedby="crowdReason ? 'crowd-reason' : undefined"
-          >{{ isSurveying ? t('step5.symposium.crowdAnswering') : t('step5.symposium.askTheCrowd') }}</button>
+          >{{ isSurveying ? crowdWorking : t('step5.symposium.askTheCrowd') }}</button>
           <span v-if="crowdReason" id="crowd-reason" class="ask-reason">{{ crowdReason }}</span>
         </div>
+        <p v-if="crowdTrouble && !isSurveying" class="ask-reason crowd-trouble" role="status">{{ crowdTrouble }}</p>
       </form>
 
       <!-- Said once, politely, when the answers are in and again when the Scribe has read them. -->
@@ -352,7 +368,7 @@
             <CitizenCoin :name="c.name" :type="c.type" :color="c.color" :portrait="c.portrait" size="sm" />
           </li>
         </ul>
-        <span class="ask-reason">{{ t('step5.symposium.crowdAnswering') }}</span>
+        <span class="ask-reason">{{ crowdWorking }}</span>
         <span class="ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
 
@@ -406,6 +422,7 @@
           <div class="answered-body">
             <span class="line-meta">
               <span class="line-who">{{ activeAnswer.name }}</span>
+              <span v-if="activeAnswer.memory" class="memory-mark">{{ t('step5.symposium.memory.mark') }}</span>
               <button
                 v-if="canHear && activeAnswer.spoke"
                 type="button"
@@ -451,7 +468,7 @@
           <li v-for="r in surveyResults" :key="`reply-${r.agent_id}`" class="reply">
             <CitizenCoin :name="r.name" :type="r.type" :color="r.color" :portrait="portraitOf(r)" size="md" />
             <div class="answered-body">
-              <span class="line-meta"><span class="line-who">{{ r.name }}</span></span>
+              <span class="line-meta"><span class="line-who">{{ r.name }}</span><span v-if="r.memory" class="memory-mark">{{ t('step5.symposium.memory.mark') }}</span></span>
               <p v-if="r.role" class="q-role">{{ r.role }}</p>
               <div class="answered-text" :lang="langOf(r.answer)" v-html="renderMarkdown(r.answer)"></div>
             </div>
@@ -535,11 +552,13 @@ import {
 import { getProject } from '../api/graph'
 import { citizenName, entityTypeName, roleFamily, roleLabel, roleColorVar, ROLE_COLOR_VAR, voiceOf as voiceForType } from '../parthenon/vocabulary.js'
 import { speakerFace, useCitizenPortraits } from '../parthenon/portraits.js'
-import { speakWords, filmAssetUrl, getCitizenStances } from '../api/parthenon'
+import { speakWords, filmAssetUrl, getCitizenStances, askSpeaker } from '../api/parthenon'
 import { holdDuck, sound, speak, stopSpeaking, voiceUrl } from '../parthenon/sound.js'
 import { speakers } from '../parthenon/speakers.js'
 import { arrivals } from '../parthenon/arrivals/index.js'
 import { localText } from '../parthenon/localText.js'
+import { floorOf, floorName, floorSeat } from '../parthenon/floor.js'
+import { conversationFor, answerFrom, cityError, troubleFrom, canQuestion as canQuestionOf, isRemembering } from '../parthenon/answers.js'
 
 const { t, tm, locale } = useI18n()
 
@@ -552,12 +571,16 @@ const emit = defineEmits(['add-log', 'update-status'])
 
 // Room state
 const mode = ref('chat') // chat | crowd
-const chatTarget = ref('report_agent') // report_agent | agent
+const chatTarget = ref('report_agent') // report_agent | agent | speaker
 const selectedAgent = ref(null)
 const selectedAgentIndex = ref(null)
-// Whether the citizens can be questioned: they are present only while the city is awake.
+// Whether the square is open: while it is, the citizens answer live.
 const cityState = ref('unknown') // unknown | awake | asleep
-const cityAwake = computed(() => cityState.value !== 'asleep')
+// Once it has closed, they answer from what they remember of the night (when the backend can).
+const memoryReady = ref(false)
+const remembering = computed(() => isRemembering(cityState.value, memoryReady.value))
+// Shut only for a backend that cannot answer from memory, with the square closed.
+const gateShut = computed(() => !canQuestionOf(cityState.value, memoryReady.value))
 // No Chronicle at this address: the room is not laid and nothing can be asked.
 const chronicleMissing = ref(false)
 const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.message || err || ''))
@@ -689,6 +712,11 @@ const hearHonour = () => {
 onBeforeUnmount(() => {
   if (honourSpeaking.value) stopSpeaking()
 })
+
+// The one who had the floor can be questioned too, once the city answers from
+// memory: the backend decides who answers from the gathering's own scroll.
+const floor = computed(() => (chronicleMissing.value ? null : floorOf(seedFile.value)))
+const floorLabel = computed(() => floorName(floor.value, locale.value))
 
 const socraticPrompts = computed(() => tm('step5.socraticPrompts'))
 
@@ -869,7 +897,37 @@ const citizens = computed(() =>
     }
   })
 )
-const companion = computed(() => (chatTarget.value === 'agent' && selectedAgentIndex.value !== null ? citizens.value[selectedAgentIndex.value] : null))
+// Their couch, when they also sat among the citizens: one person, one seat, one conversation.
+const speakerIdx = computed(() => (floor.value && memoryReady.value ? floorSeat(floor.value, citizens.value) : null))
+const speakerSeated = computed(() => mode.value === 'chat' && chatTarget.value === 'speaker')
+// The speaker's route exists only on a backend that answers from memory.
+const canAskSpeaker = computed(() => !!floor.value && memoryReady.value)
+// At the table the speaker is seen as at the seat of honour: their face, their line, cited from the steps.
+const speakerCompanion = computed(() => {
+  if (chatTarget.value !== 'speaker') return null
+  const base = speakerIdx.value !== null ? citizens.value[speakerIdx.value] || null : null
+  return {
+    key: 'speaker',
+    idx: speakerIdx.value ?? -1,
+    agentId: base ? base.agentId : null,
+    name: floorLabel.value,
+    type: base?.type || '',
+    color: base?.color || '',
+    ring: 'var(--p-gold)',
+    role: t('step5.symposium.honour.role'),
+    line: honour.value?.line || '',
+    // The one who had the floor read the scroll; a "stood for it" chip under
+    // that role would say they stood for or against their own words.
+    stance: null,
+    quote: honour.value?.line ? { text: honour.value.line, place: 'steps' } : null,
+    portrait: honour.value?.face || base?.portrait || '',
+    speaker: true
+  }
+})
+const companion = computed(() => {
+  if (chatTarget.value === 'speaker') return speakerCompanion.value
+  return chatTarget.value === 'agent' && selectedAgentIndex.value !== null ? citizens.value[selectedAgentIndex.value] : null
+})
 const chosenCitizens = computed(() => citizens.value.filter((c) => selectedAgents.value.has(c.idx)))
 const speakerName = computed(() => (companion.value ? companion.value.name : t('step5.symposium.scribe')))
 
@@ -893,7 +951,9 @@ const wings = computed(() => {
     .filter((key) => buckets[key].length)
     .map((key) => ({ key, area: WING_AREA[key], label: t(`step5.symposium.wall.${key}`), items: buckets[key] }))
 })
-const isSeated = (c) => mode.value === 'chat' && chatTarget.value === 'agent' && selectedAgentIndex.value === c.idx
+const isSeated = (c) =>
+  mode.value === 'chat' &&
+  ((chatTarget.value === 'agent' && selectedAgentIndex.value === c.idx) || (chatTarget.value === 'speaker' && speakerIdx.value === c.idx))
 const scribeSeated = computed(() => mode.value === 'chat' && chatTarget.value === 'report_agent')
 const scribeNote = computed(() => {
   if (scribeSeated.value) return t('step5.symposium.seated')
@@ -906,7 +966,14 @@ const seatNote = (c) => {
 }
 // What a listener hears after the name: who they are and where they stood.
 const seatDescription = (c) => [c.role, c.stance ? c.stance.text : ''].filter(Boolean).join('. ')
-const seatKey = computed(() => (companion.value ? `c-${companion.value.idx}` : 'scribe'))
+const seatKey = computed(() => (companion.value?.speaker ? 'speaker' : companion.value ? `c-${companion.value.idx}` : 'scribe'))
+// The conversation a question belongs to: the same keys chatHistoryCache keeps.
+const currentSeatKey = computed(() =>
+  chatTarget.value === 'report_agent' ? 'report_agent' : chatTarget.value === 'speaker' ? 'speaker' : `agent_${selectedAgentIndex.value}`
+)
+// The seat whose question is on its way, and why the last crowd question failed.
+const sendingKey = ref('')
+const crowdTrouble = ref('')
 
 // The question the couches stood for or against: the last question the city was asked.
 const matter = computed(() => {
@@ -929,7 +996,7 @@ const companyLine = computed(() => {
 })
 const cityLine = computed(() => {
   if (cityState.value === 'awake') return t('step5.symposium.city.awake')
-  if (cityState.value === 'asleep') return t('step5.symposium.city.asleep')
+  if (cityState.value === 'asleep') return remembering.value ? t('step5.symposium.city.remembering') : t('step5.symposium.city.asleep')
   return t('step5.symposium.city.listening')
 })
 const crowdCountLine = computed(() => {
@@ -938,19 +1005,32 @@ const crowdCountLine = computed(() => {
   if (n === 1) return t('step5.symposium.crowdCountOne')
   return capital(t('step5.symposium.crowdCount', { n, w: inWords(n) }))
 })
-const workingText = computed(() =>
-  chatTarget.value === 'report_agent'
-    ? t('step5.symposium.scribeWriting')
-    : t('step5.symposium.thinking', { name: companion.value ? companion.value.name : '' })
-)
+const workingText = computed(() => {
+  if (chatTarget.value === 'report_agent') return t('step5.symposium.scribeWriting')
+  const name = companion.value ? companion.value.name : ''
+  if (chatTarget.value === 'speaker' || remembering.value) return t('step5.symposium.remembering', { name })
+  return t('step5.symposium.thinking', { name })
+})
+const crowdWorking = computed(() => (remembering.value ? t('step5.symposium.crowdRemembering') : t('step5.symposium.crowdAnswering')))
+const emptyLine = computed(() => {
+  if (chatTarget.value === 'report_agent') return t('step5.symposium.emptyScribe')
+  if (chatTarget.value === 'speaker') return t('step5.symposium.emptySpeaker', { name: floorLabel.value })
+  return t('step5.symposium.emptyCitizen', { name: companion.value ? companion.value.name : '' })
+})
+const askPlaceholder = computed(() => {
+  if (chatTarget.value === 'report_agent') return t('step5.symposium.placeholderScribe')
+  if (chatTarget.value === 'speaker') return t('step5.symposium.placeholderSpeaker', { name: floorLabel.value })
+  return t('step5.symposium.placeholder')
+})
 
+// One question is on its way at a time, as always.
 const isChatInputDisabled = computed(() =>
-  isSending.value || (chatTarget.value === 'agent' && (selectedAgentIndex.value === null || !cityAwake.value))
+  isSending.value || (chatTarget.value === 'agent' && (selectedAgentIndex.value === null || gateShut.value))
 )
-const canAskCrowd = computed(() => cityAwake.value && selectedAgents.value.size > 0 && !!surveyQuestion.value.trim() && !isSurveying.value)
+const canAskCrowd = computed(() => !gateShut.value && selectedAgents.value.size > 0 && !!surveyQuestion.value.trim() && !isSurveying.value)
 const crowdReason = computed(() => {
   if (isSurveying.value) return ''
-  if (!cityAwake.value) return t('step5.symposium.asleep')
+  if (gateShut.value) return t('step5.symposium.asleep')
   if (!selectedAgents.value.size) return t('step5.symposium.needCrowd')
   if (!surveyQuestion.value.trim()) return t('step5.symposium.needQuestion')
   return ''
@@ -969,6 +1049,8 @@ const setIdle = () => {
 const saveChatHistory = () => {
   if (chatTarget.value === 'report_agent') {
     chatHistoryCache.value.report_agent = [...chatHistory.value]
+  } else if (chatTarget.value === 'speaker') {
+    chatHistoryCache.value.speaker = [...chatHistory.value]
   } else if (selectedAgentIndex.value !== null) {
     chatHistoryCache.value[`agent_${selectedAgentIndex.value}`] = [...chatHistory.value]
   }
@@ -985,7 +1067,22 @@ const sitWithScribe = () => {
   goToTable()
 }
 
+// The seat of honour: the one who had the floor, answered from the scroll and the night.
+const sitWithSpeaker = () => {
+  if (!canAskSpeaker.value) return
+  saveChatHistory()
+  mode.value = 'chat'
+  chatTarget.value = 'speaker'
+  selectedAgent.value = null
+  selectedAgentIndex.value = speakerIdx.value
+  chatHistory.value = chatHistoryCache.value.speaker || []
+  addLog(t('step5.symposium.ledger.sat', { name: floorLabel.value }))
+  goToTable()
+}
+
 const sitWith = (citizen, idx) => {
+  // The speaker's own couch leads to the seat of honour: one person, one conversation, one voice.
+  if (speakerIdx.value !== null && idx === speakerIdx.value && canAskSpeaker.value) return sitWithSpeaker()
   saveChatHistory()
   mode.value = 'chat'
   selectedAgent.value = profiles.value[idx]
@@ -993,7 +1090,7 @@ const sitWith = (citizen, idx) => {
   chatTarget.value = 'agent'
   chatHistory.value = chatHistoryCache.value[`agent_${idx}`] || []
   addLog(t('step5.symposium.ledger.sat', { name: citizen.name }))
-  if (!cityAwake.value) checkCity()
+  if (cityState.value === 'asleep') checkCity()
   goToTable()
 }
 
@@ -1042,7 +1139,7 @@ const toggleCrowdMode = () => {
   } else {
     saveChatHistory()
     mode.value = 'crowd'
-    if (!cityAwake.value) checkCity()
+    if (cityState.value === 'asleep') checkCity()
   }
 }
 
@@ -1057,14 +1154,16 @@ const growInput = () => {
 const renderMarkdown = (content) => {
   if (!content) return ''
 
-  let processedContent = content.replace(/^##\s+.+\n+/, '')
+  // Escaped first: nothing a citizen, the Scribe or an answer writes becomes markup in the page.
+  const safe = String(content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  let processedContent = safe.replace(/^##\s+.+\n+/, '')
   let html = processedContent.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
   html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
   html = html.replace(/^#### (.+)$/gm, '<h5 class="md-h5">$1</h5>')
   html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>')
   html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>')
   html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>')
-  html = html.replace(/^> (.+)$/gm, '<blockquote class="md-quote">$1</blockquote>')
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote class="md-quote">$1</blockquote>')
 
   html = html.replace(/^(\s*)- (.+)$/gm, (match, indent, text) => {
     const level = Math.floor(indent.length / 2)
@@ -1179,11 +1278,17 @@ const quietAudio = () => {
 }
 
 // Who is speaking, as the voice route wants to know them.
-const chatSpeaker = () =>
-  companion.value
+// The one who had the floor speaks in their narrator's voice wherever they answer.
+const chatSpeaker = () => {
+  if (companion.value?.speaker) return { voice: 'speaker', agentId: companion.value.agentId ?? undefined, name: floor.value?.name }
+  return companion.value
     ? { voice: voiceForType(companion.value.type), agentId: companion.value.agentId, name: companion.value.name }
     : { voice: 'scribe' }
-const crowdSpeaker = (r) => ({ voice: voiceForType(r.type), agentId: r.agentId, name: r.name })
+}
+const crowdSpeaker = (r) =>
+  speakerIdx.value !== null && r.agent_id === speakerIdx.value
+    ? { voice: 'speaker', agentId: r.agentId, name: r.name }
+    : { voice: voiceForType(r.type), agentId: r.agentId, name: r.name }
 
 // When a Stop button (or the hear button) leaves with the voice, focus goes to the answer's hear button.
 const keepFocus = (key) => {
@@ -1390,7 +1495,13 @@ const onAskEnter = (e) => {
   sendMessage()
 }
 
-// Asking
+// Asking. An answer lands in the conversation it was asked in, even when the
+// visitor has moved to another seat while it was on its way.
+const deliver = (key, entry) => {
+  if (currentSeatKey.value === key) chatHistory.value.push(entry)
+  else chatHistoryCache.value[key] = [...(chatHistoryCache.value[key] || []), entry]
+}
+
 const sendMessage = async () => {
   if (chronicleMissing.value || !chatInput.value.trim() || isChatInputDisabled.value) return
 
@@ -1398,35 +1509,44 @@ const sendMessage = async () => {
   chatInput.value = ''
   nextTick(growInput)
 
+  const key = currentSeatKey.value
+  sendingKey.value = key
   chatHistory.value.push({ role: 'user', content: message, timestamp: new Date().toISOString() })
   isSending.value = true
   setStatus('working', workingText.value)
   scrollToEnd()
 
   try {
-    if (chatTarget.value === 'report_agent') {
-      await sendToScribe(message)
-    } else {
-      await sendToCitizen(message)
-    }
+    const entry =
+      chatTarget.value === 'report_agent'
+        ? await sendToScribe(message)
+        : chatTarget.value === 'speaker'
+          ? await sendToSpeaker(message)
+          : await sendToCitizen(message)
+    deliver(key, entry)
     isSending.value = false
     setIdle()
   } catch (err) {
-    addLog(t('step5.symposium.ledger.failed', { error: err.message }))
-    chatHistory.value.push({
+    // Only the city's own words reach the room; anything else asks for a moment.
+    const text = troubleFrom(err, t('step5.symposium.tryAgain'))
+    addLog(t('step5.symposium.ledger.failed', { error: text }))
+    deliver(key, {
       role: 'assistant',
-      content: t('step5.symposium.trouble', { error: err.message }),
+      content: t('step5.symposium.trouble', { error: text }),
+      failed: true,
       timestamp: new Date().toISOString()
     })
     setStatus('error')
   } finally {
     isSending.value = false
-    saveChatHistory()
+    sendingKey.value = ''
+    if (currentSeatKey.value === key) saveChatHistory()
     scrollToEnd()
     focusInput()
   }
 }
 
+// Each asker reads what it needs before its first wait, and hands back the answer.
 const sendToScribe = async (message) => {
   addLog(t('step5.symposium.ledger.asked', { name: t('step5.symposium.scribe'), q: message.substring(0, 60) }))
 
@@ -1441,64 +1561,60 @@ const sendToScribe = async (message) => {
     chat_history: historyForApi
   })
 
-  if (res.success && res.data) {
-    chatHistory.value.push({
-      role: 'assistant',
-      content: res.data.response || res.data.answer || t('step5.noResponse'),
-      timestamp: new Date().toISOString()
-    })
-    addLog(t('step5.symposium.ledger.answered', { name: t('step5.symposium.scribe') }))
-  } else {
-    throw new Error(res.error || t('step5.requestFailed'))
-  }
+  if (!res.success || !res.data) throw new Error(res.error || t('step5.requestFailed'))
+  const content = res.data.response || res.data.answer
+  if (!content) throw cityError(t('step5.noResponse'))
+  addLog(t('step5.symposium.ledger.answered', { name: t('step5.symposium.scribe') }))
+  return { role: 'assistant', content, timestamp: new Date().toISOString() }
 }
 
 const sendToCitizen = async (message) => {
-  if (!selectedAgent.value || selectedAgentIndex.value === null || !companion.value) {
-    throw new Error(t('step5.symposium.needSeat'))
+  const idx = selectedAgentIndex.value
+  if (!selectedAgent.value || idx === null || !companion.value) {
+    throw cityError(t('step5.symposium.needSeat'))
   }
   const name = companion.value.name
   addLog(t('step5.symposium.ledger.asked', { name, q: message.substring(0, 60) }))
 
-  // The citizen is reminded of the conversation so far.
-  let prompt = message
-  if (chatHistory.value.length > 1) {
-    const historyContext = chatHistory.value
-      .slice(0, -1)
-      .slice(-6)
-      .map((msg) => `${msg.role === 'user' ? 'Questioner' : 'You'}: ${msg.content}`)
-      .join('\n')
-    prompt = `Earlier in our conversation:\n${historyContext}\n\nNow my next question is: ${message}`
-  }
-
+  // The live citizen is reminded of the conversation in one prompt, as always;
+  // one who answers from memory also gets the question and the turns apart.
+  const convo = conversationFor(chatHistory.value.slice(0, -1), message)
   const res = await interviewAgents({
     simulation_id: props.simulationId,
-    interviews: [{ agent_id: selectedAgentIndex.value, prompt }]
+    lang: String(locale.value || 'en'),
+    report_id: props.reportId || undefined,
+    interviews: [{ agent_id: idx, prompt: convo.prompt, question: convo.question, history: convo.history }]
   })
 
-  if (res.success && res.data) {
-    // Results come keyed by square and seat: { reddit_0: {...}, twitter_0: {...} }
-    const resultData = res.data.result || res.data
-    const resultsDict = resultData.results || resultData
-    let responseContent = null
-    const agentId = selectedAgentIndex.value
+  if (!res.success || !res.data) throw new Error(res.error || t('step5.requestFailed'))
+  // Results come keyed by square and seat: { reddit_0: {...}, twitter_0: {...} }
+  const got = answerFrom(res.data, idx, { anyFallback: true })
+  if (!got.text) throw cityError(got.error || t('step5.noResponse'))
+  addLog(t('step5.symposium.ledger.answered', { name }))
+  return { role: 'assistant', content: got.text, memory: got.memory, timestamp: new Date().toISOString() }
+}
 
-    if (typeof resultsDict === 'object' && !Array.isArray(resultsDict)) {
-      const agentResult = resultsDict[`reddit_${agentId}`] || resultsDict[`twitter_${agentId}`] || Object.values(resultsDict)[0]
-      if (agentResult) responseContent = agentResult.response || agentResult.answer
-    } else if (Array.isArray(resultsDict) && resultsDict.length > 0) {
-      responseContent = resultsDict[0].response || resultsDict[0].answer
-    }
+// The one who had the floor, answered from the scroll, their own words and the Chronicle.
+const sendToSpeaker = async (message) => {
+  const current = floor.value
+  if (!current) throw cityError(t('step5.symposium.needSeat'))
+  const name = floorLabel.value
+  addLog(t('step5.symposium.ledger.asked', { name, q: message.substring(0, 60) }))
 
-    if (responseContent) {
-      chatHistory.value.push({ role: 'assistant', content: responseContent, timestamp: new Date().toISOString() })
-      addLog(t('step5.symposium.ledger.answered', { name }))
-    } else {
-      throw new Error(t('step5.noResponse'))
-    }
-  } else {
-    throw new Error(res.error || t('step5.requestFailed'))
-  }
+  const convo = conversationFor(chatHistory.value.slice(0, -1), message)
+  const res = await askSpeaker(props.simulationId, {
+    question: message,
+    history: convo.history,
+    lang: String(locale.value || 'en'),
+    name: current.name,
+    file_name: current.fileName,
+    report_id: props.reportId || undefined
+  })
+
+  const answer = res?.data?.answer
+  if (!answer) throw cityError(t('step5.noResponse'))
+  addLog(t('step5.symposium.ledger.answered', { name }))
+  return { role: 'assistant', content: answer, memory: res.data.from_memory === true, timestamp: new Date().toISOString() }
 }
 
 const scrollToEnd = () => {
@@ -1543,8 +1659,9 @@ const leanOf = (answer) => {
 const submitSurvey = async () => {
   if (!canAskCrowd.value) return
 
+  crowdTrouble.value = ''
   isSurveying.value = true
-  setStatus('working', t('step5.symposium.crowdAnswering'))
+  setStatus('working', crowdWorking.value)
   addLog(t('step5.symposium.ledger.crowdAsked', { n: selectedAgents.value.size }))
 
   try {
@@ -1553,28 +1670,20 @@ const submitSurvey = async () => {
 
     const res = await interviewAgents({
       simulation_id: props.simulationId,
+      lang: String(locale.value || 'en'),
+      report_id: props.reportId || undefined,
       interviews
     })
 
     if (res.success && res.data) {
-      const resultData = res.data.result || res.data
-      const resultsDict = resultData.results || resultData
       const list = []
 
       for (const interview of interviews) {
         const agentIdx = interview.agent_id
         const citizen = citizens.value[agentIdx]
-        let responseContent = ''
-
-        if (typeof resultsDict === 'object' && !Array.isArray(resultsDict)) {
-          const agentResult = resultsDict[`reddit_${agentIdx}`] || resultsDict[`twitter_${agentIdx}`]
-          if (agentResult) responseContent = agentResult.response || agentResult.answer || ''
-        } else if (Array.isArray(resultsDict)) {
-          const matched = resultsDict.find((r) => r.agent_id === agentIdx)
-          if (matched) responseContent = matched.response || matched.answer || ''
-        }
-
-        const spoke = !!String(responseContent).trim()
+        // One who did not answer shows their own sentence (who ran out of time, and why).
+        const got = answerFrom(res.data, agentIdx)
+        const spoke = !!got.text.trim()
         list.push({
           agent_id: agentIdx,
           agentId: citizen ? citizen.agentId : agentIdx,
@@ -1585,9 +1694,10 @@ const submitSurvey = async () => {
           role: citizen ? citizen.role : '',
           stance: citizen ? citizen.stance : null,
           question: questionText,
-          answer: spoke ? responseContent : t('step5.symposium.noAnswer'),
+          answer: spoke ? got.text : got.error || t('step5.symposium.noAnswer'),
           spoke,
-          lean: spoke ? leanOf(responseContent) : 'silent'
+          memory: got.memory,
+          lean: spoke ? leanOf(got.text) : 'silent'
         })
       }
 
@@ -1602,12 +1712,19 @@ const submitSurvey = async () => {
       throw new Error(res.error || t('step5.requestFailed'))
     }
   } catch (err) {
-    addLog(t('step5.symposium.ledger.failed', { error: err.message }))
+    // Said under the Ask button, in the city's words only.
+    const text = troubleFrom(err, t('step5.symposium.tryAgain'))
+    crowdTrouble.value = t('step5.symposium.crowdTrouble', { error: text })
+    addLog(t('step5.symposium.ledger.failed', { error: text }))
     setStatus('error')
   } finally {
     isSurveying.value = false
   }
 }
+// A new question clears the last failure.
+watch(surveyQuestion, () => {
+  crowdTrouble.value = ''
+})
 
 // The quorum: the faces grouped by how they answered (a yes or no question) or
 // by where they stood, with one line above them.
@@ -1797,14 +1914,14 @@ const loadReportData = async () => {
       chronicleMissing.value = true
       addLog(t('parthenon.chronicle.notFound'))
     } else {
-      addLog(t('step5.symposium.ledger.chronicleMissing', { error: reportRes.error || t('common.unknownError') }))
+      addLog(t('step5.symposium.ledger.chronicleMissing', { error: t('step5.symposium.tryAgain') }))
     }
   } catch (err) {
     if (isMissing(err)) {
       chronicleMissing.value = true
       addLog(t('parthenon.chronicle.notFound'))
     } else {
-      addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
+      addLog(t('step5.symposium.ledger.chronicleMissing', { error: troubleFrom(err, t('step5.symposium.tryAgain')) }))
     }
   }
 }
@@ -1825,7 +1942,7 @@ const loadAgentLogs = async () => {
       })
     }
   } catch (err) {
-    addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
+    addLog(t('step5.symposium.ledger.chronicleMissing', { error: troubleFrom(err, t('step5.symposium.tryAgain')) }))
   }
 }
 
@@ -1838,7 +1955,7 @@ const loadProfiles = async () => {
       addLog(t('step5.symposium.ledger.profiles', { n: profiles.value.length }))
     }
   } catch (err) {
-    addLog(t('step5.symposium.ledger.profilesMissing', { error: err.message }))
+    addLog(t('step5.symposium.ledger.profilesMissing', { error: troubleFrom(err, t('step5.symposium.tryAgain')) }))
   }
 }
 
@@ -1886,7 +2003,7 @@ const loadVoices = async () => {
   if (Object.keys(out).length) addLog(t('step5.symposium.ledger.voices'))
 }
 
-// Whether the citizens can be questioned tonight: only while the city is awake.
+// Whether the square is open tonight, and whether the citizens can answer from memory once it has closed.
 let lastCityCheck = 0
 let cityTimer = 0
 const checkCity = async () => {
@@ -1896,9 +2013,10 @@ const checkCity = async () => {
   lastCityCheck = now
   try {
     const res = await getEnvStatus({ simulation_id: props.simulationId })
+    memoryReady.value = res?.data?.answers_from_memory === true
     const next = res.success && res.data && res.data.env_alive ? 'awake' : 'asleep'
     if (next !== cityState.value) {
-      addLog(t(next === 'awake' ? 'step5.symposium.ledger.awake' : 'step5.symposium.ledger.asleep'))
+      addLog(t(next === 'awake' ? 'step5.symposium.ledger.awake' : memoryReady.value ? 'step5.symposium.ledger.remembering' : 'step5.symposium.ledger.asleep'))
     }
     cityState.value = next
     if (!isSending.value && !isSurveying.value) setIdle()
@@ -2376,7 +2494,8 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   white-space: nowrap;
 }
 
-/* Asleep: the citizens' faces stay on the couches, in shadow. The Scribe does not sleep. */
+/* Asleep, where the citizens cannot answer: their faces stay on the couches, in shadow.
+   The Scribe does not sleep; faces that answer from memory are never greyed. */
 .symposium.asleep .seat:not(.scribe) .citizen-coin { filter: grayscale(0.6) brightness(0.7); }
 .symposium.asleep .seat:not(.scribe) .seat-name { color: var(--p-ink-2); }
 
@@ -2588,6 +2707,40 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
 
 .honour-hear.speaking svg { color: var(--p-gold); }
 
+/* Hear the line, and ask the one who spoke it: two quiet buttons on one line. */
+.honour-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  margin-left: -8px;
+}
+
+.honour-actions .honour-hear { margin-left: 0; }
+
+.honour-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: var(--p-ink-3);
+  font-family: var(--p-font-body);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.honour-ask:hover,
+.honour-ask:focus-visible,
+.honour-ask.seated {
+  color: var(--p-ink);
+}
+
+.honour-ask.seated svg { color: var(--p-gold); }
+
 /* The table */
 .table {
   grid-area: table;
@@ -2783,6 +2936,29 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   letter-spacing: var(--track-inscription);
   text-transform: uppercase;
   color: var(--p-ink);
+}
+
+/* Said from memory, once the square has closed: a quiet mark after the name, in words. */
+.memory-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  font-family: var(--p-font-body);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--p-ink-3);
+  white-space: nowrap;
+}
+
+.memory-mark::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
 }
 
 .line-who.working {
@@ -3122,6 +3298,8 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   font-size: var(--t-sm);
   color: var(--p-ink-3);
 }
+
+.crowd-trouble { margin: 8px 0 0; }
 
 /* While the crowd answers: their faces, breathing. */
 .quorum-waiting {

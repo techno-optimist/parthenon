@@ -529,29 +529,48 @@ class Upstream:
         self.mode = mode
         self.max_retries = max_retries
         self.imagine_concurrency = imagine_concurrency
+        self.max_concurrency = max_concurrency
         self._slots = threading.BoundedSemaphore(max_concurrency)
         self._imagine_slots = threading.BoundedSemaphore(imagine_concurrency)
         self._sleep = sleep
 
-    def chat_completion(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        with self._slots:
-            if self.mode != "responses":
-                status, data = self._request("POST", "/chat/completions", body)
-                if not (self.mode == "auto" and status in (403, 404)):
-                    if self.mode == "auto" and status == 200:
-                        self.mode = "chat"
-                        log.info("xAI accepts Chat Completions for the subscription token")
-                    return status, data
-                log.warning(
-                    "xAI rejected Chat Completions for the subscription token (HTTP %s); "
-                    "using the Responses API from now on",
-                    status,
+    def chat_completion(self, body: Dict[str, Any], budget: Optional[float] = None) -> Tuple[int, Dict[str, Any]]:
+        """Forward one chat. A caller that says how long it will wait (`budget`, seconds) gets a slot only
+        while its reply could still reach it: Werkzeug keeps a handler running after the caller hangs up,
+        so a call started later would spend the subscription on an answer nobody reads."""
+        if budget is None:
+            self._slots.acquire()
+        else:
+            wait = max(0.0, budget - min(MIN_ATTEMPT_SECONDS, budget / 2))
+            if not self._slots.acquire(timeout=wait):
+                return 429, _error_body(
+                    f"All {self.max_concurrency} of the bridge's chat slots stayed busy for more than "
+                    f"{wait:.0f}s. Retry shortly.",
+                    "bridge_throttled",
                 )
-                self.mode = "responses"
-            status, data = self._request("POST", "/responses", chat_to_responses(body))
-            if status != 200:
+        try:
+            return self._chat_in_slot(body)
+        finally:
+            self._slots.release()
+
+    def _chat_in_slot(self, body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+        if self.mode != "responses":
+            status, data = self._request("POST", "/chat/completions", body)
+            if not (self.mode == "auto" and status in (403, 404)):
+                if self.mode == "auto" and status == 200:
+                    self.mode = "chat"
+                    log.info("xAI accepts Chat Completions for the subscription token")
                 return status, data
-            return 200, responses_to_chat(data, body)
+            log.warning(
+                "xAI rejected Chat Completions for the subscription token (HTTP %s); "
+                "using the Responses API from now on",
+                status,
+            )
+            self.mode = "responses"
+        status, data = self._request("POST", "/responses", chat_to_responses(body))
+        if status != 200:
+            return status, data
+        return 200, responses_to_chat(data, body)
 
     def models(self) -> Tuple[int, Dict[str, Any]]:
         return self._request("GET", "/models")
@@ -1011,8 +1030,8 @@ def create_app(upstream: Union[Upstream, OpenRouterUpstream]) -> Flask:
         if body.get("stream"):
             return _error(400, "Streaming is not supported by the Grok bridge", "invalid_request_error")
         started = time.time()
-        if isinstance(upstream, OpenRouterUpstream):
-            budget = _caller_budget(request.headers.get("x-stainless-read-timeout"))
+        budget = _caller_budget(request.headers.get("x-stainless-read-timeout"))
+        if isinstance(upstream, OpenRouterUpstream) or budget is not None:
             result = call(lambda: upstream.chat_completion(body, budget))
         else:
             result = call(lambda: upstream.chat_completion(body))
