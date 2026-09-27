@@ -38,7 +38,11 @@ In public mode:
   after PARTHENON_IDLE_ENV_MINUTES (20) unused (public/envs.py);
 - a browser's own Accept-Language ('en-US,en;q=0.9') is read as 'en' or
   'zh', and an error a view wrote in the other language is put in the
-  city's words;
+  city's words, in a refusal and in the notes of an answer that succeeded
+  (a task's or a run's error; a Chinese progress note for an English
+  visitor goes); the status says which language the records are written in
+  (recordLanguage, PARTHENON_RECORD_LANGUAGE);
+- the mend (/api/parthenon/mend, api/mend.py) is the keepers' alone;
 - the crowd, the run length, the concurrent runs, the scroll and the upload
   are capped; the counters live in <PARTHENON_DATA_DIR>/parthenon_public.sqlite3;
 - the shelf shows the featured gatherings and those the visitor names in

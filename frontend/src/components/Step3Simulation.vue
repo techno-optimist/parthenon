@@ -336,6 +336,7 @@ import {
   entityTypeName,
   roleColorVar,
   stripIds,
+  readable,
   RUN_LENGTHS,
   spansHours
 } from '../parthenon/vocabulary.js'
@@ -356,6 +357,9 @@ import {
 
 const { t, locale } = useI18n()
 const router = useRouter()
+
+// What the engine said, without its ids, and only in words the visitor reads.
+const engineWords = (text) => readable(stripIds(text), t('common.otherTongue'))
 
 const props = defineProps({
   simulationId: String,
@@ -848,7 +852,7 @@ const loadCrowd = async () => {
     profiles.value = res?.data?.profiles || []
     addLog(t('agora.log.crowd', { n: profiles.value.length }))
   } catch (err) {
-    addLog(t('agora.log.crowdTrouble', { error: stripIds(err.message) }))
+    addLog(t('agora.log.crowdTrouble', { error: engineWords(err.message) }))
   } finally {
     profilesLoading.value = false
   }
@@ -1245,7 +1249,7 @@ const doStartSimulation = async (force = false) => {
 }
 
 const failToStart = (message) => {
-  const detail = stripIds(message)
+  const detail = engineWords(message)
   trouble.value = { title: t('agora.trouble.start'), body: '', detail }
   addLog(t('agora.log.trouble', { error: detail }))
   setStatus(mode.value === 'idle' ? 'ready' : mode.value === 'error' ? 'error' : 'done')
@@ -1354,7 +1358,7 @@ const finishRun = (how, data) => {
   scrubRound.value = currentRound.value
   if (how === 'failed') {
     mode.value = 'error'
-    trouble.value = { title: t('agora.trouble.title'), body: t('agora.trouble.body'), detail: stripIds(data?.error || '') }
+    trouble.value = { title: t('agora.trouble.title'), body: t('agora.trouble.body'), detail: engineWords(data?.error || '') }
     addLog(t('agora.log.failed'))
     setStatus('error')
   } else {
@@ -1392,7 +1396,7 @@ const openReplay = async (data) => {
   mode.value = how === 'failed' ? 'error' : 'done'
   setStatus(how === 'failed' ? 'error' : 'done')
   if (how === 'failed') {
-    trouble.value = { title: t('agora.trouble.title'), body: t('agora.trouble.body'), detail: stripIds(data.error || '') }
+    trouble.value = { title: t('agora.trouble.title'), body: t('agora.trouble.body'), detail: engineWords(data.error || '') }
   }
   try {
     const [actionsRes, timelineRes] = await Promise.all([
@@ -1405,7 +1409,7 @@ const openReplay = async (data) => {
     const span = Math.max(currentRound.value, timelineRes?.data?.rounds_count ?? 0, allRounds.value.length)
     addLog(t('agora.log.record', { said: t('agora.clock.said', speechCount.value), count: unit.value.count(span) }))
   } catch (err) {
-    addLog(t('agora.log.recordTrouble', { error: stripIds(err.message) }))
+    addLog(t('agora.log.recordTrouble', { error: engineWords(err.message) }))
   }
   await nextTick()
   scrubRound.value = currentRound.value
@@ -1437,7 +1441,7 @@ const handleStopAndWrite = async () => {
     }
     // A close that is still pending arrives here too: the polling will catch
     // the square closing on its own.
-    const detail = stripIds(err.message)
+    const detail = engineWords(err.message)
     trouble.value = { title: t('agora.trouble.stop'), body: t('agora.trouble.stopBody'), detail }
     addLog(t('agora.log.trouble', { error: detail }))
     if (mode.value === 'live') setStatus('live')
@@ -1479,7 +1483,7 @@ const writeChronicle = async (force = true) => {
       isGeneratingReport.value = false
       return
     }
-    const detail = stripIds(err.message)
+    const detail = engineWords(err.message)
     trouble.value = { title: t('agora.trouble.chronicle'), body: '', detail }
     addLog(t('agora.log.trouble', { error: detail }))
     isGeneratingReport.value = false
@@ -1495,7 +1499,7 @@ onMounted(async () => {
     const res = await getRunStatus(props.simulationId)
     data = res?.success ? res.data : null
   } catch (err) {
-    addLog(t('agora.log.trouble', { error: stripIds(err.message) }))
+    addLog(t('agora.log.trouble', { error: engineWords(err.message) }))
   }
   const s = data?.runner_status || 'idle'
   if (['starting', 'running', 'paused', 'stopping'].includes(s)) {

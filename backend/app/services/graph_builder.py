@@ -4,6 +4,7 @@
 """
 
 import hashlib
+import os
 import uuid
 import time
 import threading
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from zep_cloud import BatchAddItem, EntityEdgeSourceTarget, NotFoundError
 
 from ..config import Config
+from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from ..utils.ontology import (
@@ -28,8 +30,9 @@ from ..utils.zep import (
     get_zep_client,
     is_retryable_zep_error,
 )
+from .language_guard import configured_record_language, record_language
 from .text_processor import TextProcessor
-from ..utils.locale import t, get_locale, set_locale
+from ..utils.locale import t, get_locale, normalize_lang, set_locale
 from ..utils.logger import get_logger
 
 logger = get_logger('mirofish.graph_builder')
@@ -126,6 +129,41 @@ class _LocalQueueProgress:
         return advanced
 
 
+def graph_record_language(
+    graph_id: Optional[str],
+    *,
+    project_id: Optional[str] = None,
+) -> Optional[str]:
+    """The record language ('en' or 'zh') of the gathering a graph is built for, or None.
+
+    PARTHENON_RECORD_LANGUAGE when it names one. Otherwise record_language()
+    of the project given, else of the project that references the graph
+    (graph.py saves project.graph_id before it sends the scroll). A graph no
+    project claims, or one shared by projects that disagree, gives None: its
+    memory is then written in the language of the text, as before. Never raises.
+    """
+
+    configured = configured_record_language()
+    if configured:
+        return configured
+    if project_id:
+        return record_language(project_id=project_id)
+    if not graph_id:
+        return None
+    try:
+        # Listing projects makes their folder when it is missing: only look when it is there.
+        if not os.path.isdir(ProjectManager.PROJECTS_DIR):
+            return None
+        projects = ProjectManager.find_projects_by_graph_id(graph_id)
+    except Exception as error:  # noqa: BLE001 - an unreadable shelf reads as unknown
+        logger.warning(
+            "Could not find the project of graph %s: %s", graph_id, type(error).__name__
+        )
+        return None
+    languages = {record_language(project_id=project.project_id) for project in projects}
+    return languages.pop() if len(languages) == 1 else None
+
+
 @dataclass
 class GraphInfo:
     """图谱信息"""
@@ -162,7 +200,7 @@ class GraphBuilderService:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
         if not self.api_key and Config.memory_backend(self.api_key) == "zep":
-            raise ValueError("ZEP_API_KEY 未配置")
+            raise ValueError(t('api.zepApiKeyMissing'))
         
         self.client = get_zep_client(self.api_key)
         self.task_manager = TaskManager()
@@ -174,7 +212,10 @@ class GraphBuilderService:
         graph_name: str = "MiroFish Graph",
         chunk_size: int = 500,
         chunk_overlap: int = 50,
-        batch_size: int = 350
+        batch_size: int = 350,
+        *,
+        project_id: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> str:
         """
         异步构建图谱
@@ -186,6 +227,8 @@ class GraphBuilderService:
             chunk_size: 文本块大小
             chunk_overlap: 块重叠大小
             batch_size: 每批发送的块数量
+            project_id: the gathering the graph is built for (its record language)
+            language: the record language, when the caller already knows it
             
         Returns:
             任务ID
@@ -206,7 +249,8 @@ class GraphBuilderService:
         # 在后台线程中执行构建
         thread = threading.Thread(
             target=self._build_graph_worker,
-            args=(task_id, text, ontology, graph_name, chunk_size, chunk_overlap, batch_size, current_locale)
+            args=(task_id, text, ontology, graph_name, chunk_size, chunk_overlap, batch_size, current_locale),
+            kwargs={"project_id": project_id, "language": language},
         )
         thread.daemon = True
         thread.start()
@@ -222,9 +266,17 @@ class GraphBuilderService:
         chunk_size: int,
         chunk_overlap: int,
         batch_size: int,
-        locale: str = 'zh'
+        locale: str = 'en',
+        *,
+        project_id: Optional[str] = None,
+        language: Optional[str] = None,
     ):
-        """图谱构建工作线程"""
+        """图谱构建工作线程
+
+        ``locale`` is the watcher's (the progress lines); the memory itself is
+        written in the gathering's record language (``language``, else found
+        from ``project_id`` or the graph, see add_text_batches).
+        """
         set_locale(locale)
         try:
             self.task_manager.update_task(
@@ -270,7 +322,9 @@ class GraphBuilderService:
                     task_id,
                     progress=20 + int(prog * 0.4),  # 20-60%
                     message=msg
-                )
+                ),
+                language=language,
+                project_id=project_id,
             )
             
             # 5. 等待Zep处理完成
@@ -506,6 +560,9 @@ class GraphBuilderService:
         batch_size: int = 350,
         progress_callback: Optional[Callable] = None,
         batch_created_callback: Optional[Callable[[str | None, str], None]] = None,
+        *,
+        language: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> BatchSubmission:
         """Submit document chunks through Zep's current Batch API.
 
@@ -513,11 +570,24 @@ class GraphBuilderService:
         documented as idempotent, and an ambiguous replay can duplicate graph
         episodes. The returned batch identity allows callers to persist and
         reconcile the operation instead.
+
+        Each chunk's metadata states the gathering's record language
+        ("language": ``language``, else graph_record_language() of the project
+        or the graph), so the local extraction writes the memory in it: an
+        English gathering built from a Chinese scroll names Socrates in
+        English, with the scroll's own form as an alias. When no language is
+        known the key is left out and the memory follows the text.
         """
 
         if not graph_id:
             raise ValueError("graph_id is required")
         self.validate_batch_chunks(chunks, batch_size=batch_size)
+
+        record_lang = (
+            normalize_lang(language, default=None)
+            or graph_record_language(graph_id, project_id=project_id)
+        )
+        language_metadata = {"language": record_lang} if record_lang else {}
 
         total_chunks = len(chunks)
         operation_id = self.build_operation_id(graph_id, chunks)
@@ -575,6 +645,7 @@ class GraphBuilderService:
                         "chunk_sha256": hashlib.sha256(
                             chunk.encode("utf-8")
                         ).hexdigest(),
+                        **language_metadata,
                     },
                 )
                 for offset, chunk in enumerate(batch_chunks)

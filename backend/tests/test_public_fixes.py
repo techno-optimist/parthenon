@@ -35,6 +35,7 @@ from app.services.report_agent import ReportAgent, ReportManager, ReportOutline,
 from app.services.simulation_ipc import SimulationIPCClient, CommandType
 from app.services.simulation_runner import RunnerStatus, SimulationRunner
 from app.utils import json_files, time_budget
+from app.utils import locale as locale_utils
 from app.utils.llm_client import LLMClient
 from app.utils.locale import set_locale, t
 
@@ -162,6 +163,15 @@ def write_section(agent):
     return agent._generate_section_react(outline.sections[0], outline, previous_sections=[])
 
 
+@pytest.fixture
+def english_thread():
+    """This thread reads English for the test, and the test leaves no locale behind."""
+
+    set_locale('en')
+    yield
+    vars(locale_utils._thread_local).pop('locale', None)
+
+
 def test_a_chapter_of_notes_and_soup_is_asked_for_once_more():
     llm = ScriptedLLM([*SEARCHES, 'Final Answer: ' + PLANNING + ' ' + SOUP, 'Final Answer: ' + PROSE])
     agent = make_agent(llm)
@@ -175,15 +185,13 @@ def test_a_chapter_of_notes_and_soup_is_asked_for_once_more():
     assert all(SOUP not in m['content'] for m in again)
 
 
-def test_a_chapter_that_fails_twice_is_set_down_unfinished():
-    set_locale('en')
+def test_a_chapter_that_fails_twice_is_set_down_unfinished(english_thread):
     llm = ScriptedLLM([*SEARCHES, 'Final Answer: ' + PLANNING, 'Final Answer: ' + SOUP])
 
     assert write_section(make_agent(llm)) == t('scribe.chapterUnwritten')
 
 
-def test_the_forced_chapter_is_checked_too():
-    set_locale('en')
+def test_the_forced_chapter_is_checked_too(english_thread):
     llm = ScriptedLLM([
         *SEARCHES,
         SEARCHES[0], SEARCHES[1],  # the iterations run out
@@ -220,8 +228,7 @@ def test_the_scribe_runs_a_call_in_her_own_markup_then_answers(no_chronicle):
     assert agent._execute_tool.call_args_list[0].args[0] == 'panorama_search'
 
 
-def test_the_scribe_never_answers_with_markup(no_chronicle):
-    set_locale('en')
+def test_the_scribe_never_answers_with_markup(no_chronicle, english_thread):
     # Markup the parser cannot take apart, twice: the fallback line, never the markup.
     llm = ScriptedLLM(['<|tool_call_start|>[panoramasearch(query=]<|tool_call_end|>',
                        '<|toolcallstart|>[quicksearch(query="well")]<|toolcallend|>'])
@@ -780,10 +787,20 @@ def test_a_fixed_message_in_the_other_language_is_put_in_the_citys_words(city):
     assert chinese.status_code == 400 and chinese.json['error'] == '城邦此刻做不到这件事。'
 
 
-def test_on_the_owners_machine_the_language_is_as_it_was(city):
-    local = city.client(public=False).get('/api/graph/project/proj_doesnotexist',
-                                          headers={'Accept-Language': 'en-US'})
-    assert local.status_code == 404 and '项目不存在' in local.json['error']
+def test_on_the_owners_machine_the_browsers_language_is_read_too(city):
+    # No public guard here: the engine's own words, in the browser's language,
+    # and English when the browser names no language the city reads.
+    client = city.client(public=False)
+
+    english = client.get('/api/graph/project/proj_doesnotexist', headers={'Accept-Language': 'en-US'})
+    chinese = client.get('/api/graph/project/proj_doesnotexist', headers={'Accept-Language': 'zh-CN,zh;q=0.9'})
+    unnamed = client.get('/api/graph/project/proj_doesnotexist')
+    other = client.get('/api/graph/project/proj_doesnotexist', headers={'Accept-Language': 'fr-FR,fr;q=0.9'})
+
+    assert english.status_code == 404 and english.json['error'] == 'Project not found: proj_doesnotexist'
+    assert chinese.status_code == 404 and '项目不存在' in chinese.json['error']
+    assert unnamed.status_code == 404 and unnamed.json['error'] == 'Project not found: proj_doesnotexist'
+    assert other.status_code == 404 and other.json['error'] == 'Project not found: proj_doesnotexist'
 
 
 # ================================================================== where the citizens are from
@@ -804,11 +821,25 @@ def test_a_citizen_without_a_country_is_from_where_the_crowd_is(tmp_path):
     assert OasisProfileGenerator.crowd_country([_profile('Phaedra')]) == DEFAULT_COUNTRY == 'Greece'
 
 
+def _has_han(text):
+    return any('一' <= ch <= '鿿' for ch in text)
+
+
 def test_the_persona_prompts_no_longer_suggest_china():
     generator = OasisProfileGenerator.__new__(OasisProfileGenerator)
-    for build in (generator._build_individual_persona_prompt, generator._build_group_persona_prompt):
-        prompt = build('Phaedra', 'WaterCarrier', 'carries water', {}, 'Athens, 410 BC')
-        assert '中国' not in prompt and '希腊' in prompt
+    chinese = OasisProfileGenerator.__new__(OasisProfileGenerator)
+    chinese.language = 'zh'
+    for name in ('_build_individual_persona_prompt', '_build_group_persona_prompt'):
+        # A generator with no language writes for an English record: Greece, in English.
+        prompt = getattr(generator, name)('Phaedra', 'WaterCarrier', 'carries water', {}, 'Athens, 410 BC')
+        assert '"Greece"' in prompt and 'China' not in prompt and not _has_han(prompt)
+        # A Chinese record, the generator's own or the one asked for: 希腊.
+        for prompt in (
+            getattr(chinese, name)('Phaedra', 'WaterCarrier', 'carries water', {}, 'Athens, 410 BC'),
+            getattr(generator, name)('Phaedra', 'WaterCarrier', 'carries water', {}, 'Athens, 410 BC',
+                                     language='zh'),
+        ):
+            assert '中国' not in prompt and '"希腊"' in prompt and '"Greece"' not in prompt
     for entity_type in ('student', 'expert', 'mediaoutlet', 'ngo', 'WaterCarrier'):
         profile = generator._generate_profile_rule_based('Phaedra', entity_type, 'carries water', {})
         assert profile['country'] is None

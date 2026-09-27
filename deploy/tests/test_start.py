@@ -58,6 +58,16 @@ def test_child_env_keeps_explicit_settings_but_never_a_public_bridge(tmp_path):
     assert 'LOCAL_MEMORY_LLM_MIN_INTERVAL_SECONDS' not in env
 
 
+def test_the_public_steps_write_their_records_in_english_unless_told_otherwise(tmp_path):
+    assert start.child_env({'PARTHENON_PUBLIC': '1'}, tmp_path, 1, 2)['PARTHENON_RECORD_LANGUAGE'] == 'en'
+    assert start.child_env({'PARTHENON_PUBLIC': 'true'}, tmp_path, 1, 2)['PARTHENON_RECORD_LANGUAGE'] == 'en'
+    chosen = start.child_env({'PARTHENON_PUBLIC': '1', 'PARTHENON_RECORD_LANGUAGE': 'zh'}, tmp_path, 1, 2)
+    assert chosen['PARTHENON_RECORD_LANGUAGE'] == 'zh'
+    # Off the public steps each gathering keeps the language it was begun in.
+    assert 'PARTHENON_RECORD_LANGUAGE' not in start.child_env({}, tmp_path, 1, 2)
+    assert 'PARTHENON_RECORD_LANGUAGE' not in start.child_env({'PARTHENON_PUBLIC': '0'}, tmp_path, 1, 2)
+
+
 @pytest.mark.parametrize('environ, expected', [
     ({}, 'openrouter'),
     ({'PARTHENON_UPSTREAM': 'auto', 'ANTHROPIC_API_KEY': 'a', 'OPENAI_API_KEY': 'o'}, 'openai'),
@@ -132,6 +142,17 @@ def test_the_render_blueprint_sets_the_limits_for_a_team_and_the_hearing_on_a_fa
     assert '`LOCAL_MEMORY_LLM_MODEL`' in docs and 'one office address' in ' '.join(docs.split())
     for key in ('PARTHENON_DAILY_PER_VISITOR', 'PARTHENON_QUESTIONS_PER_HOUR'):
         assert f'| `{key}` | {env[key]} |' in docs  # the docs' table shows what the Blueprint sets
+
+
+def test_the_render_blueprint_writes_english_records_and_names_the_translator():
+    yaml = pytest.importorskip('yaml')
+    env = {item['key']: item.get('value') for item in yaml.safe_load((REPO / 'render.yaml').read_text())
+           ['services'][0]['envVars']}
+    assert env['PARTHENON_RECORD_LANGUAGE'] == 'en'
+    # A Grok name, so it passes through on the subscription (see LOCAL_MEMORY_LLM_MODEL above).
+    assert env['PARTHENON_TRANSLATE_MODEL'].startswith('grok')
+    example = (REPO / '.env.example').read_text()
+    assert '# PARTHENON_RECORD_LANGUAGE=' in example and '# PARTHENON_TRANSLATE_MODEL=' in example
 
 
 def test_the_docs_command_names_the_images_paths():

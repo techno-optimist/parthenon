@@ -52,7 +52,7 @@ import { getSimulation, getSimulationConfig, getSimulationHistory } from '../api
 import { getReport, getReportBySimulation } from '../api/report'
 import { getCitizenStances, startCitizenStances } from '../api/parthenon'
 import { canControl } from '../parthenon/access.js'
-import { stripIds } from '../parthenon/vocabulary.js'
+import { stripIds, readable } from '../parthenon/vocabulary.js'
 import { gatheringEra } from '../parthenon/square.js'
 import { speakers } from '../parthenon/speakers.js'
 
@@ -179,7 +179,7 @@ const onFinished = async (how, { fresh } = {}) => {
   if (!found) return
   reportId.value = found.id
   reportStatus.value = found.status
-  reportTrouble.value = stripIds(found.trouble)
+  reportTrouble.value = readable(stripIds(found.trouble), t('common.otherTongue'))
   if (found.status === 'failed') addLog(t('agora.log.scribeFailed'))
 }
 
@@ -299,7 +299,7 @@ const loadSimulationData = async () => {
   try {
     const simRes = await getSimulation(currentSimulationId.value)
     if (!simRes.success || !simRes.data) {
-      addLog(t('agora.log.trouble', { error: simRes.error || t('common.unknownError') }))
+      addLog(t('agora.log.trouble', { error: readable(simRes.error, t('common.otherTongue')) || t('common.unknownError') }))
       return
     }
     const simData = simRes.data

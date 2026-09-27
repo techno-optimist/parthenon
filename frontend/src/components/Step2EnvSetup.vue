@@ -321,6 +321,7 @@ import {
   roleLabel as roleTitle,
   citizenName,
   stripIds,
+  readable,
   spansHours,
   RUN_LENGTHS
 } from '../parthenon/vocabulary.js'
@@ -409,11 +410,15 @@ let pollTimer = null
 let profilesTimer = null
 let configTimer = null
 
-const addLog = (msg) => emit('add-log', msg)
+// A line with nothing left to say (engine words the visitor cannot read) is not logged.
+const addLog = (msg) => {
+  if (msg) emit('add-log', msg)
+}
 
-// Engine words that reach the ledger are softened on the way.
+// Engine words that reach the ledger are softened on the way. Words in a
+// language the visitor does not read come out empty.
 const cityWords = (text) =>
-  stripIds(text)
+  readable(stripIds(text), '')
     .replace(/\bagents\b/gi, 'citizens')
     .replace(/\bagent\b/gi, 'citizen')
     .replace(/\bprofiles?\b/gi, (m) => (m.toLowerCase().endsWith('s') ? 'pasts' : 'past'))
@@ -1292,7 +1297,7 @@ const handlePrepareFailure = (message, err = null) => {
   stopPolling()
   stopProfilesPolling()
   stopConfigPolling()
-  const why = cityWords(message || t('common.unknownError'))
+  const why = cityWords(message) || (message ? t('common.otherTongue') : t('common.unknownError'))
   troubleMessage.value = why
   addLog(t('parthenon.gathering.ledger.failed', { error: why }))
   emit('update-status', 'error')
@@ -1394,11 +1399,12 @@ const pollPrepareStatus = async () => {
         const logKey = `${detail.current_stage}-${detail.current_item}-${detail.total_items}`
         if (logKey !== lastLoggedMessage && detail.item_description) {
           lastLoggedMessage = logKey
-          const stage = stageLabel(currentStage.value) || cityWords(detail.current_stage_name || '')
+          const stage = stageLabel(currentStage.value) || cityWords(detail.current_stage_name || '') || t('parthenon.gathering.ledger.stageReading')
+          const note = cityWords(detail.item_description)
           if (detail.total_items > 0) {
             addLog(t('parthenon.gathering.ledger.stageCount', { stage, current: detail.current_item, total: detail.total_items }))
-          } else {
-            addLog(t('parthenon.gathering.ledger.stageNote', { stage, note: cityWords(detail.item_description) }))
+          } else if (note) {
+            addLog(t('parthenon.gathering.ledger.stageNote', { stage, note }))
           }
         }
       } else if (data.message) {

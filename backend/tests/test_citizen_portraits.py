@@ -743,7 +743,7 @@ def test_persona_prompts_ask_citizens_to_speak_plainly_without_tags_or_handles()
         None, 'The Cold Bay Campaign', 'CivicCampaign', 'A campaign.', {}, ''
     )
     for prompt in (individual, group):
-        assert '从不使用#话题标签或@用户名' in prompt and '平实地说话' in prompt
+        assert 'never uses #hashtags or @handles' in prompt and 'speaks plainly' in prompt
 
 
 # ── voices: the words as spoken ──

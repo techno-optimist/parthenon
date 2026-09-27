@@ -25,7 +25,14 @@ from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.json_files import read_json, write_json_atomic
 from . import model_output
-from ..utils.locale import get_language_instruction, get_locale, t
+from ..utils.locale import get_locale, language_instruction_for, normalize_lang, set_locale, t
+from .language_guard import (
+    LANGUAGE_NAMES,
+    ensure_language,
+    ensure_language_many,
+    foreign_script,
+    record_language,
+)
 from .zep_tools import (
     ZepToolsService, 
     SearchResult, 
@@ -455,7 +462,10 @@ class Report:
     created_at: str = ""
     completed_at: str = ""
     error: Optional[str] = None
-    
+    # The language the Chronicle is written in ('en' or 'zh'), fixed when it is
+    # begun; None for a Chronicle begun before it was recorded (chronicle_language()).
+    language: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "report_id": self.report_id,
@@ -467,8 +477,26 @@ class Report:
             "markdown_content": self.markdown_content,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
-            "error": self.error
+            "error": self.error,
+            "language": self.language,
         }
+
+
+def chronicle_language(report: Any) -> str:
+    """The language a Chronicle is written in: the one stored with it, else its gathering's record language.
+
+    A Chronicle begun before its language was stored reads in the record
+    language of its gathering (record_language: the configured one, the
+    project's, else a guess from the question). Never the reader's.
+    """
+    stored = normalize_lang(getattr(report, "language", None), default=None)
+    if stored:
+        return stored
+    requirement = getattr(report, "simulation_requirement", None)
+    return record_language(
+        simulation_id=getattr(report, "simulation_id", None),
+        requirement=requirement if isinstance(requirement, str) else None,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -626,9 +654,24 @@ def _handle_name(handle: str, roster: Dict[str, str]) -> str:
 
 
 def _guess_lang(text: str) -> str:
-    cjk = len(_CJK.findall(text))
-    latin = len(re.findall(r'[A-Za-z]', text))
-    return "zh" if cjk and cjk * 3 >= (cjk + latin) else "en"
+    """The language of the Scribe's own words, the last resort when no caller says it.
+
+    Judged outside the citizens' quoted words: an English chapter that quotes
+    a Chinese answer at length is still English, and must never be given the
+    Chinese city words. The whole text decides only when it is all quotation.
+    """
+    outside, cursor = [], 0
+    for start, end in sorted(_quoted_spans(text)):
+        if start > cursor:
+            outside.append(text[cursor:start])
+        cursor = max(cursor, end)
+    outside.append(text[cursor:])
+    for sample in ("".join(outside), text):
+        cjk = len(_CJK.findall(sample))
+        latin = len(re.findall(r'[A-Za-z]', sample))
+        if cjk or latin:
+            return "zh" if cjk and cjk * 3 >= (cjk + latin) else "en"
+    return "en"
 
 
 def _rewrite(text: str, pattern, make, notes: List[Dict[str, Any]], term: str) -> str:
@@ -758,7 +801,10 @@ def scribe_voice(
             numbered steps are rewritten only then.
         question: the question put to the city. When it is itself about
             agents, the word is the city's subject and is left alone.
-        lang: "en" or "zh"; guessed from the text when omitted.
+        lang: "en" or "zh": the language the text is written in (the
+            Chronicle's for what goes on record, the visitor's for an answer).
+            Every caller should say it; when omitted it is guessed from the
+            Scribe's own words, outside quotations.
 
     Returns:
         (text, notes): notes lists each rewrite ({"kind": "rewrote", ...}) and
@@ -899,32 +945,91 @@ def scribe_voice(
     return text, notes
 
 
+# What the translator is told the roster's names are, the same for every
+# gathering so that a name put in a language once is served again from the cache.
+ROSTER_CONTEXT = "the roll of the citizens of Athens (one citizen's name to a line)"
+
+
+def roster_in(roster: Optional[Dict[str, str]], lang: Optional[str]) -> Dict[str, str]:
+    """The roster with every name in lang, for scribe_voice() on text in lang.
+
+    scribe_voice() puts a citizen's name in for each @handle, and it runs
+    after the text was checked for its language: a roster whose names are in
+    another script (a gathering whose citizens were named before its record
+    language was fixed) would bring that script back in. So the names in
+    another script are put in lang first, all of them in one call (and cached
+    in this process, so a citizen keeps one name in every chapter). A name
+    that could not be put in lang whole is not used: the citizen is called by
+    the words of the handle instead (@li_wei_12 -> Li Wei), or, when those are
+    in another script too, left to the check that follows the voice. A
+    Chinese text keeps every name as it is. Never raises.
+    """
+    roster = {str(k).lower(): v for k, v in (roster or {}).items() if k and isinstance(v, str) and v}
+    lang = normalize_lang(lang)
+    foreign = sorted({name for name in roster.values() if foreign_script(name, lang)})
+    if not foreign:
+        return roster
+    missed: List[int] = []
+    put = ensure_language_many(foreign, lang, context=ROSTER_CONTEXT, untranslated=missed)
+    named = {
+        name: new.strip()
+        for index, (name, new) in enumerate(zip(foreign, put))
+        if index not in missed and isinstance(new, str) and new.strip() and not foreign_script(new, lang)
+    }
+    if len(named) < len(foreign):
+        logger.info("%d citizen name(s) could not be put in %s; they are called by their handles",
+                    len(foreign) - len(named), LANGUAGE_NAMES.get(lang, lang))
+    kept: Dict[str, str] = {}
+    for handle, name in roster.items():
+        if not foreign_script(name, lang):
+            kept[handle] = name
+        elif name in named:
+            kept[handle] = named[name]
+        else:
+            by_handle = _handle_name(handle, {})
+            if by_handle and not foreign_script(by_handle, lang):
+                kept[handle] = by_handle
+    return kept
+
+
 # What the city's memory hands the Scribe is labelled in the engine's words.
-# She reads it relabelled, so she has nothing of the machine's to echo.
+# She reads it relabelled, so she has nothing of the machine's to echo, and
+# for a Chronicle in English she reads English labels, so nothing primes her
+# to write Chinese: (engine's label, the Chinese city's, the English city's).
 _OBSERVATION_LABELS = (
-    ("【Twitter平台回答】", "【In the Agora】"),
-    ("【Reddit平台回答】", "【In the Stoa】"),
-    ("（该平台未获得回复）", "(no answer here)"),
-    ("未找到可采访的Agent人设文件", "找不到可询问的公民名册"),
-    ("位模拟Agent", "位公民"),
-    ("模拟Agent", "公民"),
-    ("## 未来预测深度分析", "## 深度检索"),
-    ("预测场景:", "城中的问题:"),
-    ("### 预测数据统计", "### 统计"),
-    ("相关预测事实", "相关事实"),
-    ("(请在报告中引用这些原文)", "(可在编年史中按名引用原文)"),
-    ("## 广度搜索结果（未来全景视图）", "## 全景"),
-    ("(模拟结果原文)", "(原文)"),
-    ("## 深度采访报告", "## 采访记录"),
+    ("【Twitter平台回答】", "【In the Agora】", "[In the Agora]"),
+    ("【Reddit平台回答】", "【In the Stoa】", "[In the Stoa]"),
+    ("（该平台未获得回复）", "(no answer here)", "(no answer here)"),
+    ("未找到可采访的Agent人设文件", "找不到可询问的公民名册", "No roll of citizens to question was found"),
+    ("位模拟Agent", "位公民", "citizens"),
+    ("模拟Agent", "公民", "citizens"),
+    ("## 未来预测深度分析", "## 深度检索", "## A deep reading"),
+    ("分析问题:", "分析问题:", "The matter read:"),
+    ("预测场景:", "城中的问题:", "The question put to the city:"),
+    ("### 预测数据统计", "### 统计", "### Counts"),
+    ("相关预测事实", "相关事实", "Related facts"),
+    ("(请在报告中引用这些原文)", "(可在编年史中按名引用原文)", "(quote them by name in the Chronicle)"),
+    ("## 广度搜索结果（未来全景视图）", "## 全景", "## The whole view"),
+    ("(模拟结果原文)", "(原文)", "(as it was said)"),
+    ("## 深度采访报告", "## 采访记录", "## The citizens questioned"),
+    ("**采访主题:**", "**采访主题:**", "**Asked about:**"),
+    ("**采访人数:**", "**采访人数:**", "**Citizens questioned:**"),
+    ("**关键引言:**", "**关键引言:**", "**Key lines:**"),
+    ("#### 采访 #", "#### 采访 #", "#### Questioned #"),
 )
 
 
-def observation_in_city_words(result: str) -> str:
-    """Relabel a search result before the Scribe reads it (the log keeps the original)."""
+def observation_in_city_words(result: str, lang: Optional[str] = None) -> str:
+    """Relabel a search result before the Scribe reads it (the log keeps the original).
+
+    lang is the language she is writing in: Chinese labels for a Chinese
+    Chronicle or answer, English ones for any other (the default).
+    """
     if not result or not isinstance(result, str):
         return result
-    for engine, city in _OBSERVATION_LABELS:
-        result = result.replace(engine, city)
+    column = 1 if normalize_lang(lang) == "zh" else 2
+    for labels in _OBSERVATION_LABELS:
+        result = result.replace(labels[0], labels[column])
     for engine, city in (("Twitter", "the Agora"), ("Reddit", "the Stoa")):
         result = re.sub(_latin(rf'(?:on|in)\s+(?:the\s+)?{engine}'), f"in {city}", result, flags=re.I)
         result = re.sub(_latin(rf'(?:the\s+)?{engine}') + r'(?:\s*平台)?', city, result, flags=re.I)
@@ -1354,6 +1459,10 @@ You are the Scribe of Athens, seated at the head of the Symposium. You walked th
 3. Search the city only when the Chronicle does not hold the answer.
 4. Be brief, clear and orderly.
 
+[One language: the visitor's]
+- The Chronicle and your notes may be in another language than the visitor's.
+- Write the whole answer in the language asked for below, every quotation included: translate what you quote into that language, keeping its meaning and letting it read naturally. A quotation the visitor cannot read tells them nothing.
+
 [Your searches] (only when needed, 1 or 2 at most)
 {tools_description}
 
@@ -1377,6 +1486,22 @@ CHAT_ANSWER_AGAIN_MSG = (
     "no searches, no tags, no notes about what you will do."
 )
 
+# An answer that ends by promising a search it never made ("... I will ask the
+# city."): the visitor would be left waiting on it, so it is asked for once more.
+_PROMISED_SEARCH = re.compile(
+    r"(?:\bI\s+will|\bI'll|\bI\s+shall|\bLet\s+me)\s+(?:now\s+|first\s+|go\s+and\s+)?"
+    r"(?:ask|search|question|consult|query|check|look\s+(?:into|through|at))\b[^.!?\n]{0,80}[.!?…]?\s*$",
+    re.I,
+)
+
+
+def _answer_problem(answer: str) -> Optional[str]:
+    """Why the Scribe's answer cannot be shown (model_output.problem, or 'promise'), or None."""
+    reason = model_output.problem(answer)
+    if reason is None and _PROMISED_SEARCH.search((answer or '').strip()):
+        return 'promise'
+    return reason
+
 # The city's words as the Chinese pages already say them, so a Chronicle
 # written in Chinese names things the way the rest of the city does.
 SCRIBE_WORDS_ZH = (
@@ -1386,10 +1511,15 @@ SCRIBE_WORDS_ZH = (
 )
 
 
-def _language_lines() -> str:
-    """The language instruction, with the Chinese names of the city's words when the Chronicle is Chinese."""
-    instruction = get_language_instruction()
-    if get_locale() == "zh":
+def _language_lines(lang: str) -> str:
+    """The language instruction for lang, with the Chinese names of the city's words when it is Chinese.
+
+    lang is always given: the Chronicle's own language for what goes on
+    record, the visitor's for an answer. Never the thread's or the request's.
+    """
+    lang = normalize_lang(lang)
+    instruction = language_instruction_for(lang)
+    if lang == "zh":
         return f"{SCRIBE_WORDS_ZH}\n{instruction}"
     return instruction
 
@@ -1424,22 +1554,31 @@ class ReportAgent:
         simulation_id: str,
         simulation_requirement: str,
         llm_client: Optional[LLMClient] = None,
-        zep_tools: Optional[ZepToolsService] = None
+        zep_tools: Optional[ZepToolsService] = None,
+        language: Optional[str] = None,
     ):
         """
         初始化Report Agent
-        
+
         Args:
             graph_id: 图谱ID
             simulation_id: 模拟ID
             simulation_requirement: 模拟需求描述
             llm_client: LLM客户端（可选）
             zep_tools: Zep工具服务（可选）
+            language: the record language the Chronicle is written in ('en'
+                or 'zh'); the gathering's record_language() when omitted. The
+                Symposium's answers are in the visitor's language instead
+                (chat(lang=...)).
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
-        
+        self.language = normalize_lang(language, default=None) or record_language(
+            simulation_id=simulation_id,
+            requirement=simulation_requirement if isinstance(simulation_requirement, str) else None,
+        )
+
         self.llm = llm_client or LLMClient()
         self.zep_tools = zep_tools or ZepToolsService()
         
@@ -1498,17 +1637,96 @@ class ReportAgent:
         self._city = {"roster": roster, "time_unit": time_unit}
         return self._city
 
-    def _in_scribe_voice(self, text: str, where: str) -> str:
-        """The backstop pass on what the Scribe hands back (chapters, outline, answers)."""
+    def _roster_in(self, lang: str) -> Dict[str, str]:
+        """The city's roster with its names in lang (roster_in), worked out once for each language.
+
+        Once for the whole Chronicle, so that a citizen has the same name in
+        every chapter and the outline, and the chapters cost no call for it.
+        """
+        city = self._city_facts()
+        lang = normalize_lang(lang)
+        rosters = city.setdefault("rosters", {})
+        if lang not in rosters:
+            rosters[lang] = roster_in(city.get("roster"), lang)
+        return rosters[lang]
+
+    def _in_language(self, text: str, lang: str, where: str) -> str:
+        """The last line on what the Scribe hands back: nothing in a script its reader cannot read.
+
+        Lines with Chinese in them, quotations included, are translated into
+        lang (one call) for any reader but a Chinese one; never raises.
+        """
+        return ensure_language(text, lang, context=f"the Chronicle of Athens ({where})")
+
+    def _in_record_language(self, texts: List[Any], where: str, context: Optional[str] = None) -> List[Any]:
+        """texts as they go on record: in the Chronicle's language, and whole wherever the model allows.
+
+        Every line in another script is translated, one call for all of them
+        (as _in_language). A line the guard could not translate whole, and so
+        stripped of its foreign words, is asked for once more on its own: the
+        guard never keeps a translation of a line it had to strip, so that is
+        a fresh call. Only a line still not whole after it is kept stripped,
+        never in the other script, and the owner is told in the log. A Chinese
+        Chronicle is never touched.
+        """
+        lang = self.language
+        context = context or f"the Chronicle of Athens ({where})"
+        # Line by line, so that only the lines that failed are asked for again.
+        split = [text.split('\n') if foreign_script(text, lang) else None for text in texts]
+        lines = [line for parts in split if parts is not None for line in parts]
+        if not lines:
+            return list(texts)
+        name = LANGUAGE_NAMES.get(lang, lang)
+        missed: List[int] = []
+        checked = ensure_language_many(lines, lang, context=context, untranslated=missed)
+        if missed:
+            again_at = sorted(set(missed))
+            # INFO: a line put right on the second asking is nothing the visitor needs to hear about.
+            logger.info("%d line(s) did not come back whole in %s; asking once more (%s)",
+                        len(again_at), name, where)
+            still: List[int] = []
+            again = ensure_language_many([lines[i] for i in again_at], lang, context=context, untranslated=still)
+            for position, index in enumerate(again_at):
+                checked[index] = again[position]
+            if still:
+                logger.warning(
+                    "%d line(s) could not be put in %s after a second try, so their words in "
+                    "another script were left out (%s)", len(set(still)), name, where,
+                )
+        results: List[Any] = []
+        cursor = 0
+        for text, parts in zip(texts, split):
+            if parts is None:
+                results.append(text)
+                continue
+            kept = []
+            for line in parts:
+                result = checked[cursor]
+                cursor += 1
+                # A foreign line left with nothing worth reading goes, as the guard drops it.
+                if result or not foreign_script(line, lang):
+                    kept.append(result)
+            results.append('\n'.join(kept))
+        return results
+
+    def _in_scribe_voice(self, text: str, where: str, lang: str) -> str:
+        """The backstop pass on what the Scribe hands back (chapters, outline, answers).
+
+        lang is the language the text is in, always told: the Chronicle's for
+        what goes on record, the visitor's for an answer. Never guessed from
+        the text, whose quotations may be in another.
+        """
         if not text or not isinstance(text, str):
             return text
-        city = self._city_facts()
         try:
+            city = self._city_facts()
             voiced, notes = scribe_voice(
                 text,
-                roster=city["roster"],
+                # Its names in lang: the voice runs after the check, and must not undo it.
+                roster=self._roster_in(lang),
                 time_unit=city["time_unit"],
                 question=self.simulation_requirement or "",
+                lang=normalize_lang(lang),
             )
         except Exception as e:  # the Chronicle is never lost to its own proofreading
             logger.info("Scribe's words (%s): pass skipped: %s", where, e)
@@ -1528,6 +1746,33 @@ class ReportAgent:
             for note in left:
                 logger.debug("Scribe's words (%s): left %r: ...%s...", where, note["term"], note["context"])
         return voiced
+
+    def _in_record(self, texts: List[Any], where: str, context: Optional[str] = None) -> List[Any]:
+        """texts as they go on record: in the Chronicle's language, then in the city's words.
+
+        The check comes first, so that what it translated is put in the city's
+        words too, and the voice puts names in from the roster in the
+        Chronicle's language (_roster_in). Whatever the voice still brought in
+        another script (a citizen whose handle is in it, and whose name could
+        not be put in the Chronicle's) is checked once more: nothing it adds
+        goes on record unchecked.
+        """
+        voiced = [self._in_scribe_voice(text, where, self.language)
+                  for text in self._in_record_language(texts, where, context)]
+        stray = [index for index, text in enumerate(voiced) if foreign_script(text, self.language)]
+        if stray:
+            again = self._in_record_language([voiced[index] for index in stray], where, context)
+            for index, text in zip(stray, again):
+                voiced[index] = text
+        return voiced
+
+    def _in_answer(self, answer: str, lang: str) -> str:
+        """An answer as the visitor reads it: in their language, then in the city's words (as _in_record)."""
+        where = "an answer at the Symposium"
+        answer = self._in_scribe_voice(self._in_language(answer, lang, where), "symposium", lang)
+        if foreign_script(answer, lang):
+            answer = self._in_language(answer, lang, where)
+        return answer
 
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """定义可用工具 (keyed by the name the engine runs; "name" is what the Scribe is shown)"""
@@ -1565,7 +1810,8 @@ class ReportAgent:
             }
         }
     
-    def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "") -> str:
+    def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "",
+                      lang: Optional[str] = None) -> str:
         """
         执行工具调用
         
@@ -1573,11 +1819,15 @@ class ReportAgent:
             tool_name: 工具名称
             parameters: 工具参数
             report_context: 报告上下文（用于InsightForge）
+            lang: the language the Scribe is writing in, which the searches
+                answer in (the citizens are questioned in it too): the
+                Chronicle's by default, the visitor's for an answer.
             
         Returns:
             工具执行结果（文本格式）
         """
         tool_name = TOOL_ALIASES.get(tool_name, tool_name)
+        lang = normalize_lang(lang or self.language)
         logger.info(t('report.executingTool', toolName=tool_name, params=parameters))
         
         try:
@@ -1588,7 +1838,8 @@ class ReportAgent:
                     graph_id=self.graph_id,
                     query=query,
                     simulation_requirement=self.simulation_requirement,
-                    report_context=ctx
+                    report_context=ctx,
+                    language=lang,
                 )
                 return result.to_text()
             
@@ -1601,7 +1852,8 @@ class ReportAgent:
                 result = self.zep_tools.panorama_search(
                     graph_id=self.graph_id,
                     query=query,
-                    include_expired=include_expired
+                    include_expired=include_expired,
+                    language=lang,
                 )
                 return result.to_text()
             
@@ -1614,7 +1866,8 @@ class ReportAgent:
                 result = self.zep_tools.quick_search(
                     graph_id=self.graph_id,
                     query=query,
-                    limit=limit
+                    limit=limit,
+                    language=lang,
                 )
                 return result.to_text()
             
@@ -1629,7 +1882,8 @@ class ReportAgent:
                     simulation_id=self.simulation_id,
                     interview_requirement=interview_topic,
                     simulation_requirement=self.simulation_requirement,
-                    max_agents=max_agents
+                    max_agents=max_agents,
+                    language=lang,
                 )
                 return result.to_text()
             
@@ -1638,7 +1892,7 @@ class ReportAgent:
             elif tool_name == "search_graph":
                 # 重定向到 quick_search
                 logger.info(t('report.redirectToQuickSearch'))
-                return self._execute_tool("quick_search", parameters, report_context)
+                return self._execute_tool("quick_search", parameters, report_context, lang)
             
             elif tool_name == "get_graph_statistics":
                 result = self.zep_tools.get_graph_statistics(self.graph_id)
@@ -1656,7 +1910,7 @@ class ReportAgent:
                 # 重定向到 insight_forge，因为它更强大
                 logger.info(t('report.redirectToInsightForge'))
                 query = parameters.get("query", self.simulation_requirement)
-                return self._execute_tool("insight_forge", {"query": query}, report_context)
+                return self._execute_tool("insight_forge", {"query": query}, report_context, lang)
             
             elif tool_name == "get_entities_by_type":
                 entity_type = parameters.get("entity_type", "")
@@ -1807,13 +2061,17 @@ class ReportAgent:
         Markup is stripped. A chapter that is still notes, markup or a soup of
         fragments is asked for once more (without the bad reply in view), and
         after that the Scribe says she could not finish it rather than saving
-        what came back.
+        what came back. What she hands back is then put in the Chronicle's
+        language (a quotation left in another is translated, and a line that
+        does not come back whole is asked for once more) and in the city's
+        words, with its citizens named in the Chronicle's language, before it
+        is logged or saved (_in_record).
         """
         where = f"chapter {section_index}"
         chapter = model_output.strip_markup(text or "")
         reason = model_output.problem(chapter)
         if reason is None:
-            return self._in_scribe_voice(chapter, where)
+            return self._in_record([chapter], where)[0]
         logger.warning("Section %r came back unusable (%s); asking once more", section.title, reason)
         retry = list(messages)
         if retry and retry[-1].get("role") == "assistant":
@@ -1832,9 +2090,9 @@ class ReportAgent:
             )
             reason = model_output.problem(chapter)
             if reason is None:
-                return self._in_scribe_voice(chapter, where)
+                return self._in_record([chapter], where)[0]
         logger.warning("Section %r is set down unfinished (%s)", section.title, reason)
-        return t('scribe.chapterUnwritten')
+        return t('scribe.chapterUnwritten', locale=self.language)
 
     def plan_outline(
         self, 
@@ -1865,7 +2123,7 @@ class ReportAgent:
         if progress_callback:
             progress_callback("planning", 30, t('progress.generatingOutline'))
         
-        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{_language_lines()}"
+        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{_language_lines(self.language)}"
         user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
             simulation_requirement=self.simulation_requirement,
             total_nodes=context.get('graph_statistics', {}).get('total_nodes', 0),
@@ -1887,19 +2145,35 @@ class ReportAgent:
             if progress_callback:
                 progress_callback("planning", 80, t('progress.parsingOutline'))
             
-            # 解析大纲
-            sections = []
-            for section_data in response.get("sections", []):
-                sections.append(ReportSection(
-                    title=self._in_scribe_voice(section_data.get("title", ""), "outline"),
-                    content=""
-                ))
-            
-            outline = ReportOutline(
-                title=self._in_scribe_voice(response.get("title", t('scribe.untitled')), "outline"),
-                summary=self._in_scribe_voice(response.get("summary", ""), "outline"),
-                sections=sections
+            # 解析大纲: the title, summary and chapter titles are checked for the
+            # Chronicle's language together (one call), then put in the city's words
+            # (_in_record: a citizen they name is named in the Chronicle's language).
+            planned = [section_data.get("title", "") for section_data in response.get("sections", [])]
+            title, summary, *section_titles = self._in_record(
+                [response.get("title", t('scribe.untitled', locale=self.language)),
+                 response.get("summary", ""), *planned],
+                "the outline",
+                context="the outline of the Chronicle of Athens",
             )
+            # A title with nothing left of it (none given, or none that could be put in the
+            # Chronicle's language) reads as the Chronicle.
+            title = title or t('scribe.untitled', locale=self.language)
+            # A chapter whose title could not be put in the Chronicle's language is left out
+            # of the plan, since she would write it to a title nobody can read; with none
+            # left, she writes the plain three.
+            lost = [not kept and foreign_script(asked, self.language)
+                    for asked, kept in zip(planned, section_titles)]
+            if any(lost):
+                logger.info("%d chapter(s) left out of the plan: no title for them could be put in %s",
+                            sum(lost), LANGUAGE_NAMES.get(self.language, self.language))
+                section_titles = [kept for kept, gone in zip(section_titles, lost) if not gone] or [
+                    t('scribe.fallbackChapterOne', locale=self.language),
+                    t('scribe.fallbackChapterTwo', locale=self.language),
+                    t('scribe.fallbackChapterThree', locale=self.language),
+                ]
+            sections = [ReportSection(title=section_title, content="") for section_title in section_titles]
+
+            outline = ReportOutline(title=title, summary=summary, sections=sections)
             
             if progress_callback:
                 progress_callback("planning", 100, t('progress.outlinePlanComplete'))
@@ -1909,14 +2183,15 @@ class ReportAgent:
             
         except Exception as e:
             logger.error(t('report.outlinePlanFailed', error=str(e)))
-            # 返回默认大纲（3个章节，作为fallback）
+            # 返回默认大纲（3个章节，作为fallback）, in the Chronicle's language
+            lang = self.language
             return ReportOutline(
-                title=t('scribe.fallbackTitle'),
-                summary=t('scribe.fallbackSummary'),
+                title=t('scribe.fallbackTitle', locale=lang),
+                summary=t('scribe.fallbackSummary', locale=lang),
                 sections=[
-                    ReportSection(title=t('scribe.fallbackChapterOne')),
-                    ReportSection(title=t('scribe.fallbackChapterTwo')),
-                    ReportSection(title=t('scribe.fallbackChapterThree'))
+                    ReportSection(title=t('scribe.fallbackChapterOne', locale=lang)),
+                    ReportSection(title=t('scribe.fallbackChapterTwo', locale=lang)),
+                    ReportSection(title=t('scribe.fallbackChapterThree', locale=lang))
                 ]
             )
     
@@ -1961,7 +2236,7 @@ class ReportAgent:
             section_title=section.title,
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{_language_lines()}"
+        system_prompt = f"{system_prompt}\n\n{_language_lines(self.language)}"
 
         # 构建用户prompt - 每个已完成章节各传入最大4000字
         if previous_sections:
@@ -2162,7 +2437,7 @@ class ReportAgent:
                     "role": "user",
                     "content": REACT_OBSERVATION_TEMPLATE.format(
                         tool_name=_tool_label(call["name"]),
-                        result=observation_in_city_words(result),
+                        result=observation_in_city_words(result, self.language),
                         tool_calls_count=tool_calls_count,
                         max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                         used_tools_str=_tool_labels(used_tools),
@@ -2217,7 +2492,7 @@ class ReportAgent:
                         "role": "user",
                         "content": REACT_OBSERVATION_TEMPLATE.format(
                             tool_name=_tool_label(fallback["name"]),
-                            result=observation_in_city_words(result),
+                            result=observation_in_city_words(result, self.language),
                             tool_calls_count=tool_calls_count,
                             max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                             used_tools_str=_tool_labels(used_tools),
@@ -2273,7 +2548,7 @@ class ReportAgent:
         # 检查强制收尾时 LLM 返回是否为 None
         if response is None:
             logger.error(t('report.sectionForceFailed', title=section.title))
-            final_answer = t('scribe.chapterUnwritten')
+            final_answer = t('scribe.chapterUnwritten', locale=self.language)
         else:
             cleaned = ReportAgent._strip_fake_tool_results(response)
             if "Final Answer:" in cleaned:
@@ -2313,24 +2588,31 @@ class ReportAgent:
         Args:
             progress_callback: 进度回调函数 (stage, progress, message)
             report_id: 报告ID（可选，如果不传则自动生成）
-            
+
         Returns:
             Report: 完整报告
+
+        The Chronicle is written in self.language, its record language, and
+        stored with it in meta.json. It runs on a thread of its own, whoever
+        asked for it: the thread reads in that language too, so the notes and
+        errors it writes (progress, the Scribe's log) are in it as well.
         """
         import uuid
-        
+
         # 如果没有传入 report_id，则自动生成
         if not report_id:
             report_id = f"report_{uuid.uuid4().hex[:12]}"
         start_time = datetime.now()
-        
+        set_locale(self.language)
+
         report = Report(
             report_id=report_id,
             simulation_id=self.simulation_id,
             graph_id=self.graph_id,
             simulation_requirement=self.simulation_requirement,
             status=ReportStatus.PENDING,
-            created_at=datetime.now().isoformat()
+            created_at=datetime.now().isoformat(),
+            language=self.language,
         )
         
         # 已完成的章节标题列表（用于进度追踪）
@@ -2427,7 +2709,10 @@ class ReportAgent:
                         ) if progress_callback else None,
                     section_index=section_num
                 )
-                
+                # Checked when it was handed back (_checked_chapter); nothing in
+                # another script is saved or logged, whichever way it came.
+                section_content = self._in_record_language([section_content], f"chapter {section_num}")[0]
+
                 section.content = section_content
                 generated_sections.append(f"## {section.title}\n\n{section_content}")
 
@@ -2465,8 +2750,11 @@ class ReportAgent:
                 completed_sections=completed_section_titles
             )
             
-            # 使用ReportManager组装完整报告
-            report.markdown_content = ReportManager.assemble_full_report(report_id, outline)
+            # 使用ReportManager组装完整报告, checked once more as a whole before
+            # it is called complete (save_report below rewrites full_report.md).
+            report.markdown_content = self._in_record_language(
+                [ReportManager.assemble_full_report(report_id, outline)], "the whole Chronicle"
+            )[0]
             report.status = ReportStatus.COMPLETED
             report.completed_at = datetime.now().isoformat()
             
@@ -2500,19 +2788,21 @@ class ReportAgent:
             return report
             
         except Exception as e:
-            logger.error(t('report.reportGenFailed', error=str(e)))
+            # The Chronicle's page (and its ledger) shows why it stopped: in its own language too.
+            error = self._in_record_language([str(e)], "why the Chronicle stopped")[0]
+            logger.error(t('report.reportGenFailed', error=error))
             report.status = ReportStatus.FAILED
-            report.error = str(e)
-            
+            report.error = error
+
             # 记录错误日志
             if self.report_logger:
-                self.report_logger.log_error(str(e), "failed")
-            
+                self.report_logger.log_error(error, "failed")
+
             # 保存失败状态
             try:
                 ReportManager.save_report(report)
                 ReportManager.update_progress(
-                    report_id, "failed", -1, t('progress.reportFailed', error=str(e)),
+                    report_id, "failed", -1, t('progress.reportFailed', error=error),
                     completed_sections=completed_section_titles
                 )
             except Exception:
@@ -2525,13 +2815,19 @@ class ReportAgent:
             
             return report
     
-    def _checked_answer(self, text: str, messages: List[Dict[str, str]]) -> str:
+    def _checked_answer(self, text: str, messages: List[Dict[str, str]], lang: Optional[str] = None) -> str:
         """The Scribe's answer as the visitor will read it: markup stripped, asked once more
-        when it is still markup, notes or fragments, and the fallback line after that."""
+        when it is still markup, notes or fragments, and the fallback line after that.
+
+        lang is the visitor's language: the answer is put in it (a quotation
+        from a Chronicle in another language is translated) and in the city's
+        words, its citizens named in it too (_in_answer).
+        """
+        lang = normalize_lang(lang or get_locale())
         answer = model_output.strip_markup(_final_answer_text(text or ""))
-        reason = model_output.problem(answer)
+        reason = _answer_problem(answer)
         if reason is None:
-            return self._in_scribe_voice(answer, "symposium")
+            return self._in_answer(answer, lang)
         logger.warning("The Scribe's answer came back unusable (%s); asking once more", reason)
         retry = list(messages) + [
             {"role": "assistant", "content": REACT_EMPTY_REPLY},
@@ -2548,26 +2844,30 @@ class ReportAgent:
             answer = model_output.strip_markup(
                 _final_answer_text(ReportAgent._strip_fake_tool_results(again))
             )
-            reason = model_output.problem(answer)
+            reason = _answer_problem(answer)
             if reason is None:
-                return self._in_scribe_voice(answer, "symposium")
+                return self._in_answer(answer, lang)
         logger.warning("The Scribe's answer is set aside (%s)", reason)
-        return t('scribe.answerLost')
+        return t('scribe.answerLost', locale=lang)
 
     def chat(
-        self, 
+        self,
         message: str,
-        chat_history: List[Dict[str, str]] = None
+        chat_history: List[Dict[str, str]] = None,
+        lang: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         与Report Agent对话
-        
+
         在对话中Agent可以自主调用检索工具来回答问题
-        
+
         Args:
             message: 用户消息
             chat_history: 对话历史
-            
+            lang: the visitor's language ('en' or 'zh'), the one the answer is
+                in; this request's when omitted. The Chronicle she answers from
+                stays in its own.
+
         Returns:
             {
                 "response": "Agent回复",
@@ -2575,12 +2875,14 @@ class ReportAgent:
                 "sources": [信息来源]
             }
         """
+        lang = normalize_lang(lang or get_locale())
         logger.info(t('report.agentChat', message=message[:50]))
-        
+
         chat_history = chat_history or []
-        
+
         # 获取已生成的报告内容
         report_content = ""
+        report = None
         try:
             report = ReportManager.get_report_by_simulation(self.simulation_id)
             if report and report.markdown_content:
@@ -2592,25 +2894,29 @@ class ReportAgent:
             logger.warning(t('report.fetchReportFailed', error=e))
 
         # A Chronicle written before the Scribe kept to the city's words gets the
-        # same backstop here, so she does not read the machine's words back.
+        # same backstop here, so she does not read the machine's words back. It
+        # is voiced in its own language, not the visitor's.
         if report_content:
             try:
                 city = self._city_facts()
+                written_in = chronicle_language(report)
                 report_content = scribe_voice(
                     report_content,
-                    roster=city["roster"],
+                    # Its citizens named as the Chronicle names them, so her answer does too.
+                    roster=self._roster_in(written_in),
                     time_unit=city["time_unit"],
                     question=self.simulation_requirement or "",
+                    lang=written_in,
                 )[0]
             except Exception as e:
                 logger.info("Scribe's words (symposium): Chronicle left as written: %s", e)
-        
+
         system_prompt = CHAT_SYSTEM_PROMPT_TEMPLATE.format(
             simulation_requirement=self.simulation_requirement,
             report_content=report_content if report_content else CHAT_NO_CHRONICLE,
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{_language_lines()}"
+        system_prompt = f"{system_prompt}\n\n{_language_lines(lang)}"
 
         # 构建消息
         messages = [{"role": "system", "content": system_prompt}]
@@ -2645,7 +2951,7 @@ class ReportAgent:
                 clean_response = ReportAgent._strip_fake_tool_results(clean_response)
                 
                 return {
-                    "response": self._checked_answer(clean_response, messages),
+                    "response": self._checked_answer(clean_response, messages, lang),
                     "tool_calls": tool_calls_made,
                     "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
                 }
@@ -2655,7 +2961,7 @@ class ReportAgent:
             for call in tool_calls[:1]:  # 每轮最多执行1次工具调用
                 if len(tool_calls_made) >= self.MAX_TOOL_CALLS_PER_CHAT:
                     break
-                result = self._execute_tool(call["name"], call.get("parameters", {}))
+                result = self._execute_tool(call["name"], call.get("parameters", {}), lang=lang)
                 tool_results.append({
                     "tool": call["name"],
                     "result": result[:1500]  # 限制结果长度
@@ -2666,7 +2972,7 @@ class ReportAgent:
             cleaned_response = ReportAgent._strip_fake_tool_results(response)
             messages.append({"role": "assistant", "content": cleaned_response})
             observation = "\n".join([
-                CHAT_OBSERVATION_TEMPLATE.format(tool=_tool_label(r['tool']), result=observation_in_city_words(r['result']))
+                CHAT_OBSERVATION_TEMPLATE.format(tool=_tool_label(r['tool']), result=observation_in_city_words(r['result'], lang))
                 for r in tool_results
             ])
             messages.append({
@@ -2686,7 +2992,7 @@ class ReportAgent:
         clean_response = ReportAgent._strip_fake_tool_results(clean_response)
         
         return {
-            "response": self._checked_answer(clean_response, messages),
+            "response": self._checked_answer(clean_response, messages, lang),
             "tool_calls": tool_calls_made,
             "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
         }
@@ -3299,7 +3605,9 @@ class ReportManager:
             markdown_content=markdown_content,
             created_at=data.get('created_at', ''),
             completed_at=data.get('completed_at', ''),
-            error=data.get('error')
+            error=data.get('error'),
+            # None for a Chronicle begun before its language was stored.
+            language=normalize_lang(data.get('language'), default=None),
         )
     
     @classmethod

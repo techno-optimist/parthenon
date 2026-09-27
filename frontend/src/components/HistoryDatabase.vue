@@ -289,7 +289,7 @@ import { speakers } from '../parthenon/speakers.js'
 import { arrivals } from '../parthenon/arrivals/index.js'
 import { localText } from '../parthenon/localText.js'
 import { speakerFace } from '../parthenon/portraits.js'
-import { ACTS, citizenName, isPlatformNode, textLang, smartQuotes } from '../parthenon/vocabulary.js'
+import { ACTS, citizenName, isPlatformNode, textLang, smartQuotes, forReader, recordLanguageOf } from '../parthenon/vocabulary.js'
 import { withBase } from '../parthenon/base.js'
 import { access, ownsGathering } from '../parthenon/access.js'
 
@@ -452,7 +452,9 @@ const nightOf = (p) => {
     projectId: p.project_id || '',
     simulationId: p.simulation_id || '',
     reportId,
-    title: printed(p.report_title) || stageTitle(speaker, arrival, lang) || titleFromQuestion(question),
+    // The Chronicle's title is its record's, in the record's language, less
+    // what the visitor cannot read of it.
+    title: printed(forReader(p.report_title, recordLanguageOf(p, lang), lang)) || stageTitle(speaker, arrival, lang) || titleFromQuestion(question),
     stageName: [arrival?.title, arrival?.zh?.title, speaker?.name, speaker?.work, speaker?.zh?.name, speaker?.zh?.work].filter(Boolean).join(' '),
     question,
     era: localText(speaker, 'year', lang) || localText(arrival, 'year', lang) || '',

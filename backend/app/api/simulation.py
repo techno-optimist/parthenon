@@ -23,7 +23,9 @@ from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..services import citizen_portraits, symposium_memory
 from ..utils.logger import get_logger
 from ..utils.json_files import write_json_atomic
-from ..utils.locale import t, get_locale, set_locale
+from ..utils.locale import t, get_locale, set_locale, normalize_lang, language_instruction_for
+from ..services.language_guard import ensure_language_many, foreign_script, record_language
+from ..services.graph_builder import graph_record_language
 from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ..models.project import ProjectManager
 
@@ -54,26 +56,178 @@ def _get_default_platform(simulation_id: str) -> str:
 
 
 # Interview prompt 优化前缀
-# 添加此前缀可以避免Agent调用工具，直接用文本回复
-INTERVIEW_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
+# 添加此前缀可以避免Agent调用工具，直接用文本回复. A live answer is for the
+# visitor asking, so the prefix is in their language (the page's "lang", else
+# the request's Accept-Language), and asks for that language whatever the
+# persona, memories and question are written in: the guard can put a stray
+# answer into English, but nothing puts one into Chinese. symposium_memory
+# keeps copies of these to strip from a page's history; tests pin them equal.
+INTERVIEW_PROMPT_PREFIX = (
+    "Drawing on your persona and all your past memories and actions, answer me directly in plain text, "
+    "without calling any tools. Answer in English, even if the question is in another language. "
+    + language_instruction_for('en') + "\n\n"
+)
+INTERVIEW_PROMPT_PREFIX_ZH = (
+    "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我。"
+    "无论问题、人设或记忆使用何种语言，请始终用简体中文回答。"
+    + language_instruction_for('zh') + "\n\n"
+)
+# The upstream prefix, which older prompts (and the square's trace) still carry.
+INTERVIEW_PROMPT_PREFIX_ZH_UPSTREAM = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
+INTERVIEW_PROMPT_PREFIXES = {'en': INTERVIEW_PROMPT_PREFIX, 'zh': INTERVIEW_PROMPT_PREFIX_ZH}
+# Every prefix a prompt may already carry, the longest first.
+KNOWN_INTERVIEW_PROMPT_PREFIXES = tuple(sorted(
+    {INTERVIEW_PROMPT_PREFIX, INTERVIEW_PROMPT_PREFIX_ZH, INTERVIEW_PROMPT_PREFIX_ZH_UPSTREAM},
+    key=len, reverse=True,
+))
 
 
-def optimize_interview_prompt(prompt: str) -> str:
+def interview_prompt_prefix(lang) -> str:
+    """The live interview's prefix in a reading language (anything but Chinese reads English)."""
+
+    return INTERVIEW_PROMPT_PREFIXES[normalize_lang(lang)]
+
+
+def optimize_interview_prompt(prompt: str, lang=None) -> str:
     """
     优化Interview提问，添加前缀避免Agent调用工具
     
     Args:
         prompt: 原始提问
+        lang: the visitor's reading language ('en' when None)
         
     Returns:
         优化后的提问
     """
     if not prompt:
         return prompt
-    # 避免重复添加前缀
-    if prompt.startswith(INTERVIEW_PROMPT_PREFIX):
-        return prompt
-    return f"{INTERVIEW_PROMPT_PREFIX}{prompt}"
+    # 避免重复添加前缀: a prefix already there, in any language, gives way to the visitor's.
+    for known in KNOWN_INTERVIEW_PROMPT_PREFIXES:
+        if prompt.startswith(known):
+            prompt = prompt[len(known):]
+            break
+    return f"{interview_prompt_prefix(lang)}{prompt}"
+
+
+def _viewer_lang(data) -> str:
+    """The visitor's reading language: the page's "lang", else the request's Accept-Language."""
+
+    lang = data.get('lang') if isinstance(data, dict) else None
+    return normalize_lang(lang, default=None) or get_locale()
+
+
+def _live_answers_in(result, lang: str):
+    """A live run's result with every answer in the visitor's language (language_guard, one call at most).
+
+    The runner's shapes: result.response (one platform), result.platforms.*.response
+    (both) and result.results.*.response (a batch). Nothing else is touched.
+    """
+
+    found = []
+
+    def collect(node, depth=0):
+        if depth > 4 or not isinstance(node, dict):
+            return
+        if isinstance(node.get('response'), str) and node['response']:
+            found.append(node)
+        for key in ('result', 'platforms', 'results'):
+            child = node.get(key)
+            if isinstance(child, dict):
+                if key == 'result':
+                    collect(child, depth + 1)
+                else:
+                    for item in child.values():
+                        collect(item, depth + 1)
+
+    if isinstance(result, dict):
+        collect(result.get('result'))
+    answers = [node['response'] for node in found]
+    if any(foreign_script(answer, lang) for answer in answers):
+        guarded = ensure_language_many(answers, lang, context='answers a visitor asked for at the Symposium')
+        for node, answer in zip(found, guarded):
+            node['response'] = answer
+    return result
+
+
+def _live_error(error, lang: str) -> str:
+    """A live interview's refusal in words the visitor can read (the runner may still speak Chinese)."""
+
+    text = str(error)
+    return t('api.envNotRunningShort', locale=lang) if foreign_script(text, lang) else text
+
+
+def _history_in(history, lang: str):
+    """The square's interview trace for a visitor: every prompt and answer in their language.
+
+    The trace keeps what was asked and said as it was (older gatherings asked
+    in Chinese, and the mend leaves the square's databases alone), so a reader
+    who is not Chinese gets its foreign lines through the language guard, in
+    one call at most. Nothing else in a row is touched.
+    """
+
+    if lang == 'zh' or not isinstance(history, list):
+        return history
+    slots = [
+        (row, key) for row in history if isinstance(row, dict)
+        for key in ('prompt', 'response')
+        if isinstance(row.get(key), str) and foreign_script(row[key], lang)
+    ]
+    if slots:
+        guarded = ensure_language_many(
+            [row[key] for row, key in slots], lang, context='what citizens were asked in the square and answered',
+        )
+        for (row, key), text in zip(slots, guarded):
+            row[key] = text
+    return history
+
+
+def _live_timeout(key: str, data, default_seconds, error) -> str:
+    """A live interview that ran out of time, in the visitor's words; the square's own message stays in the log."""
+
+    logger.warning(f"A live interview ran out of time: {error}")
+    seconds = data.get('timeout', default_seconds) if isinstance(data, dict) else default_seconds
+    try:
+        seconds = float(seconds)
+        if not 0 < seconds < 10 ** 6:
+            raise ValueError(seconds)
+        seconds = int(seconds) if seconds.is_integer() else round(seconds, 1)
+    except (TypeError, ValueError, OverflowError):
+        seconds = default_seconds
+    return t(key, locale=_viewer_lang(data), error=f'{seconds}s')
+
+
+def _crowd_language(simulation, requirement=None, memo=None) -> str:
+    """A crowd's record language for its row in a list ('en' or 'zh'), so the page need not guess.
+
+    record_language of its project (else of the simulation), guessed from
+    ``requirement`` for a gathering older than the stored language. ``memo``
+    keeps one answer per gathering for the rest of a response.
+    """
+
+    project_id = getattr(simulation, 'project_id', None)
+    simulation_id = getattr(simulation, 'simulation_id', None)
+    requirement = requirement if isinstance(requirement, str) and requirement.strip() else None
+    key = (str(project_id or f'sim:{simulation_id}'), requirement)
+    if memo is not None and key in memo:
+        return memo[key]
+    lang = record_language(project_id=project_id, simulation_id=simulation_id, requirement=requirement)
+    if memo is not None:
+        memo[key] = lang
+    return lang
+
+
+def _profiles_language(data, graph_id) -> str:
+    """The record language profiles written from a graph are in: never the thread's or the visitor's.
+
+    The simulation or project the body names, else the project that references
+    the graph, else PARTHENON_RECORD_LANGUAGE or English.
+    """
+
+    simulation_id = data.get('simulation_id') if isinstance(data, dict) else None
+    project_id = data.get('project_id') if isinstance(data, dict) else None
+    if simulation_id or project_id:
+        return record_language(project_id=project_id, simulation_id=simulation_id)
+    return graph_record_language(graph_id) or record_language()
 
 
 # ============== 实体读取接口 ==============
@@ -293,7 +447,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     
     # 检查目录是否存在
     if not os.path.exists(simulation_dir):
-        return False, {"reason": "模拟目录不存在"}
+        return False, {"reason": "The simulation's folder does not exist"}
     
     # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
     required_files = [
@@ -315,7 +469,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     
     if missing_files:
         return False, {
-            "reason": "缺少必要文件",
+            "reason": "Required files are missing",
             "missing_files": missing_files,
             "existing_files": existing_files
         }
@@ -379,13 +533,13 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         else:
             logger.warning(f"模拟 {simulation_id} 检测结果: 未准备完成 (status={status}, config_generated={config_generated})")
             return False, {
-                "reason": f"状态不在已准备列表中或config_generated为false: status={status}, config_generated={config_generated}",
+                "reason": f"Not prepared yet: status={status}, config_generated={config_generated}",
                 "status": status,
                 "config_generated": config_generated
             }
             
     except Exception as e:
-        return False, {"reason": f"读取状态文件失败: {str(e)}"}
+        return False, {"reason": f"Could not read the state file: {type(e).__name__}"}
 
 
 @simulation_bp.route('/prepare', methods=['POST'])
@@ -555,18 +709,21 @@ def prepare_simulation():
         state.status = SimulationStatus.PREPARING
         manager._save_simulation_state(state)
         
-        # Capture locale before spawning background thread
-        current_locale = get_locale()
+        # The profiles and the config are the gathering's record: the worker
+        # writes them in the record's language, fixed when the project was made.
+        # Its progress lines are for the visitor watching, in their language.
+        viewer_locale = get_locale()
+        record_locale = record_language(project_id=state.project_id, simulation_id=simulation_id)
 
         # 定义后台任务
         def run_prepare():
-            set_locale(current_locale)
+            set_locale(record_locale)
             try:
                 task_manager.update_task(
                     task_id,
                     status=TaskStatus.PROCESSING,
                     progress=0,
-                    message=t('progress.startPreparingEnv')
+                    message=t('progress.startPreparingEnv', locale=viewer_locale)
                 )
                 
                 # 准备模拟（带进度回调）
@@ -587,10 +744,10 @@ def prepare_simulation():
                     
                     # 构建详细进度信息
                     stage_names = {
-                        "reading": t('progress.readingGraphEntities'),
-                        "generating_profiles": t('progress.generatingProfiles'),
-                        "generating_config": t('progress.generatingSimConfig'),
-                        "copying_scripts": t('progress.preparingScripts')
+                        "reading": t('progress.readingGraphEntities', locale=viewer_locale),
+                        "generating_profiles": t('progress.generatingProfiles', locale=viewer_locale),
+                        "generating_config": t('progress.generatingSimConfig', locale=viewer_locale),
+                        "copying_scripts": t('progress.preparingScripts', locale=viewer_locale)
                     }
                     
                     stage_index = list(stage_weights.keys()).index(stage) + 1 if stage in stage_weights else 1
@@ -648,7 +805,8 @@ def prepare_simulation():
                 if result_state.status == SimulationStatus.FAILED:
                     task_manager.fail_task(
                         task_id,
-                        result_state.error or "模拟准备失败"
+                        result_state.error
+                        or t('log.prepareFailed', locale=viewer_locale, error=simulation_id)
                     )
                 else:
                     task_manager.complete_task(
@@ -834,7 +992,9 @@ def get_simulation(simulation_id: str):
             }), 404
         
         result = state.to_dict()
-        
+        # The gathering's record language: the page shows its record in it.
+        result["language"] = _crowd_language(state)
+
         # 如果模拟已准备好，附加运行说明
         if state.status == SimulationStatus.READY:
             result["run_instructions"] = manager.get_run_instructions(simulation_id)
@@ -873,10 +1033,18 @@ def list_simulations():
                 s for s in simulations
                 if public.simulation_on_shelf(visible, s.simulation_id, s.project_id)
             ]
-        
+
+        # Each row carries its gathering's record language, so the page need not guess it.
+        languages = {}
+        rows = []
+        for s in simulations:
+            row = s.to_dict()
+            row["language"] = _crowd_language(s, memo=languages)
+            rows.append(row)
+
         return jsonify({
             "success": True,
-            "data": [s.to_dict() for s in simulations],
+            "data": rows,
             "count": len(simulations)
         })
         
@@ -986,6 +1154,7 @@ def get_simulation_history():
                         "status": "completed",
                         "poster_url": "/api/parthenon/chronicle/report_xxxx/film/poster.jpg?v=1758800000"
                     },
+                    "language": "en",
                     "version": "v1.0.2"
                 },
                 ...
@@ -994,9 +1163,10 @@ def get_simulation_history():
         }
 
     The Chronicles shelf reads question (the simulation_requirement), report_title
-    and report_status (the newest Chronicle of the run, when there is one) and
-    film (the Chronicle's film: its status, and a poster_url only once the film
-    is complete). Every field that existed before the shelf is still returned.
+    and report_status (the newest Chronicle of the run, when there is one), film
+    (the Chronicle's film: its status, and a poster_url only once the film is
+    complete) and language (the gathering's record language, 'en' or 'zh').
+    Every field that existed before the shelf is still returned.
     """
     # The film url builder lives in the parthenon API, which api/__init__.py
     # registers after this module, so it is imported here rather than at the top.
@@ -1064,9 +1234,10 @@ def get_simulation_history():
                 if public.simulation_on_shelf(visible, s.simulation_id, s.project_id)
             ]
         simulations = simulations[:limit]
-        
+
         # 增强模拟数据，只从 Simulation 文件读取
         enriched_simulations = []
+        languages = {}
         for sim in simulations:
             sim_dict = sim.to_dict()
             
@@ -1102,7 +1273,7 @@ def get_simulation_history():
             project = ProjectManager.get_project(sim.project_id)
             if project and hasattr(project, 'files') and project.files:
                 sim_dict["files"] = [
-                    {"filename": f.get("filename", "未知文件")} 
+                    {"filename": f.get("filename") or t('history.unknownFile')}
                     for f in project.files[:3]
                 ]
             else:
@@ -1115,6 +1286,10 @@ def get_simulation_history():
             # title and status, and its film (a poster only once the film is done).
             sim_dict["question"] = sim_dict["simulation_requirement"]
             sim_dict.update(chronicle_for_shelf(sim_dict["report_id"]))
+            # The gathering's record language: the shelf shows the row in it rather than guessing.
+            sim_dict["language"] = _crowd_language(
+                sim, requirement=sim_dict["simulation_requirement"], memo=languages
+            )
 
             # 添加版本号
             sim_dict["version"] = "v1.0.2"
@@ -1555,8 +1730,13 @@ def generate_profiles():
             "graph_id": "mirofish_xxxx",     // 必填
             "entity_types": ["Student"],      // 可选
             "use_llm": true,                  // 可选
-            "platform": "reddit"              // 可选
+            "platform": "reddit",             // 可选
+            "simulation_id": "sim_xxxx",      // optional: whose record language the profiles are in
+            "project_id": "proj_xxxx"         // optional, the same
         }
+
+    The profiles are written in the record language of the gathering named,
+    else of the project that references the graph (_profiles_language).
     """
     try:
         data = request.get_json() or {}
@@ -1585,7 +1765,8 @@ def generate_profiles():
                 "error": t('api.noMatchingEntities')
             }), 400
         
-        generator = OasisProfileGenerator()
+        # The profiles are the record: in its language, not the thread's or the visitor's.
+        generator = OasisProfileGenerator(language=_profiles_language(data, graph_id))
         profiles = generator.generate_profiles_from_entities(
             entities=filtered.entities,
             use_llm=use_llm
@@ -2741,8 +2922,9 @@ def interview_agent():
         if not SimulationRunner.check_env_alive(simulation_id):
             return _answer_from_memory_single(data, simulation_id, platform)
         
-        # 优化prompt，添加前缀避免Agent调用工具
-        optimized_prompt = optimize_interview_prompt(prompt)
+        # 优化prompt，添加前缀避免Agent调用工具 (in the visitor's language)
+        lang = _viewer_lang(data)
+        optimized_prompt = optimize_interview_prompt(prompt, lang)
         
         result = SimulationRunner.interview_agent(
             simulation_id=simulation_id,
@@ -2754,19 +2936,19 @@ def interview_agent():
 
         return jsonify({
             "success": result.get("success", False),
-            "data": result
+            "data": _live_answers_in(result, lang)
         })
         
     except ValueError as e:
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": _live_error(e, _viewer_lang(data))
         }), 400
         
     except TimeoutError as e:
         return jsonify({
             "success": False,
-            "error": t('api.interviewTimeout', error=str(e))
+            "error": _live_timeout('api.interviewTimeout', data, 60, e)
         }), 504
         
     except Exception as e:
@@ -2882,15 +3064,16 @@ def interview_agents_batch():
         if not SimulationRunner.check_env_alive(simulation_id):
             return _answer_from_memory_batch(data, simulation_id, interviews, platform)
 
-        # 优化每个采访项的prompt，添加前缀避免Agent调用工具
+        # 优化每个采访项的prompt，添加前缀避免Agent调用工具 (in the visitor's language)
         # (question and history are for memory answers only: the live run never sees them)
+        lang = _viewer_lang(data)
         optimized_interviews = []
         for interview in interviews:
             optimized_interview = {
                 key: value for key, value in interview.items()
                 if key not in symposium_memory.MEMORY_ONLY_KEYS
             }
-            optimized_interview['prompt'] = optimize_interview_prompt(interview.get('prompt', ''))
+            optimized_interview['prompt'] = optimize_interview_prompt(interview.get('prompt', ''), lang)
             optimized_interviews.append(optimized_interview)
 
         result = SimulationRunner.interview_agents_batch(
@@ -2902,19 +3085,19 @@ def interview_agents_batch():
 
         return jsonify({
             "success": result.get("success", False),
-            "data": result
+            "data": _live_answers_in(result, lang)
         })
 
     except ValueError as e:
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": _live_error(e, _viewer_lang(data))
         }), 400
 
     except TimeoutError as e:
         return jsonify({
             "success": False,
-            "error": t('api.batchInterviewTimeout', error=str(e))
+            "error": _live_timeout('api.batchInterviewTimeout', data, 120, e)
         }), 504
 
     except Exception as e:
@@ -2996,8 +3179,9 @@ def interview_all_agents():
         if not SimulationRunner.check_env_alive(simulation_id):
             return _answer_from_memory_all(data, simulation_id, prompt, platform)
 
-        # 优化prompt，添加前缀避免Agent调用工具
-        optimized_prompt = optimize_interview_prompt(prompt)
+        # 优化prompt，添加前缀避免Agent调用工具 (in the visitor's language)
+        lang = _viewer_lang(data)
+        optimized_prompt = optimize_interview_prompt(prompt, lang)
 
         result = SimulationRunner.interview_all_agents(
             simulation_id=simulation_id,
@@ -3008,19 +3192,19 @@ def interview_all_agents():
 
         return jsonify({
             "success": result.get("success", False),
-            "data": result
+            "data": _live_answers_in(result, lang)
         })
 
     except ValueError as e:
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": _live_error(e, _viewer_lang(data))
         }), 400
 
     except TimeoutError as e:
         return jsonify({
             "success": False,
-            "error": t('api.globalInterviewTimeout', error=str(e))
+            "error": _live_timeout('api.globalInterviewTimeout', data, 180, e)
         }), 504
 
     except Exception as e:
@@ -3091,7 +3275,7 @@ def get_interview_history():
             "success": True,
             "data": {
                 "count": len(history),
-                "history": history
+                "history": _history_in(history, _viewer_lang(data))
             }
         })
 

@@ -1174,10 +1174,11 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import i18n from '../i18n'
 import { draftStage } from '../api/parthenon.js'
 import InviteLine from './InviteLine.vue'
 import { withBase } from '../parthenon/base.js'
-import { calmCode, calmLine, inviteNeeded } from '../parthenon/access.js'
+import { access, calmCode, calmLine, inviteNeeded } from '../parthenon/access.js'
 import { TICKET_ENDS } from '../parthenon/tickets.js'
 import { audiencePresets } from '../parthenon/audiences.js'
 import {
@@ -1235,6 +1236,7 @@ import {
   questionSource,
   questionToOffer,
   speakerLabel,
+  stageForRecord,
   stepProblems,
   suggestQuestionFor,
   templateFills,
@@ -1246,7 +1248,7 @@ const props = defineProps({
 })
 
 /**
- * use-stage: { file: File, fileName, markdown, question, title, era, stage }
+ * use-stage: { file: File, fileName, markdown, question, recordQuestion, title, era, stage }
  */
 const emit = defineEmits(['use-stage'])
 
@@ -1608,6 +1610,14 @@ function useSpark(spark) {
   stage.topic = spark.topic
 }
 
+// Today's matters in each language, in the same order, so one the visitor
+// took can go into the record in the record's language (stageForRecord).
+const sparksByLanguage = () =>
+  Object.fromEntries(['en', 'zh'].map((key) => {
+    const list = i18n.global.getLocaleMessage(key)?.parthenon?.builder?.sparks
+    return [key, Array.isArray(list) ? list.map((item) => asMessage(item && item.topic)) : []]
+  }))
+
 // ---------------------------------------------------------------------------
 // Δ΄ speakers
 
@@ -1830,6 +1840,8 @@ const titlePlaceholder = computed(() => (String(locale.value).startsWith('zh') ?
 
 function useSuggestion() {
   stage.question = suggestedQuestion.value
+  // Still the Oracle's offer after the names change (questionToOffer, stageForRecord).
+  lastOffered.value = stage.question
   // The button goes away once the question is filled; keep focus on the question.
   focusById(ids.questionInput)
 }
@@ -1894,7 +1906,16 @@ function saveScroll() {
 
 function takeStage() {
   if (!canTake.value) return
-  const seed = composeStageSeed(stage)
+  // On steps that keep their records in one language (access.recordLanguage),
+  // the scroll goes down in it: what the Oracle offered the visitor in theirs
+  // (a matter, a place, her question) is put in the record's language, and
+  // what they wrote stays as written. The question box keeps showing theirs.
+  const recordLang = access.recordLanguage || locale.value
+  const kept = access.recordLanguage
+    ? stageForRecord(stage, locale.value, recordLang, { sparks: sparksByLanguage(), lastOffered: lastOffered.value })
+    : stage
+  const seed = composeStageSeed(kept)
+  const shown = kept === stage ? seed : composeStageSeed(stage)
   const file = new File([seed.markdown], seed.fileName, { type: 'text/markdown' })
   flushSave()
   taken.value = seed.fileName
@@ -1903,7 +1924,9 @@ function takeStage() {
     fileName: seed.fileName,
     markdown: seed.markdown,
     // A question left blank goes down as the Oracle's, in the visitor's language.
-    question: stage.question.trim() ? seed.question : suggestedQuestion.value,
+    question: stage.question.trim() ? shown.question : suggestedQuestion.value,
+    // The same question as the record keeps it.
+    recordQuestion: String(kept.question || '').trim() ? seed.question : suggestQuestionFor(kept, recordLang),
     title: seed.title,
     era: stage.era,
     stage: JSON.parse(JSON.stringify(stage)),

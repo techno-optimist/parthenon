@@ -22,13 +22,14 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.json_files import read_json, write_json_atomic
 from ..utils import pools
-from ..utils.locale import get_locale, set_locale, t
+from ..utils.locale import normalize_lang, set_locale, t
 from ..utils.zep import (
     ZEP_HTTP_REQUEST_TIMEOUT_SECONDS,
     ingestion_wait_timeout_seconds,
 )
-from .zep_graph_memory_updater import ZepGraphMemoryManager
+from .zep_graph_memory_updater import ZepGraphMemoryManager, account_nodes
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
+from .language_guard import foreign_script, record_language
 
 logger = get_logger('mirofish.simulation_runner')
 
@@ -99,6 +100,16 @@ def _process_command_line(pid: int) -> Optional[str]:
 
 def _valid_pid(pid: Any) -> bool:
     return isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+
+
+def _log_tail(text: str, lang: str) -> str:
+    """The simulator's last output for a failed run's note, without the lines its reader cannot read.
+
+    The OASIS scripts log partly in Chinese; a note in an English record keeps
+    only the lines (a traceback, an exception) written in English.
+    """
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(line for line in lines if not foreign_script(line, lang)).strip()
 
 
 def _simulator_process_alive(simulation_id: str, pid: Optional[int]) -> bool:
@@ -508,8 +519,11 @@ class SimulationRunner:
             return None
 
         previous_status = state.runner_status
+        # The note goes into the record, so it is written in the record's
+        # language: this also runs at startup, where no request or thread has one.
         note = t(
             'api.simRunInterrupted',
+            locale=record_language(simulation_id=simulation_id),
             status=previous_status.value,
             round=state.current_round,
             total=state.total_rounds,
@@ -721,7 +735,7 @@ class SimulationRunner:
         config_path = os.path.join(sim_dir, "simulation_config.json")
         
         if not os.path.exists(config_path):
-            raise ValueError(f"模拟配置不存在，请先调用 /prepare 接口")
+            raise ValueError(t('api.simConfigMissingPrepare'))
         
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
@@ -749,7 +763,7 @@ class SimulationRunner:
 
         # Validate before claiming, so a rejected request leaves no STARTING.
         if enable_graph_memory_update and not graph_id:
-            raise ValueError("启用图谱记忆更新时必须提供 graph_id")
+            raise ValueError(t('api.simGraphIdRequired'))
 
         # Atomically claim this simulation ID. The expensive updater/process
         # startup happens after releasing the lock, while the persisted
@@ -784,6 +798,7 @@ class SimulationRunner:
                 max_rounds=max_rounds,
                 enable_graph_memory_update=enable_graph_memory_update,
                 graph_id=graph_id,
+                accounts=account_nodes(config),
             )
         finally:
             # Every exit publishes RUNNING (with a tracked process) or FAILED
@@ -803,19 +818,29 @@ class SimulationRunner:
         max_rounds: Optional[int],
         enable_graph_memory_update: bool,
         graph_id: Optional[str],
+        accounts: Optional[Dict[str, str]] = None,
     ) -> SimulationRunState:
-        """Create the updater and simulator for a run claimed as STARTING."""
+        """Create the updater and simulator for a run claimed as STARTING.
+
+        ``accounts`` (account name -> graph node uuid) keeps each citizen's
+        activity on the node it was built from, whatever name it shows.
+        """
+        # Everything this run writes into the record (its memory, its notes and
+        # errors) is in the gathering's record language, whoever started it.
+        lang = record_language(simulation_id=simulation_id)
         # 如果启用图谱记忆更新，创建更新器
         if enable_graph_memory_update:
             try:
-                ZepGraphMemoryManager.create_updater(simulation_id, graph_id)
+                ZepGraphMemoryManager.create_updater(
+                    simulation_id, graph_id, locale=lang, accounts=accounts or None
+                )
                 cls._graph_memory_enabled[simulation_id] = True
                 logger.info(f"已启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
             except Exception as e:
                 logger.error(f"创建图谱记忆更新器失败: {e}")
                 cls._graph_memory_enabled[simulation_id] = False
                 state.runner_status = RunnerStatus.FAILED
-                state.error = f"Zep图谱更新器初始化失败: {e}"
+                state.error = t('api.simUpdaterInitFailed', locale=lang, error=e)
                 with cls._finalization_lock(simulation_id):
                     cls._save_run_state(state)
                     cls._sync_simulation_status(
@@ -852,9 +877,9 @@ class SimulationRunner:
             state.runner_status = RunnerStatus.FAILED
             state.twitter_running = False
             state.reddit_running = False
-            state.error = f"脚本不存在: {script_path}"
+            state.error = t('api.simScriptMissing', locale=lang, path=script_path)
             if cleanup_error is not None:
-                state.error += f"; Zep图谱写入清理失败: {cleanup_error}"
+                state.error += "; " + t('api.simGraphCleanupFailed', locale=lang, error=cleanup_error)
             with cls._finalization_lock(simulation_id):
                 cls._save_run_state(state)
                 cls._sync_simulation_status(
@@ -913,12 +938,9 @@ class SimulationRunner:
                 start_new_session=True,  # 创建新进程组，确保服务器关闭时能终止所有相关进程
             )
             
-            # Capture locale before spawning monitor thread
-            current_locale = get_locale()
-
             monitor_thread = threading.Thread(
                 target=cls._monitor_simulation,
-                args=(simulation_id, current_locale),
+                args=(simulation_id, lang),
                 daemon=True
             )
 
@@ -947,7 +969,7 @@ class SimulationRunner:
                 try:
                     cls._terminate_process(process, simulation_id)
                 except Exception as error:
-                    cleanup_errors.append(f"子进程终止失败: {error}")
+                    cleanup_errors.append(t('api.simProcessEndFailed', locale=lang, error=error))
             cls._processes.pop(simulation_id, None)
             cls._monitor_threads.pop(simulation_id, None)
             cls._action_queues.pop(simulation_id, None)
@@ -957,13 +979,13 @@ class SimulationRunner:
                 try:
                     main_log_file.close()
                 except Exception as error:
-                    cleanup_errors.append(f"日志关闭失败: {error}")
+                    cleanup_errors.append(t('api.simLogCloseFailed', locale=lang, error=error))
             if cls._graph_memory_enabled.get(simulation_id, False):
                 try:
                     ZepGraphMemoryManager.stop_updater(simulation_id)
                     cls._graph_memory_enabled.pop(simulation_id, None)
                 except Exception as error:
-                    cleanup_errors.append(f"Zep图谱写入清理失败: {error}")
+                    cleanup_errors.append(t('api.simGraphCleanupFailed', locale=lang, error=error))
             state.runner_status = RunnerStatus.FAILED
             state.twitter_running = False
             state.reddit_running = False
@@ -982,9 +1004,14 @@ class SimulationRunner:
         return state
     
     @classmethod
-    def _monitor_simulation(cls, simulation_id: str, locale: str = 'zh'):
-        """监控模拟进程，解析动作日志"""
-        set_locale(locale)
+    def _monitor_simulation(cls, simulation_id: str, locale: Optional[str] = None):
+        """监控模拟进程，解析动作日志
+
+        ``locale`` is the gathering's record language (looked up when not
+        given): the run's final note and error are written in it.
+        """
+        lang = normalize_lang(locale) if locale else record_language(simulation_id=simulation_id)
+        set_locale(lang)
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         
         # 新的日志结构：分平台的动作日志
@@ -1094,12 +1121,15 @@ class SimulationRunner:
                         try:
                             if os.path.exists(main_log_path):
                                 with open(main_log_path, 'r', encoding='utf-8') as f:
-                                    error_info = f.read()[-2000:]
+                                    error_info = _log_tail(f.read()[-2000:], lang)
                         except Exception:
                             pass
-                        error_message = (
-                            f"进程退出码: {exit_code}, 错误: {error_info}"
-                        )
+                        if error_info:
+                            error_message = t(
+                                'api.simProcessExitedLog', locale=lang, code=exit_code, log=error_info
+                            )
+                        else:
+                            error_message = t('api.simProcessExited', locale=lang, code=exit_code)
 
                     state.twitter_running = False
                     state.reddit_running = False
@@ -1124,7 +1154,7 @@ class SimulationRunner:
                         except Exception as error:
                             logger.error(f"停止图谱记忆更新器失败: {error}")
                             desired_status = RunnerStatus.FAILED
-                            error_message = f"Zep图谱写入未完整完成: {error}"
+                            error_message = t('api.simGraphWriteIncomplete', locale=lang, error=error)
 
                     state.runner_status = desired_status
                     state.error = error_message
@@ -1310,7 +1340,11 @@ class SimulationRunner:
                 except Exception as error:
                     logger.error(f"停止图谱记忆更新器失败: {error}")
                     desired_status = RunnerStatus.FAILED
-                    error_message = f"Zep图谱写入未完整完成: {error}"
+                    error_message = t(
+                        'api.simGraphWriteIncomplete',
+                        locale=record_language(simulation_id=simulation_id),
+                        error=error,
+                    )
 
             state.runner_status = desired_status
             state.error = error_message
@@ -1435,7 +1469,7 @@ class SimulationRunner:
                 raise ValueError(t('api.simStillStarting', id=simulation_id))
             state = cls.get_run_state(simulation_id)
             if not state:
-                raise ValueError(f"模拟不存在: {simulation_id}")
+                raise ValueError(t('api.simulationNotFound', id=simulation_id))
             if state.runner_status == RunnerStatus.STOPPED:
                 return state
             orphan_pid = (
@@ -1476,7 +1510,7 @@ class SimulationRunner:
                 and not retrying_finalization
             ):
                 raise ValueError(
-                    f"模拟未在运行: {simulation_id}, status={state.runner_status}"
+                    t('api.simNotRunning', id=simulation_id, status=state.runner_status.value)
                 )
 
             state.runner_status = RunnerStatus.STOPPING
@@ -1539,7 +1573,11 @@ class SimulationRunner:
                         state.twitter_running = False
                         state.reddit_running = False
                         state.completed_at = datetime.now().isoformat()
-                        state.error = f"Zep图谱写入未完整完成: {error}"
+                        state.error = t(
+                            'api.simGraphWriteIncomplete',
+                            locale=record_language(simulation_id=simulation_id),
+                            error=error,
+                        )
                         cls._save_run_state(state)
                         cls._sync_simulation_status(
                             simulation_id,
@@ -1561,10 +1599,10 @@ class SimulationRunner:
 
         state = cls.get_run_state(simulation_id) or state
         if state.runner_status == RunnerStatus.FAILED:
-            raise RuntimeError(state.error or "模拟停止失败")
+            raise RuntimeError(state.error or t('api.simStopFailed'))
         if state.runner_status != RunnerStatus.STOPPED:
             raise RuntimeError(
-                f"模拟停止未达到终态: {simulation_id}, status={state.runner_status}"
+                t('api.simStopNotFinal', id=simulation_id, status=state.runner_status.value)
             )
 
         logger.info(f"模拟已停止: {simulation_id}")
@@ -1922,7 +1960,7 @@ class SimulationRunner:
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         
         if not os.path.exists(sim_dir):
-            return {"success": True, "message": "模拟目录不存在，无需清理"}
+            return {"success": True, "message": t('api.simNothingToClean')}
         
         cleaned_files = []
         errors = []
@@ -1949,7 +1987,7 @@ class SimulationRunner:
                     os.remove(file_path)
                     cleaned_files.append(filename)
                 except Exception as e:
-                    errors.append(f"删除 {filename} 失败: {str(e)}")
+                    errors.append(t('api.simDeleteFailed', name=filename, error=e))
         
         # 清理平台目录中的动作日志
         for dir_name in dirs_to_clean:
@@ -1961,7 +1999,7 @@ class SimulationRunner:
                         os.remove(actions_file)
                         cleaned_files.append(f"{dir_name}/actions.jsonl")
                     except Exception as e:
-                        errors.append(f"删除 {dir_name}/actions.jsonl 失败: {str(e)}")
+                        errors.append(t('api.simDeleteFailed', name=f"{dir_name}/actions.jsonl", error=e))
         
         # 清理内存中的运行状态
         if simulation_id in cls._run_states:
@@ -2290,12 +2328,12 @@ class SimulationRunner:
         """
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         if not os.path.exists(sim_dir):
-            raise ValueError(f"模拟不存在: {simulation_id}")
+            raise ValueError(t('api.simulationNotFound', id=simulation_id))
 
         ipc_client = SimulationIPCClient(sim_dir)
 
         if not ipc_client.check_env_alive():
-            raise ValueError(f"模拟环境未运行或已关闭，无法执行Interview: {simulation_id}")
+            raise ValueError(t('api.simEnvNotRunningInterview', id=simulation_id))
 
         logger.info(f"发送Interview命令: simulation_id={simulation_id}, agent_id={agent_id}, platform={platform}")
 
@@ -2352,12 +2390,12 @@ class SimulationRunner:
         """
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         if not os.path.exists(sim_dir):
-            raise ValueError(f"模拟不存在: {simulation_id}")
+            raise ValueError(t('api.simulationNotFound', id=simulation_id))
 
         ipc_client = SimulationIPCClient(sim_dir)
 
         if not ipc_client.check_env_alive():
-            raise ValueError(f"模拟环境未运行或已关闭，无法执行Interview: {simulation_id}")
+            raise ValueError(t('api.simEnvNotRunningInterview', id=simulation_id))
 
         logger.info(f"发送批量Interview命令: simulation_id={simulation_id}, count={len(interviews)}, platform={platform}")
 
@@ -2409,19 +2447,19 @@ class SimulationRunner:
         """
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         if not os.path.exists(sim_dir):
-            raise ValueError(f"模拟不存在: {simulation_id}")
+            raise ValueError(t('api.simulationNotFound', id=simulation_id))
 
         # 从配置文件获取所有Agent信息
         config_path = os.path.join(sim_dir, "simulation_config.json")
         if not os.path.exists(config_path):
-            raise ValueError(f"模拟配置不存在: {simulation_id}")
+            raise ValueError(t('api.simConfigNotFound', id=simulation_id))
 
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
 
         agent_configs = config.get("agent_configs", [])
         if not agent_configs:
-            raise ValueError(f"模拟配置中没有Agent: {simulation_id}")
+            raise ValueError(t('api.simNoAgents', id=simulation_id))
 
         # 构建批量采访列表
         interviews = []
@@ -2462,14 +2500,14 @@ class SimulationRunner:
         """
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         if not os.path.exists(sim_dir):
-            raise ValueError(f"模拟不存在: {simulation_id}")
+            raise ValueError(t('api.simulationNotFound', id=simulation_id))
         
         ipc_client = SimulationIPCClient(sim_dir)
         
         if not ipc_client.check_env_alive():
             return {
                 "success": True,
-                "message": "环境已经关闭"
+                "message": t('api.simEnvAlreadyClosed')
             }
         
         logger.info(f"发送关闭环境命令: simulation_id={simulation_id}")
@@ -2479,7 +2517,7 @@ class SimulationRunner:
             
             return {
                 "success": response.status.value == "completed",
-                "message": "环境关闭命令已发送",
+                "message": t('api.simEnvCloseSent'),
                 "result": response.result,
                 "timestamp": response.timestamp
             }
@@ -2487,7 +2525,7 @@ class SimulationRunner:
             # 超时可能是因为环境正在关闭
             return {
                 "success": True,
-                "message": "环境关闭命令已发送（等待响应超时，环境可能正在关闭）"
+                "message": t('api.simEnvCloseSentNoReply')
             }
     
     @classmethod

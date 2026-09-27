@@ -491,3 +491,73 @@ test('tripodMark draws the same tripod at every size', () => {
   tripodMark().pop()
   assert.equal(tripodMark().length, TRIPOD.parts.length, 'each call hands out its own list')
 })
+
+import { stageForRecord } from './oracle.js'
+import { composeStageSeed } from './composeStage.js'
+
+// A stage a visitor reading Chinese built from the Oracle's offers alone.
+const offeredInChinese = () => {
+  const st = {
+    ...emptyStage(),
+    format: 'speech',
+    era: 'ancient',
+    setting: defaultSetting('ancient', 'zh'),
+    topic: mattersFor('ancient', 'zh')[0].topic,
+    speakers: [{ ...speakerFromFigure(socrates), words: 'I say the unexamined life is not worth living.' }],
+    audience: defaultAudience('ancient'),
+  }
+  st.question = quarrelQuestion(st, quarrelsFor('ancient')[0], 'zh')
+  return st
+}
+const HAN = /[㐀-鿿　-〿！-･]/
+
+test('record: the Oracle\'s offers go into an English record in English', () => {
+  const st = offeredInChinese()
+  const kept = stageForRecord(st, 'zh', 'en')
+  assert.equal(kept.topic, mattersFor('ancient', 'en')[0].topic)
+  assert.equal(kept.setting, defaultSetting('ancient', 'en'))
+  assert.equal(kept.question, quarrelQuestion(kept, quarrelsFor('ancient')[0], 'en'))
+  const seed = composeStageSeed(kept)
+  assert.ok(!HAN.test(seed.markdown), seed.markdown)
+  assert.ok(!HAN.test(seed.question), seed.question)
+  // The visitor's stage is left as they see it.
+  assert.equal(st.setting, defaultSetting('ancient', 'zh'))
+  assert.ok(HAN.test(st.question))
+
+  // The Oracle's own question, and one of today's matters from the locale files.
+  const today = { ...st, era: 'now', setting: defaultSetting('now', 'zh'), topic: '逝者聊天机器人的话题', question: '' }
+  today.question = suggestQuestionFor(today, 'zh')
+  const sparks = { en: ['Griefbots: the dead speak again.'], zh: ['逝者聊天机器人的话题'] }
+  const now = stageForRecord(today, 'zh', 'en', { sparks })
+  assert.equal(now.topic, 'Griefbots: the dead speak again.')
+  assert.equal(now.question, suggestQuestion(now))
+  assert.ok(!HAN.test(composeStageSeed(now).markdown))
+})
+
+test('record: what the visitor wrote stays as written, and nothing changes in their own language', () => {
+  const st = { ...offeredInChinese(), topic: '我自己写的事情', setting: '我家门口', question: '我自己的问题？' }
+  const kept = stageForRecord(st, 'zh', 'en')
+  assert.equal(kept.topic, '我自己写的事情')
+  assert.equal(kept.setting, '我家门口')
+  assert.equal(kept.question, '我自己的问题？')
+  // A record in the visitor's own language, or none named: the stage as it stands.
+  const same = offeredInChinese()
+  assert.deepEqual(stageForRecord(same, 'zh', 'zh'), same)
+  assert.deepEqual(stageForRecord(same, 'zh', null), same)
+  assert.notEqual(stageForRecord(same, 'zh', 'zh'), same)
+  // An English visitor on steps that keep Chinese records.
+  const en = answered()
+  const zh = stageForRecord(en, 'en', 'zh')
+  assert.equal(zh.question, quarrelQuestion(en, quarrelsFor('ancient')[0], 'zh'))
+  assert.equal(zh.setting, defaultSetting('ancient', 'zh'))
+})
+
+test('record: an offer the Oracle put in the box counts after the names have changed', () => {
+  const st = offeredInChinese()
+  const offered = st.question
+  const two = { ...st, format: 'dialogue', speakers: [...st.speakers, speakerFromFigure(plato)] }
+  // The box still holds the offer made for Socrates alone.
+  assert.equal(stageForRecord(two, 'zh', 'en').question, offered)
+  const kept = stageForRecord(two, 'zh', 'en', { lastOffered: offered })
+  assert.match(kept.question, /^Should the city pay citizens to attend the Assembly\? After hearing Socrates and Plato/)
+})

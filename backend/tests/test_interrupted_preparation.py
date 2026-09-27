@@ -22,6 +22,7 @@ import weakref
 
 import pytest
 
+from app.models.project import ProjectManager
 from app.models.task import TaskManager, TaskStatus
 from app.services import simulation_manager as simulation_manager_module
 from app.services.oasis_profile_generator import OasisAgentProfile, OasisProfileGenerator
@@ -34,7 +35,9 @@ from app.services.simulation_manager import (
 )
 from app.services.simulation_runner import SimulationRunner
 from app.services.zep_entity_reader import EntityNode, FilteredEntities
+from app.utils import locale as locale_utils
 from app.utils import pools
+from app.utils.locale import set_locale
 
 from test_public_mode import (  # noqa: F401 - fixtures
     OTHER_TOKEN, OWNED_PROJECT, OWNED_SIM, OWNER_TOKEN, city, make_project, make_simulation,
@@ -271,7 +274,17 @@ def test_a_stop_cancels_the_queued_profiles_without_stand_ins(public_stop, tmp_p
         pools.cancel_on_exit(ThreadPoolExecutor(max_workers=1))
 
 
-def test_an_interrupted_preparation_reads_failed_in_the_citys_words(public_stop, monkeypatch):
+@pytest.mark.parametrize('record, requirement, thread', [
+    ('en', 'Should Athens listen?', 'zh'),
+    ('zh', '雅典应该倾听吗？', 'en'),
+])
+def test_an_interrupted_preparation_reads_failed_in_the_citys_words(public_stop, monkeypatch, tmp_path,
+                                                                    record, requirement, thread):
+    # The note is part of the record: the gathering's language (here guessed
+    # from its question), never the language of the thread that prepares it.
+    monkeypatch.delenv('PARTHENON_RECORD_LANGUAGE', raising=False)
+    monkeypatch.setattr(ProjectManager, 'PROJECTS_DIR', str(tmp_path / 'projects'))
+
     class Reader:
         def filter_defined_entities(self, **kwargs):
             return FilteredEntities(entities=[_entity(0)], entity_types={'Citizen'},
@@ -292,11 +305,19 @@ def test_an_interrupted_preparation_reads_failed_in_the_citys_words(public_stop,
         status=SimulationStatus.CREATED,
     ))
 
-    with pytest.raises(pools.Interrupted) as raised:
-        manager.prepare_simulation('sim_stoppedmid00', 'Should Athens listen?', 'text')
+    set_locale(thread)
+    try:
+        with pytest.raises(pools.Interrupted) as raised:
+            manager.prepare_simulation('sim_stoppedmid00', requirement, 'text')
+    finally:
+        vars(locale_utils._thread_local).pop('locale', None)
 
     # The route's own handler writes str(error): the same calm words.
-    note = interrupted_preparation_note('zh')  # the thread's locale in tests
+    note = interrupted_preparation_note(record)
+    if record == 'en':
+        assert note == EN_NOTE
+    else:
+        assert note != EN_NOTE and any('一' <= ch <= '鿿' for ch in note)
     assert str(raised.value) == note
     state = _state('sim_stoppedmid00')
     assert state['status'] == 'failed' and state['error'] == note

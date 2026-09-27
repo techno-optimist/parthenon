@@ -64,7 +64,7 @@ import httpx
 from ..config import Config
 from ..models.project import ProjectManager
 from ..utils.llm_client import LLMClient, LLMResponseError
-from ..utils.locale import get_language_instruction, set_locale
+from ..utils.locale import language_instruction_for, normalize_lang, set_locale
 from ..utils.logger import get_logger
 from .chronicle_film import (
     CJK_PATTERN,
@@ -77,6 +77,7 @@ from .chronicle_film import (
     film_image_model,
 )
 from .floor import SPEAKER_VOICE, speaker_for_file
+from .language_guard import ensure_language_many, foreign_script, record_language
 from .report_agent import scribe_voice
 from .simulation_manager import SimulationManager
 
@@ -2029,35 +2030,46 @@ def text_language(text: Any) -> str:
     return 'en'
 
 
-def gathering_language(requirement: Any, samples: Any = ()) -> str:
-    """The gathering's language: its question's, else its citizens' words', else English."""
+def gathering_language(requirement: Any, samples: Any = (), *, simulation_id: Any = None) -> str:
+    """The gathering's record language (language_guard.record_language).
 
-    if isinstance(requirement, str) and requirement.strip():
-        return text_language(requirement)
-    words = [sample for sample in (samples or ()) if isinstance(sample, str) and sample.strip()]
-    if words:
-        return text_language(' '.join(words)[:2000])
-    return 'en'
+    The configured language, else the one stored on the gathering's project
+    (with simulation_id), else a guess from its question; a gathering with no
+    question is guessed from its citizens' words (samples); else English.
+    """
+
+    text = requirement if isinstance(requirement, str) and requirement.strip() else None
+    if text is None:
+        words = [sample for sample in (samples or ()) if isinstance(sample, str) and sample.strip()]
+        text = ' '.join(words)[:2000] or None
+    return record_language(simulation_id=simulation_id if valid_simulation_id(simulation_id) else None,
+                           requirement=text)
 
 
 def gathering_language_of(simulation_id: str) -> str:
-    """gathering_language() of a gathering on disk: its question, else its first personas."""
+    """The record language of a gathering on disk (language_guard.record_language), its question read from its settings."""
 
-    folder = _simulation_dir(simulation_id)
-    config = _read_json(os.path.join(folder, 'simulation_config.json'))
+    config = _read_json(os.path.join(_simulation_dir(simulation_id), 'simulation_config.json'))
     requirement = config.get('simulation_requirement') if isinstance(config, dict) else None
-    if isinstance(requirement, str) and requirement.strip():
-        return gathering_language(requirement)
-    personas = [row.get('persona') for row in _read_profiles(folder)[:3]]
-    return gathering_language(requirement, personas)
+    requirement = requirement if isinstance(requirement, str) and requirement.strip() else None
+    return record_language(simulation_id=simulation_id, requirement=requirement)
+
+
+def _foreign_turn(turn: str, lang: str) -> bool:
+    """Whether a turn is in a language its reader cannot read: any Chinese for an English record."""
+
+    if normalize_lang(lang) == 'zh':
+        return text_language(turn) != 'zh'
+    return foreign_script(turn, lang)
 
 
 def hide_foreign_turns(citizens: Any, lang: str) -> List[Any]:
     """The ledger's citizens (new shallow copies) without turns written in another language.
 
-    A reading made before the reader wrote turns in the gathering's language
-    may hold turns in the visitor's language of that night; they are hidden
-    on the way out, never rewritten on disk.
+    A reading made before the reader wrote turns in the gathering's record
+    language may hold turns in the visitor's language of that night; they are
+    hidden on the way out, never rewritten on disk. For an English record a
+    single Chinese character hides a turn.
     """
 
     kept = []
@@ -2065,7 +2077,7 @@ def hide_foreign_turns(citizens: Any, lang: str) -> List[Any]:
         if isinstance(citizen, dict):
             citizen = dict(citizen)
             turn = citizen.get('turn')
-            if isinstance(turn, str) and turn.strip() and text_language(turn) != lang:
+            if isinstance(turn, str) and turn.strip() and _foreign_turn(turn, lang):
                 citizen['turn'] = ''
         kept.append(citizen)
     return kept
@@ -2131,8 +2143,9 @@ def get_stances(simulation_id: str) -> Dict[str, Any]:
                 logger.warning('Could not mark the interrupted reading of %s as failed', simulation_id)
     source = action_log_source(_simulation_dir(simulation_id))
     reading['stale'] = bool(reading['citizens']) and reading.get('source') != source
-    # Only the object returned: turns in another language are hidden, never rewritten here.
-    lang = reading.get('lang') or gathering_language_of(simulation_id)
+    # Only the object returned: turns in another language than the record's are
+    # hidden, never rewritten here (a reading's own 'lang' may be a visitor's).
+    lang = gathering_language_of(simulation_id)
     reading['lang'] = lang
     reading['citizens'] = hide_foreign_turns(reading['citizens'], lang)
     return reading
@@ -2197,11 +2210,8 @@ class StanceReader:
         self.minutes_per_round = minutes or None
         requirement = config.get('simulation_requirement')
         self.requirement = requirement if isinstance(requirement, str) else ''
-        # Turns are written in the gathering's language, whoever asked for the reading.
-        first_words = [words for _round, _stamp, words in sorted(
-            (saying for spoken in sayings.values() for saying in spoken), key=lambda saying: saying[:2]
-        )[:12]]
-        self.locale = locale or gathering_language(self.requirement, first_words)
+        # Turns are written in the gathering's record language, whoever asked for the reading.
+        self.locale = normalize_lang(locale) if locale else gathering_language_of(simulation_id)
 
         citizens: Dict[int, Dict[str, Any]] = {}
         for item in config.get('agent_configs') or []:
@@ -2312,7 +2322,7 @@ class StanceReader:
 
         speakers = self.speakers()
         spoke_in = self.spoke_in()
-        instruction = get_language_instruction()
+        instruction = language_instruction_for(self.locale)
         found: Dict[int, Dict[str, Any]] = {}
         answered = False
         for start in range(0, len(speakers), MAX_READERS_PER_CALL):
@@ -2342,7 +2352,7 @@ class StanceReader:
             ]
             final = history[-1]['stance'] if history else None
             moved = final is not None and stance_side(final) != stance_side(citizen['stance'])
-            turn = _as_sentence(scribe_voice(note.get('turn') or '')[0]) if moved else ''
+            turn = _as_sentence(scribe_voice(note.get('turn') or '', lang=self.locale)[0]) if moved else ''
             citizens.append({
                 'agent_id': citizen['agent_id'],
                 'name': citizen['name'],
@@ -2354,6 +2364,13 @@ class StanceReader:
                 'moved': moved,
                 'turn': turn or '',
             })
+        # The last line: a turn the reader wrote in another language is
+        # translated (or its foreign words dropped) before it is saved.
+        turns = [citizen for citizen in citizens if citizen['turn']]
+        for citizen, turn in zip(turns, ensure_language_many(
+            [citizen['turn'] for citizen in turns], self.locale, context='stance turns',
+        )):
+            citizen['turn'] = turn if isinstance(turn, str) else ''
         self._save(
             status='completed', error=None, through_round=self.last_round,
             minutes_per_round=self.minutes_per_round, lang=self.locale, source=self.source,

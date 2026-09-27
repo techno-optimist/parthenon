@@ -508,8 +508,8 @@
             </div>
             <div class="chronicle-page">
               <template v-if="reportOutline">
-                <h1 class="chronicle-title">{{ reportOutline.title }}</h1>
-                <p v-if="reportOutline.summary" class="chronicle-summary">{{ reportOutline.summary }}</p>
+                <h1 class="chronicle-title">{{ chronicleText(reportOutline.title) || t('step5.symposium.chronicle') }}</h1>
+                <p v-if="chronicleText(reportOutline.summary)" class="chronicle-summary">{{ chronicleText(reportOutline.summary) }}</p>
                 <div v-if="question" class="chronicle-question">
                   <span class="p-eyebrow">{{ t('step5.symposium.theQuestion') }}</span>
                   <p>{{ question }}</p>
@@ -517,8 +517,8 @@
                 <div class="p-meander chronicle-rule" aria-hidden="true"></div>
                 <article v-for="(section, idx) in reportOutline.sections" :key="idx" class="chapter">
                   <span class="p-eyebrow">{{ t('step5.symposium.chapter') }} {{ greekNumeral(idx + 1) }}</span>
-                  <h2 class="chapter-title">{{ section.title }}</h2>
-                  <div v-if="generatedSections[idx + 1]" class="chapter-body" v-html="renderMarkdown(generatedSections[idx + 1])"></div>
+                  <h2 class="chapter-title">{{ chronicleText(section.title) || `${t('step5.symposium.chapter')} ${greekNumeral(idx + 1)}` }}</h2>
+                  <div v-if="generatedSections[idx + 1]" class="chapter-body" v-html="renderMarkdown(chronicleText(generatedSections[idx + 1]))"></div>
                   <p v-else class="chapter-pending">{{ t('step5.symposium.chapterPending') }}</p>
                 </article>
               </template>
@@ -556,7 +556,7 @@ import {
   getSimulationPosts
 } from '../api/simulation'
 import { getProject } from '../api/graph'
-import { citizenName, entityTypeName, roleFamily, roleLabel, roleColorVar, ROLE_COLOR_VAR, voiceOf as voiceForType } from '../parthenon/vocabulary.js'
+import { citizenName, entityTypeName, roleFamily, roleLabel, roleColorVar, ROLE_COLOR_VAR, voiceOf as voiceForType, forReader, recordLanguageOf } from '../parthenon/vocabulary.js'
 import { speakerFace, useCitizenPortraits } from '../parthenon/portraits.js'
 import { speakWords, filmAssetUrl, getCitizenStances, askSpeaker } from '../api/parthenon'
 import { withBase } from '../parthenon/base.js'
@@ -592,7 +592,7 @@ const remembering = computed(() => isRemembering(cityState.value, memoryReady.va
 const gateShut = computed(() => !canQuestionOf(cityState.value, memoryReady.value))
 // No Chronicle at this address: the room is not laid and nothing can be asked.
 const chronicleMissing = ref(false)
-const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.message || err || ''))
+const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.engineMessage || err?.message || err || ''))
 
 // Words carry their own language: English speech on a Chinese page (or the
 // reverse) is marked, so it is voiced and set as what it is.
@@ -639,6 +639,14 @@ const readingState = ref('idle') // idle | reading | done | failed
 // The Chronicle
 const reportOutline = ref(null)
 const generatedSections = ref({})
+// The Chronicle's record, for the language it is written in. Its words that
+// the visitor cannot read are left out in the drawer (forReader): an English
+// reader never meets Chinese, a Chinese reader keeps it. The record itself is
+// mended by the engine.
+const chronicleRecord = ref(null)
+const readerLang = computed(() => (String(locale.value).startsWith('zh') ? 'zh' : 'en'))
+const chronicleLang = computed(() => recordLanguageOf(chronicleRecord.value, readerLang.value))
+const chronicleText = (text) => forReader(text, chronicleLang.value, readerLang.value)
 const question = ref('')
 const profiles = ref([])
 const chronicleOpen = ref(false)
@@ -1015,7 +1023,7 @@ const matter = computed(() => {
 })
 
 // The Scribe at the head of the table, with one line about what she saw: the Chronicle's own summary.
-const scribeSawFull = computed(() => String(reportOutline.value?.summary || '').replace(/\s+/g, ' ').trim() || t('step5.symposium.scribeLine'))
+const scribeSawFull = computed(() => chronicleText(String(reportOutline.value?.summary || '').replace(/\s+/g, ' ')).trim() || t('step5.symposium.scribeLine'))
 
 const companyLine = computed(() => {
   const n = citizens.value.length
@@ -2002,10 +2010,21 @@ const loadReportData = async () => {
     const reportRes = await getReport(props.reportId)
     if (reportRes.success && reportRes.data) {
       const record = reportRes.data
+      chronicleRecord.value = record
       question.value = record.simulation_requirement || ''
       await loadAgentLogs()
-      // The finished record carries the chapters too, should the Scribe's notes be missing.
-      if (!reportOutline.value && record.outline) {
+      const sections = record.outline?.sections || []
+      if (record.status === 'completed' && sections.length) {
+        // A finished record is read as it stands, before the Scribe's working
+        // log, so a record mended after the fact reads mended here too.
+        reportOutline.value = record.outline
+        const done = {}
+        sections.forEach((s, i) => {
+          if (s?.content) done[i + 1] = s.content
+        })
+        generatedSections.value = { ...generatedSections.value, ...done }
+      } else if (!reportOutline.value && record.outline) {
+        // The record carries the chapters too, should the Scribe's notes be missing.
         reportOutline.value = record.outline
         ;(record.outline.sections || []).forEach((s, i) => {
           if (s.content && !generatedSections.value[i + 1]) generatedSections.value[i + 1] = s.content

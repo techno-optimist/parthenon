@@ -13,6 +13,7 @@ from enum import Enum
 from dataclasses import dataclass, field, asdict
 from ..config import Config
 from ..utils.json_files import read_json, write_json_atomic
+from ..utils.locale import normalize_lang
 
 
 class ProjectStatus(str, Enum):
@@ -55,6 +56,12 @@ class Project:
     # 错误信息
     error: Optional[str] = None
 
+    # The record language ('en' or 'zh'), fixed when the gathering begins:
+    # everything written into its record is written in it (see
+    # services/language_guard.record_language). None for a project older than
+    # this field, whose language is then guessed from its requirement.
+    language: Optional[str] = None
+
     # Public mode: the sha256 (hex) of the key handed to whoever began the
     # gathering (app/public). Kept on disk, never in to_dict() (the API's view),
     # and never the key itself. None on the owner's own machine.
@@ -79,7 +86,8 @@ class Project:
             "simulation_requirement": self.simulation_requirement,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
-            "error": self.error
+            "error": self.error,
+            "language": self.language,
         }
     
     @classmethod
@@ -107,6 +115,7 @@ class Project:
             chunk_size=data.get('chunk_size', 500),
             chunk_overlap=data.get('chunk_overlap', 50),
             error=data.get('error'),
+            language=normalize_lang(data.get('language'), default=None),
             owner_token_hash=data.get('owner_token_hash') if isinstance(data.get('owner_token_hash'), str) else None,
         )
 
@@ -143,13 +152,19 @@ class ProjectManager:
         return os.path.join(cls._get_project_dir(project_id), 'extracted_text.txt')
     
     @classmethod
-    def create_project(cls, name: str = "Unnamed Project", owner_token_hash: Optional[str] = None) -> Project:
+    def create_project(
+        cls,
+        name: str = "Unnamed Project",
+        owner_token_hash: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> Project:
         """
         创建新项目
         
         Args:
             name: 项目名称
             owner_token_hash: public mode only, the sha256 of the owner's key
+            language: the record language ('en' or 'zh'; anything else is English)
             
         Returns:
             新创建的Project对象
@@ -166,6 +181,7 @@ class ProjectManager:
             created_at=now,
             updated_at=now,
             owner_token_hash=owner_token_hash or None,
+            language=normalize_lang(language) if language else None,
         )
         
         # 创建项目目录结构

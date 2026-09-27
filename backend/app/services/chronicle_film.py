@@ -16,11 +16,14 @@ narrated short film made with Grok:
               poster.jpg and captions.vtt
 
 Everything lives in <reports dir>/<report_id>/film/ next to the Chronicle;
-film.json is the manifest the UI polls. One film job runs per report at a
-time, in a background thread. Provider response bodies may echo prompts, so
-they are never logged or shown: errors carry plain, safe messages only.
-ffmpeg always runs with argument lists, and no text from the Chronicle or the
-screenplay ever reaches a filter graph (titles are rendered with Pillow).
+film.json is the manifest the UI polls. A Chronicle has one film, seen by
+every visitor, so it is made in the Chronicle's own language (film.json
+records it as lang), never in the language of whoever pressed Film. One
+film job runs per report at a time, in a background thread. Provider
+response bodies may echo prompts, so they are never logged or shown: errors
+carry plain, safe messages only. ffmpeg always runs with argument lists, and
+no text from the Chronicle or the screenplay ever reaches a filter graph
+(titles are rendered with Pillow).
 """
 
 import base64
@@ -45,9 +48,10 @@ import httpx
 
 from ..config import Config
 from ..utils.llm_client import LLMClient, LLMResponseError
-from ..utils.locale import get_language_instruction, get_locale, set_locale
+from ..utils.locale import language_instruction_for, normalize_lang, set_locale
 from ..utils.logger import get_logger
-from .report_agent import ReportManager
+from .language_guard import ensure_language_many
+from .report_agent import ReportManager, chronicle_language
 
 
 logger = get_logger('mirofish.chronicle_film')
@@ -770,13 +774,55 @@ def build_screenplay_messages(
     )
     parts.append(
         f'Write the screenplay now. {shots_rule} Narration, title and logline language: '
-        f'{language_instruction or get_language_instruction()} '
+        f'{language_instruction or language_instruction_for(chronicle_language(report))} '
+        'Translate anything you take from the Chronicle that is in another language. '
         'image_prompt and motion_prompt are always in English.'
     )
     return [
         {'role': 'system', 'content': SCREENPLAY_SYSTEM_PROMPT},
         {'role': 'user', 'content': '\n\n'.join(parts)},
     ]
+
+
+def screenplay_in_language(screenplay: Dict[str, Any], lang: str, *, llm: Any = None) -> Dict[str, Any]:
+    """The screenplay with its title, logline and narration in lang (the film's language).
+
+    What the viewer hears and reads is checked in one call: a line with
+    Chinese in it, for any film but a Chinese one, is translated (or, when
+    that fails, loses the Chinese). A line changed here is fitted to the word
+    budget again; a shot left without narration is dropped.
+    """
+
+    shots = screenplay['shots']
+    texts = [screenplay['title'], screenplay['logline'], *(shot['narration'] for shot in shots)]
+    checked = ensure_language_many(
+        texts, lang, llm=llm, context='the narration of a short film of a Chronicle of Athens'
+    )
+    if checked == texts:
+        return screenplay
+    title, logline, *narrations = checked
+    kept: List[Dict[str, Any]] = []
+    for shot, narration in zip(shots, narrations):
+        if narration != shot['narration']:
+            narration, trimmed = _clean_narration(narration)
+            if not narration:
+                continue
+            shot = {
+                **shot,
+                'narration': narration,
+                'caption': caption_text(narration),
+                'duration': _shot_duration(shot.get('duration'), narration),
+                'trimmed': shot.get('trimmed') or trimmed,
+            }
+        kept.append(shot)
+    if not kept:
+        raise FilmError('The screenwriter returned a screenplay without any usable shots.')
+    return {
+        **screenplay,
+        'title': _plain_text(title, 80) or DEFAULT_TITLE,
+        'logline': _plain_text(logline, 240),
+        'shots': kept,
+    }
 
 
 def compose_image_prompt(shot: Dict[str, Any], screenplay: Dict[str, Any]) -> str:
@@ -1559,6 +1605,7 @@ def empty_manifest() -> Dict[str, Any]:
         'error': None,
         'created_at': None,
         'updated_at': None,
+        'lang': None,  # the language of the narration, title and captions
     }
 
 
@@ -1648,7 +1695,10 @@ def _make_llm() -> LLMClient:
 
 def start_film(report: Any, *, voice: Any = None, shots: Any = None,
                locale: Optional[str] = None) -> Dict[str, Any]:
-    """Start filming a completed Chronicle in the background; returns the first manifest."""
+    """Start filming a completed Chronicle in the background; returns the first manifest.
+
+    locale is the film's language: the Chronicle's own (chronicle_language) when omitted.
+    """
 
     voice = normalise_voice(voice)
     shot_count = normalise_shot_count(shots)
@@ -1666,7 +1716,7 @@ def start_film(report: Any, *, voice: Any = None, shots: Any = None,
         _active_jobs.add(report_id)
     try:
         maker = ChronicleFilmMaker(
-            report, voice=voice, shot_count=shot_count, locale=locale or get_locale(),
+            report, voice=voice, shot_count=shot_count, locale=locale,
             ffmpeg=ffmpeg, ffprobe=ffprobe,
         )
         maker.begin()
@@ -1699,7 +1749,8 @@ class ChronicleFilmMaker:
         self.report_id = report.report_id
         self.voice = voice
         self.shot_count = shot_count
-        self.locale = locale or 'en'
+        # The film's language: the one asked for, else the Chronicle's own.
+        self.locale = normalize_lang(locale, default=None) or chronicle_language(report)
         self.language = tts_language(self.locale)
         self.bridge = bridge
         self._owns_bridge = bridge is None
@@ -1724,6 +1775,7 @@ class ChronicleFilmMaker:
             'progress': 1,
             'message': 'Starting the film',
             'voice': voice,
+            'lang': self.locale,
             'created_at': now,
             'updated_at': now,
         }
@@ -1817,7 +1869,7 @@ class ChronicleFilmMaker:
         outline = getattr(self.report, 'outline', None)
         fallback_title = getattr(outline, 'title', '') if outline is not None else ''
         messages = build_screenplay_messages(
-            self.report, shot_count=self.shot_count, language_instruction=get_language_instruction()
+            self.report, shot_count=self.shot_count, language_instruction=language_instruction_for(self.locale)
         )
         screenplay = normalise_screenplay(
             self._ask_screenwriter(messages), shot_count=self.shot_count, fallback_title=fallback_title
@@ -1857,6 +1909,8 @@ class ChronicleFilmMaker:
             if second and _better_screenplay(second, screenplay, wanted):
                 screenplay = second
 
+        # What the viewer hears and reads, in the film's language.
+        screenplay = screenplay_in_language(screenplay, self.locale)
         self.screenplay = screenplay
         with self._lock:
             self.shots = []

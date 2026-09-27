@@ -538,8 +538,19 @@ const sceneEra = computed(() => {
   return tab.value === 'athens' ? 'ancient' : 'now'
 })
 
+// A speaker or an arrival on the scroll is kept by its id; its name and its
+// question are read in the visitor's language whenever that changes (a stage
+// the visitor built keeps its own words).
+const itemOf = (s) => {
+  if (s?.kind === 'speaker') return speakers.find((x) => x.id === s.id) || null
+  if (s?.kind === 'arrival') return arrivals.find((x) => x.id === s.id) || null
+  return null
+}
+const selectedItem = computed(() => itemOf(selection.value))
+const selectionTitle = computed(() => (selectedItem.value ? lt(selectedItem.value, 'name') : selection.value?.title || ''))
+
 const sceneSpeaker = computed(() =>
-  selection.value?.letter ? { name: selection.value.title, letter: selection.value.letter } : null
+  selection.value?.letter ? { name: selectionTitle.value, letter: selection.value.letter } : null
 )
 
 // One sentence under the scroll about where it came from. No filenames.
@@ -555,6 +566,32 @@ const presetQuestions = new Set(
   [...speakers, ...arrivals].flatMap((item) => [item.question, item.zh?.question]).filter(Boolean)
 )
 const isPresetQuestion = (text) => presetQuestions.has(text) || text === selection.value?.question
+// The speaker or arrival whose prepared question this is, in any language, or null.
+const presetFor = (text) => {
+  const q = String(text || '').trim()
+  if (!q) return null
+  return [...speakers, ...arrivals].find((item) => item.question === q || item.zh?.question === q) || null
+}
+
+// A prepared question the visitor has not touched follows them into another
+// language; one they wrote themselves stays as they wrote it.
+watch(locale, () => {
+  const item = presetFor(formData.value.simulationRequirement)
+  if (item) formData.value.simulationRequirement = lt(item, 'question')
+})
+
+// The question as the gathering's record keeps it. On steps whose records are
+// kept in one language (the city's recordLanguage), a prepared question the
+// visitor did not change is kept in that language, whatever they read it in,
+// and so is a built stage's question (StageBuilder sends its record's twin);
+// a question they wrote is kept as written.
+const stagedQuestion = ref(null) // { shown, record } for the stage last taken
+const questionForRecord = (text) => {
+  const staged = stagedQuestion.value
+  if (staged && selection.value?.kind === 'stage' && String(text || '').trim() === staged.shown) return staged.record
+  const item = presetFor(text)
+  return item && access.recordLanguage ? localText(item, 'question', access.recordLanguage) : text
+}
 
 // The philosopher who stepped forward, and the scroll unrolled under the row.
 // The band keeps its last speaker while it rolls shut.
@@ -770,7 +807,8 @@ const stepTab = (delta) => focusTab(tabs.findIndex((t) => t.id === tab.value) + 
 const present = (item, file, { jump = true } = {}) => {
   const current = formData.value.simulationRequirement.trim()
   if (!current || isPresetQuestion(current)) {
-    formData.value.simulationRequirement = item.question
+    const source = itemOf(item)
+    formData.value.simulationRequirement = source ? lt(source, 'question') : item.question
   }
   selection.value = item
   eraOverride.value = null
@@ -809,12 +847,12 @@ const chooseSpeaker = (speaker) => {
   present({
     kind: 'speaker',
     id: speaker.id,
-    title: lt(speaker, 'name'),
+    title: speaker.name,
     letter: speaker.letter,
     era: 'ancient',
     markdown: speaker.seed,
     fileName: speaker.fileName,
-    question: lt(speaker, 'question')
+    question: speaker.question
   }, speakerSeedFile(speaker), { jump: false })
   speak(voiceUrl(`speaker-${speaker.id}`, locale.value))
   revealSheet(speaker.id)
@@ -827,12 +865,12 @@ const chooseArrival = (arrival) => {
   present({
     kind: 'arrival',
     id: arrival.id,
-    title: lt(arrival, 'name'),
+    title: arrival.name,
     letter: arrival.letter,
     era: 'now',
     markdown: arrival.seed,
     fileName: arrival.fileName,
-    question: lt(arrival, 'question'),
+    question: arrival.question,
     noteKey: arrival.noteKey
   }, arrivalSeedFile(arrival))
   speak(voiceUrl(`arrival-${arrival.id}`, locale.value))
@@ -855,6 +893,8 @@ const useStage = (payload) => {
   eraOverride.value = null
   files.value = [payload.file]
   formData.value.simulationRequirement = payload.question
+  const shown = String(payload.question || '').trim()
+  stagedQuestion.value = { shown, record: String(payload.recordQuestion || '').trim() || shown }
   scrollToId('gathering')
 }
 
@@ -930,7 +970,7 @@ const startSimulation = () => {
   askingInvite.value = false
   loading.value = true
   const length = chosenLength.value
-  setPendingUpload(files.value, formData.value.simulationRequirement)
+  setPendingUpload(files.value, questionForRecord(formData.value.simulationRequirement))
   pendingUpload.runLength = length.id
   pendingUpload.maxRounds = length.rounds
   try {

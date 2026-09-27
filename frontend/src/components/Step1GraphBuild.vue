@@ -292,10 +292,14 @@ import {
   stripIds,
   undash,
   textLang,
+  readable,
+  forReader,
+  recordLanguageOf,
   bestGathering,
   gatheringStanding,
   standingRoute
 } from '../parthenon/vocabulary.js'
+import { cityWords as webWords } from '../parthenon/web.js'
 import { sound, speak, voiceUrl } from '../parthenon/sound.js'
 import { calmLine } from '../parthenon/access.js'
 import InviteLine from './InviteLine.vue'
@@ -437,7 +441,12 @@ const scrollTitle = computed(() => parsedScroll.value.title || fileTitle(props.s
 const scrollLang = computed(() => textLang(`${parsedScroll.value.title} ${props.seedText || heard.value}`.slice(0, 4000)))
 const scrollLede = computed(() => parsedScroll.value.lede)
 const scrollHtml = computed(() => parsedScroll.value.html)
-const heard = computed(() => stripIds(props.projectData?.analysis_summary || ''))
+// The inscription is the gathering's record, in the record's language: what
+// the visitor cannot read of it is left out on the page (the engine mends the record).
+const readerLang = computed(() => (String(locale.value).startsWith('zh') ? 'zh' : 'en'))
+const recordLang = computed(() => recordLanguageOf(props.projectData, readerLang.value))
+const inRecord = (text) => forReader(text, recordLang.value, readerLang.value)
+const heard = computed(() => inRecord(stripIds(props.projectData?.analysis_summary || '')))
 const question = computed(() => props.projectData?.simulation_requirement || '')
 
 const unrolled = ref(false)
@@ -467,7 +476,8 @@ const names = computed(() => {
       name: n.name,
       kind: entityTypeName(type),
       color: roleColorVar(type),
-      summary: stripIds(n.summary || ''),
+      // As the Web's own card says it.
+      summary: webWords(n.summary || ''),
       order: Math.min(arrivalOrder.get(key), 40)
     }
   })
@@ -493,8 +503,8 @@ const kinds = computed(() => {
       id: e.name,
       word: entityTypeName(e.name),
       color: roleColorVar(e.name),
-      description: e.description || '',
-      examples: Array.isArray(e.examples) ? e.examples.filter(Boolean) : []
+      description: inRecord(e.description || ''),
+      examples: Array.isArray(e.examples) ? e.examples.map(inRecord).filter(Boolean) : []
     }))
 })
 
@@ -506,7 +516,7 @@ const ties = computed(() => {
     .map((e) => ({
       id: e.name,
       verb: tieName(e.name),
-      description: e.description || '',
+      description: inRecord(e.description || ''),
       pairs: (Array.isArray(e.source_targets) ? e.source_targets : [])
         .map((p) => ({ from: entityTypeName(p.source) || 'anyone', to: entityTypeName(p.target) || 'anyone' }))
         .filter((p, idx, arr) => arr.findIndex((q) => q.from === p.from && q.to === p.to) === idx)
@@ -593,14 +603,14 @@ const summonCitizens = async () => {
       emit('summoned', res.data.simulation_id)
       router.push({ name: 'Simulation', params: { simulationId: res.data.simulation_id } })
     } else {
-      summonError.value = res.error || t('common.unknownError')
+      summonError.value = readable(res.error, t('common.otherTongue')) || t('common.unknownError')
       emit('log', t('parthenon.hearing.ledger.trouble', { error: summonError.value }))
     }
   } catch (err) {
     // A limit of the public steps is said calmly, in place; anything else is trouble.
     summonCalm.value = calmLine(err)
     if (!summonCalm.value) {
-      summonError.value = err.message || t('common.unknownError')
+      summonError.value = readable(err.message, t('common.otherTongue')) || t('common.unknownError')
       emit('log', t('parthenon.hearing.ledger.trouble', { error: summonError.value }))
     }
   } finally {

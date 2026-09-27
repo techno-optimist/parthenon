@@ -6,6 +6,11 @@ import { access, cityCodeOf, inviteRefused, learnOwnership, noteResponseError, o
 import { retryMinutes } from '../parthenon/limits.js'
 import { INVITE_HEADER, isInvitedCall } from '../parthenon/invite.js'
 import { markTicket, ticketOf } from '../parthenon/tickets.js'
+import { readable } from '../parthenon/vocabulary.js'
+
+// The engine's own words for a refusal, as the visitor can read them: its
+// Chinese never reaches a reader of English (the page's own words stand in).
+const inVisitorWords = (text) => readable(text, i18n.global.t('common.otherTongue'), i18n.global.locale.value)
 
 // 创建axios实例
 // The API sits under the page's base on the public steps ('/parthenon'), and
@@ -66,7 +71,9 @@ service.interceptors.response.use(
     // 如果返回的状态码不是success，则抛出错误
     if (!res.success && res.success !== undefined) {
       console.error('API Error:', res.error || res.message || 'Unknown error')
-      return Promise.reject(new Error(res.error || res.message || 'Error'))
+      const failure = new Error(inVisitorWords(res.error || res.message || 'Error'))
+      failure.engineMessage = res.error || res.message || ''
+      return Promise.reject(failure)
     }
     
     return res
@@ -101,7 +108,8 @@ export const explainRefusal = (error) => {
   const data = error?.response?.data
   const apiError = data?.error || data?.message
   if (typeof apiError === 'string' && apiError) {
-    error.message = apiError
+    error.message = inVisitorWords(apiError)
+    error.engineMessage = apiError
   }
   const code = cityCodeOf(data)
   if (code) {

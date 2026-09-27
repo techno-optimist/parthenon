@@ -55,7 +55,7 @@ import { speakers, speakerSeedFile } from '../parthenon/speakers.js'
 import { arrivals, arrivalSeedFile } from '../parthenon/arrivals/index.js'
 import { localText } from '../parthenon/localText.js'
 import { speakerFaceUrl } from '../parthenon/portraits.js'
-import { stripIds, bestGathering, wayLinks } from '../parthenon/vocabulary.js'
+import { stripIds, readable, bestGathering, wayLinks } from '../parthenon/vocabulary.js'
 import { buildWebModel } from '../parthenon/web.js'
 import { calmCode, calmLine, canControl, inviteNeeded } from '../parthenon/access.js'
 
@@ -154,9 +154,10 @@ const autoSummon = computed(() =>
 // --- The ledger -------------------------------------------------------------
 
 // Engine progress lines arrive in the engine's words; the ledger keeps the
-// city's. Identifiers never reach the page.
+// city's. Identifiers never reach the page, nor a line in a language the
+// visitor does not read.
 const inVoice = (msg) =>
-  stripIds(String(msg ?? ''))
+  readable(stripIds(String(msg ?? '')), '')
     .replace(/\bZep\b/gi, "the city's memory")
     .replace(/\bGraphRAG\b/gi, 'the Web of Athens')
     .replace(/\bknowledge graph\b/gi, 'the Web of Athens')
@@ -173,6 +174,9 @@ const inVoice = (msg) =>
     .replace(/\bagents?\b/gi, (m) => (m.endsWith('s') ? 'citizens' : 'citizen'))
     .replace(/\bLLM\b/g, 'the Oracle')
     .replace(/\btask\b/gi, 'work')
+
+// What the engine gave as its reason, in words the visitor reads.
+const engineWords = (text) => readable(stripIds(String(text ?? '')), t('common.otherTongue'))
 
 const addLog = (msg) => {
   const now = new Date()
@@ -392,7 +396,7 @@ const handleNewProject = async () => {
         await startBuildGraph()
       }
     } else {
-      error.value = res.error || t('common.unknownError')
+      error.value = engineWords(res.error) || t('common.unknownError')
       addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
@@ -403,7 +407,7 @@ const handleNewProject = async () => {
       return
     }
     if (sayCalmly(err)) return
-    error.value = err.message
+    error.value = engineWords(err.message)
     addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
 }
@@ -458,7 +462,7 @@ const loadProject = async () => {
         await loadGraph(res.data.graph_id)
       }
     } else {
-      error.value = res.error
+      error.value = engineWords(res.error)
       addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
@@ -467,7 +471,7 @@ const loadProject = async () => {
       addLog(t('parthenon.hearing.notFound'))
       return
     }
-    error.value = err.message
+    error.value = engineWords(err.message)
     addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
 }
@@ -506,12 +510,12 @@ const startBuildGraph = async () => {
       startPollingTask(res.data.task_id)
       startGraphPolling()
     } else {
-      error.value = res.error
+      error.value = engineWords(res.error)
       addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
     if (sayCalmly(err)) return
-    error.value = err.message
+    error.value = engineWords(err.message)
     addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
 }
@@ -597,8 +601,8 @@ const pollTaskStatus = async (taskId) => {
       } else if (task.status === 'failed') {
         stopPolling()
         stopGraphPolling()
-        error.value = task.error
-        addLog(t('parthenon.hearing.ledger.trouble', { error: task.error }))
+        error.value = engineWords(task.error)
+        addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
       }
     }
   } catch (e) {
@@ -614,10 +618,10 @@ const loadGraph = async (graphId) => {
       graphData.value = res.data
       addLog(webLine('webRead', countWeb(res.data)))
     } else {
-      addLog(t('parthenon.hearing.ledger.trouble', { error: res.error }))
+      addLog(t('parthenon.hearing.ledger.trouble', { error: engineWords(res.error) }))
     }
   } catch (e) {
-    addLog(t('parthenon.hearing.ledger.trouble', { error: e.message }))
+    addLog(t('parthenon.hearing.ledger.trouble', { error: engineWords(e.message) }))
   } finally {
     graphLoading.value = false
   }

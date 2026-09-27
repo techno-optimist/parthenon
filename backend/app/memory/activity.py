@@ -6,12 +6,17 @@ rendered by ``AgentActivity.to_episode_text()``::
 
     [{timestamp}] [{platform} round {n}] {agent_name}: {description}
 
-The description is Chinese for a run in the ``zh`` locale (the upstream
-MiroFish templates) and English for any other locale. Both template sets
-parse into the same edge names and targets. Facts and node summaries written
-by the rules follow the language of the line that produced them, so graphs
-built before English descriptions existed keep working and a mixed graph is
-fine.
+The description is Chinese for a gathering whose record language is ``zh``
+(the upstream MiroFish templates, :data:`DESCRIPTION_TEMPLATES`) and English
+for any other. Both template sets parse into the same edge names and targets.
+The updater states the record language in the episode's metadata
+(``language``); the rules then write every fact and node summary in it,
+re-rendering a line written with the other set (:func:`rerender_description`),
+so an English gathering never gets Chinese rules text. Without that key facts
+and summaries follow the language of the line that produced them, so graphs
+built before English descriptions existed keep working. :func:`rerender_fact`,
+:func:`rerender_summary`, :func:`rerender_episode` and :func:`hub_summary`
+mend rules text already stored in the wrong language.
 
 Modes (``LOCAL_MEMORY_ACTIVITY_MODE``, §5.1), all applied synchronously inside
 the ``graph.add`` write transaction by :func:`ingest_activity_episode`:
@@ -51,7 +56,7 @@ import logging
 import re
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, NamedTuple, Sequence
 
 from .errors import is_busy_sqlite_error, not_found
@@ -83,6 +88,8 @@ __all__ = [
     "ACTIVITY_MODES",
     "ACTIVITY_SOURCE",
     "ACTIVITY_SYSTEM_PROMPT",
+    "DESCRIPTION_TEMPLATES",
+    "LANGUAGE_NAMES",
     "ActivityCandidate",
     "ActivityDecision",
     "ActivityGroup",
@@ -95,7 +102,9 @@ __all__ = [
     "FATAL_LLM_CODES",
     "PromptFact",
     "RulesResult",
+    "account_summary",
     "activity_failure_decision",
+    "activity_language",
     "activity_llm_calls_used",
     "activity_system_prompt",
     "apply_activity_rules",
@@ -103,8 +112,10 @@ __all__ = [
     "claim_activity_episodes",
     "classify_activity_description",
     "decide_activity_group",
+    "episode_accounts",
     "expired_activity_candidates",
     "finish_activity_episodes",
+    "hub_summary",
     "ingest_activity_episode",
     "is_activity_metadata",
     "load_activity_candidates",
@@ -114,9 +125,14 @@ __all__ = [
     "platform_display_name",
     "record_activity_llm_call",
     "render_activity_window",
+    "rerender_description",
+    "rerender_episode",
+    "rerender_fact",
+    "rerender_summary",
     "signal_text",
     "simulation_key",
     "sweep_expired_activity_episodes",
+    "written_in",
 ]
 
 # ---------------------------------------------------------------------------
@@ -158,6 +174,76 @@ HUB_SUMMARY_TEMPLATES: Mapping[str, str] = {
     LANG_ZH: "{platform}是模拟中使用的社交媒体平台。",
     LANG_EN: "{platform} is the social media platform used in the simulation.",
 }
+
+# Activity description templates per language, filled with str.format (braces
+# inside the filled-in values are safe). ``AgentActivity.to_episode_text()``
+# (app/services/zep_graph_memory_updater.py) renders with them, the rules
+# below parse them, and :func:`rerender_description` turns one language's
+# description into the other's. The Chinese set is the upstream MiroFish text
+# and must stay byte-for-byte stable.
+#
+# Four-template tuples cover, in order: author and content, content only,
+# author only, neither. Two-template tuples: with the value, without it.
+DESCRIPTION_TEMPLATES: Mapping[str, Mapping[str, Any]] = {
+    LANG_ZH: {
+        "post": ("发布了一条帖子：「{content}」", "发布了一条帖子"),
+        "like_post": ("点赞了{author}的帖子：「{content}」", "点赞了一条帖子：「{content}」",
+                      "点赞了{author}的一条帖子", "点赞了一条帖子"),
+        "dislike_post": ("踩了{author}的帖子：「{content}」", "踩了一条帖子：「{content}」",
+                         "踩了{author}的一条帖子", "踩了一条帖子"),
+        "repost": ("转发了{author}的帖子：「{content}」", "转发了一条帖子：「{content}」",
+                   "转发了{author}的一条帖子", "转发了一条帖子"),
+        "quote": ("引用了{author}的帖子「{content}」", "引用了一条帖子「{content}」",
+                  "引用了{author}的一条帖子", "引用了一条帖子"),
+        "quote_suffix": "，并评论道：「{quote}」",
+        "follow": ("关注了用户「{name}」", "关注了一个用户"),
+        # Keyed by the commented post: {post} is its content, {content} the comment.
+        "comment": ("在{author}的帖子「{post}」下评论道：「{content}」", "在帖子「{post}」下评论道：「{content}」",
+                    "在{author}的帖子下评论道：「{content}」", "评论道：「{content}」"),
+        "comment_empty": "发表了评论",
+        "like_comment": ("点赞了{author}的评论：「{content}」", "点赞了一条评论：「{content}」",
+                         "点赞了{author}的一条评论", "点赞了一条评论"),
+        "dislike_comment": ("踩了{author}的评论：「{content}」", "踩了一条评论：「{content}」",
+                            "踩了{author}的一条评论", "踩了一条评论"),
+        "search": ("搜索了「{query}」", "进行了搜索"),
+        "search_user": ("搜索了用户「{query}」", "搜索了用户"),
+        "mute": ("屏蔽了用户「{name}」", "屏蔽了一个用户"),
+        "generic": ("执行了{action}操作", "执行了操作"),
+    },
+    LANG_EN: {
+        "post": ("posted: “{content}”", "posted"),
+        "like_post": ("liked {author}'s post: “{content}”", "liked a post: “{content}”",
+                      "liked a post by {author}", "liked a post"),
+        "dislike_post": ("disliked {author}'s post: “{content}”", "disliked a post: “{content}”",
+                         "disliked a post by {author}", "disliked a post"),
+        "repost": ("reposted {author}'s post: “{content}”", "reposted a post: “{content}”",
+                   "reposted a post by {author}", "reposted a post"),
+        "quote": ("quoted {author}'s post “{content}”", "quoted a post “{content}”",
+                  "quoted a post by {author}", "quoted a post"),
+        "quote_suffix": ", adding: “{quote}”",
+        "follow": ("followed the user “{name}”", "followed a user"),
+        "comment": ("commented on {author}'s post “{post}”: “{content}”",
+                    "commented on a post “{post}”: “{content}”",
+                    "commented on {author}'s post: “{content}”", "commented: “{content}”"),
+        "comment_empty": "left a comment",
+        "like_comment": ("liked {author}'s comment: “{content}”", "liked a comment: “{content}”",
+                         "liked a comment by {author}", "liked a comment"),
+        "dislike_comment": ("disliked {author}'s comment: “{content}”",
+                            "disliked a comment: “{content}”",
+                            "disliked a comment by {author}", "disliked a comment"),
+        "search": ("searched for “{query}”", "ran a search"),
+        "search_user": ("searched for the user “{query}”", "searched for users"),
+        "mute": ("muted the user “{name}”", "muted a user"),
+        "generic": ("performed {action}", "performed an action"),
+    },
+}
+
+
+def activity_language(value: Any) -> str | None:
+    """``zh`` or ``en`` for a language code ('zh-CN', 'EN', 'en-US,en;q=0.9'), else None."""
+
+    code = str(value or "").split(",")[0].split(";")[0].strip().lower().replace("_", "-").split("-")[0]
+    return code if code in (LANG_ZH, LANG_EN) else None
 
 ACTION_ACTED = "ACTED"
 TARGET_HUB = "hub"
@@ -559,6 +645,249 @@ def _format_fact(line: ActivityLine, description: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# One language's rules text in the other's (the record language)
+# ---------------------------------------------------------------------------
+
+# The description template an edge name was rendered with.
+_ACTION_KINDS: Mapping[str, str] = {
+    "POSTED": "post",
+    "LIKED_POST": "like_post", "LIKED_POST_OF": "like_post",
+    "LIKED_COMMENT": "like_comment", "LIKED_COMMENT_OF": "like_comment",
+    "DISLIKED_POST": "dislike_post", "DISLIKED_POST_OF": "dislike_post",
+    "DISLIKED_COMMENT": "dislike_comment", "DISLIKED_COMMENT_OF": "dislike_comment",
+    "REPOSTED": "repost", "QUOTED": "quote",
+    "FOLLOWS": "follow", "MUTED": "mute",
+    "COMMENTED": "comment", "COMMENTED_ON_POST_OF": "comment",
+    "SEARCHED": "search", "SEARCHED_USER": "search_user",
+}
+_PERSON_SLOTS = ("author", "name")
+_SLOT_RE = re.compile(r"\{(\w+)\}")
+_CLOSING_QUOTES = "”」"
+_OPENING_QUOTES: Mapping[str, str] = {LANG_ZH: "「", LANG_EN: "“"}
+
+
+def _template_pattern(template: str) -> re.Pattern[str]:
+    """A template as a whole-text pattern with one group per slot.
+
+    A closing quote that ends the template is optional: a fact cut at 1,000
+    characters loses it together with the end of the content.
+    """
+
+    parts: list[str] = []
+    position = 0
+    for slot in _SLOT_RE.finditer(template):
+        parts.append(re.escape(template[position:slot.start()]))
+        parts.append(f"(?P<{slot.group(1)}>.*?)")
+        position = slot.end()
+    tail = template[position:]
+    if tail and tail[-1] in _CLOSING_QUOTES:
+        parts.append(re.escape(tail[:-1]) + f"(?:{re.escape(tail[-1])})?")
+    else:
+        parts.append(re.escape(tail))
+    return re.compile("".join(parts) + r"\Z", re.DOTALL)
+
+
+def _kind_shapes(language: str, kind: str) -> list[tuple[str, int, bool, re.Pattern[str]]]:
+    """``(kind, shape, with quote suffix, pattern)`` for every way ``kind`` is written in ``language``."""
+
+    templates = DESCRIPTION_TEMPLATES[language]
+    value = templates[kind]
+    shapes = list(enumerate((value,) if isinstance(value, str) else value))
+    if kind == "generic":
+        shapes.reverse()  # "performed an action" is the bare template, not an action named "an action"
+    found = []
+    for shape, template in shapes:
+        if kind == "quote":
+            found.append((kind, shape, True, _template_pattern(template + templates["quote_suffix"])))
+        found.append((kind, shape, False, _template_pattern(template)))
+    return found
+
+
+_SHAPES: dict[tuple[str, str], list[tuple[str, int, bool, re.Pattern[str]]]] = {}
+
+
+def _shapes_for(language: str, action: str) -> list[tuple[str, int, bool, re.Pattern[str]]]:
+    if action in _ACTION_KINDS:
+        kinds = [_ACTION_KINDS[action]] + (["comment_empty"] if action == "COMMENTED" else [])
+    else:  # ACTED or PERFORMED_*
+        kinds = ["generic"]
+    key = (language, "|".join(kinds))
+    if key not in _SHAPES:
+        _SHAPES[key] = [shape for kind in kinds for shape in _kind_shapes(language, kind)]
+    return _SHAPES[key]
+
+
+def rerender_description(description: str, lang: Any) -> str | None:
+    """A rules description (either language) written with ``lang``'s templates.
+
+    ``posted: “Hi”`` in Chinese is ``发布了一条帖子：「Hi」``. Names and quoted
+    content are kept as they are. None when the description is not one the
+    templates wrote (``lang`` defaults to English).
+    """
+
+    target_language = activity_language(lang) or LANG_EN
+    text = (description or "").strip()
+    if not text:
+        return None
+    action, target, language, _template_end = _classify(text)
+    chosen = None
+    for kind, shape, suffixed, pattern in _shapes_for(language, action):
+        match = pattern.match(text)
+        if not match:
+            continue
+        values = match.groupdict()
+        # The name the template holds, when it holds one: it must be the one the rules read.
+        person = next((values[slot].strip() for slot in _PERSON_SLOTS if values.get(slot) is not None), None)
+        candidate = (kind, shape, suffixed, values)
+        if (target is not None and person == target) or (target is None and not person):
+            chosen = candidate
+            break
+        chosen = chosen or candidate
+    if chosen is None:
+        return None
+    kind, shape, suffixed, values = chosen
+    templates = DESCRIPTION_TEMPLATES[target_language]
+    template = templates[kind]
+    template = template if isinstance(template, str) else template[shape]
+    filled = {slot: values.get(slot) or "" for slot in _SLOT_RE.findall(template)}
+    rendered = template.format(**filled)
+    if suffixed:
+        rendered += templates["quote_suffix"].format(quote=values.get("quote") or "")
+    return rendered
+
+
+def _line_in(line: ActivityLine, lang: str | None) -> ActivityLine:
+    """The line as if the updater had written it with ``lang``'s templates (the record language).
+
+    A line already in that language, or one no template wrote, is returned as it is.
+    """
+
+    language = activity_language(lang)
+    if language is None or language == line.language:
+        return line
+    description = rerender_description(line.description, language)
+    if description is None:
+        return line
+    opening = description.find(_OPENING_QUOTES[language])
+    template_end = opening if opening >= 0 else len(description)
+    return replace(line, description=description, language=language, template_end=template_end)
+
+
+# "On {platform}, {rest}" (English) and "{agent}在{platform}{description}" (Chinese).
+_EN_FACT_RE = re.compile(r"On (?P<platform>[^,\n]+), (?P<rest>.+)\Z", re.DOTALL)
+_ZH_FACT_PLATFORM_RE = re.compile(r"在(?P<platform>[A-Za-z][A-Za-z0-9_]*)")
+
+
+def _written_by_rules(description: str, language: str) -> bool:
+    """Whether a whole description is one of ``language``'s templates."""
+
+    return bool(description) and _classify(description)[2] == language and (
+        rerender_description(description, language) is not None
+    )
+
+
+def _split_fact(fact: str) -> tuple[str, str, str] | None:
+    """``(agent, platform, description)`` of a rules fact in either language, or None.
+
+    The agent is the shortest name after which the rest is a whole template.
+    """
+
+    english = _EN_FACT_RE.match(fact)
+    if english:
+        rest = english.group("rest")
+        for space in (index for index, char in enumerate(rest) if char == " "):
+            agent, description = rest[:space].strip(), rest[space + 1:].strip()
+            if agent and _written_by_rules(description, LANG_EN):
+                return agent, english.group("platform").strip(), description
+    for found in _ZH_FACT_PLATFORM_RE.finditer(fact):
+        agent, description = fact[:found.start()].strip(), fact[found.end():].strip()
+        if agent and _written_by_rules(description, LANG_ZH):
+            return agent, found.group("platform"), description
+    return None
+
+
+def rerender_fact(fact_text: str, lang: Any) -> str | None:
+    """A rules fact (``{agent}在{Platform}{desc}`` or ``On {Platform}, {agent} {desc}``) in ``lang``.
+
+    For mending a record written in the wrong language: the agent, platform,
+    names and quoted content are kept; the template words are ``lang``'s.
+    None when the text is not a fact the rules wrote.
+    """
+
+    target_language = activity_language(lang) or LANG_EN
+    parts = _split_fact((fact_text or "").strip())
+    if parts is None:
+        return None
+    agent, platform, description = parts
+    rendered = rerender_description(description, target_language)
+    if rendered is None:
+        return None
+    rendered = _WHITESPACE_RE.sub(" ", rendered).strip()
+    return truncate(FACT_TEMPLATES[target_language].format(
+        agent=agent, platform=platform, description=rendered,
+    ), MAX_FACT_CHARS)
+
+
+def rerender_episode(content: str, lang: Any) -> str:
+    """An activity episode's text with every record's description in ``lang``'s templates.
+
+    Timestamps, rounds, agents, names and quoted content are kept; a record
+    no template wrote, and any text before the first record, stay as they are.
+    """
+
+    target_language = activity_language(lang) or LANG_EN
+    parsed = parse_activity_text(content or "")
+    if not parsed.lines:
+        return content or ""
+    blocks = list(parsed.unparsed)
+    for line in parsed.lines:
+        description = rerender_description(line.description, target_language)
+        if description is None:
+            blocks.append(line.text)
+            continue
+        header = ACTIVITY_HEADER_RE.match(line.text.split("\n", 1)[0])
+        timestamp = header.group("ts") if header else line.timestamp
+        blocks.append(f"[{timestamp}] [{line.platform} round {line.round}] {line.agent}: {description}")
+    return "\n".join(blocks)
+
+
+def hub_summary(platform: str, lang: Any) -> str:
+    """The summary of a platform hub node in ``lang`` (English by default)."""
+
+    language = activity_language(lang) or LANG_EN
+    return HUB_SUMMARY_TEMPLATES[language].format(platform=platform_display_name(platform))
+
+
+def account_summary(name: str, platform: str, lang: Any) -> str:
+    """The summary of an account node the rules created, in ``lang`` (English by default)."""
+
+    language = activity_language(lang) or LANG_EN
+    return ACCOUNT_SUMMARY_TEMPLATES[language].format(name=name, platform=platform_display_name(platform))
+
+
+_SUMMARY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (kind, _template_pattern(template))
+    for kind, templates in (("hub", HUB_SUMMARY_TEMPLATES), ("account", ACCOUNT_SUMMARY_TEMPLATES))
+    for template in templates.values()
+)
+
+
+def rerender_summary(summary: str, lang: Any) -> str | None:
+    """A hub or account summary the rules wrote (either language) in ``lang``; None for any other text."""
+
+    text = (summary or "").strip()
+    for kind, pattern in _SUMMARY_PATTERNS:
+        match = pattern.match(text)
+        if not match:
+            continue
+        values = match.groupdict()
+        if kind == "hub":
+            return hub_summary(values["platform"], lang)
+        return account_summary(values["name"], values["platform"], lang)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Rules extractor: database writes (§5.2)
 # ---------------------------------------------------------------------------
 
@@ -583,20 +912,48 @@ class RulesResult:
 
 
 class _NodeResolver:
-    """Resolve account and hub names to node uuids within one graph and episode."""
+    """Resolve account and hub names to node uuids within one graph and episode.
+
+    ``accounts`` (account name -> node uuid, from the episode's metadata)
+    names the node an account was built from: it wins over the name while
+    that node is in the graph, so a citizen the record names in English
+    ("Socrates") stays one node with the entity the sources named 苏格拉底.
+    """
 
     def __init__(self, conn: sqlite3.Connection, graph_id: str, episode_uuid: str, now: str,
-                 result: RulesResult) -> None:
+                 result: RulesResult, accounts: Mapping[str, str] | None = None) -> None:
         self.conn = conn
         self.graph_id = graph_id
         self.episode_uuid = episode_uuid
         self.now = now
         self.result = result
         self._cache: dict[str, str] = {}
+        self._accounts = {name_key(name): uuid for name, uuid in (accounts or {}).items()
+                          if isinstance(name, str) and isinstance(uuid, str) and name_key(name) and uuid}
 
     # A new node's summary is in the language of the line that created it.
     def account(self, name: str, platform: str, language: str = LANG_ZH) -> str | None:
+        node_uuid = self._account_node(name)
+        if node_uuid:
+            return node_uuid
         return self._resolve(name, ACCOUNT_SUMMARY_TEMPLATES[language].format(name=name, platform=platform))
+
+    def _account_node(self, name: str) -> str | None:
+        """The node the account was built from, when the episode names one and it is in this graph."""
+        key = name_key(truncate(name, MAX_NODE_NAME_CHARS))
+        node_uuid = self._accounts.get(key) if key else None
+        if not node_uuid:
+            return None
+        if self._cache.get(key) == node_uuid:
+            return node_uuid
+        row = self.conn.execute(
+            "SELECT uuid FROM nodes WHERE uuid = ? AND graph_id = ?", (node_uuid, self.graph_id)
+        ).fetchone()
+        if row is None:  # merged away or never here: the name resolves it
+            return None
+        link_node_episodes(self.conn, node_uuid, [self.episode_uuid])
+        self._cache[key] = node_uuid
+        return node_uuid
 
     def hub(self, platform: str, language: str = LANG_ZH) -> str | None:
         return self._resolve(platform, HUB_SUMMARY_TEMPLATES[language].format(platform=platform))
@@ -718,7 +1075,8 @@ def _write_event_edge(conn: sqlite3.Connection, *, graph_id: str, name: str, sou
 def apply_activity_rules(conn: sqlite3.Connection, *, graph_id: str, episode_uuid: str,
                          content: str, reference_time: str | None,
                          simulation_id: str | None = None, now: str | None = None,
-                         parsed: ActivityParse | None = None) -> RulesResult:
+                         parsed: ActivityParse | None = None, language: str | None = None,
+                         accounts: Mapping[str, str] | None = None) -> RulesResult:
     """Write the rules nodes and edges for one activity episode (§5.2).
 
     Must run inside a write transaction (``store.write()``), after the episode
@@ -741,7 +1099,14 @@ def apply_activity_rules(conn: sqlite3.Connection, *, graph_id: str, episode_uui
     A line without an agent name is skipped (``skipped_lines``).
 
     A node created here gets a summary in the language of the line that
-    created it (Chinese or English).
+    created it (Chinese or English). With ``language`` (the gathering's
+    record language, from the episode's metadata) every fact and summary is
+    written in that language instead, whichever templates the line used.
+
+    ``accounts`` (account name -> node uuid, from the episode's metadata)
+    puts an account on the node it was built from, before its name is
+    resolved: the record may name a citizen in English while the graph keeps
+    the name the sources gave.
 
     Existing nodes are only linked to the episode; their ``mention_count``
     is left alone so simulated chatter does not outrank document entities.
@@ -756,8 +1121,9 @@ def apply_activity_rules(conn: sqlite3.Connection, *, graph_id: str, episode_uui
         return result
 
     sim_key = simulation_key(simulation_id)
-    resolver = _NodeResolver(conn, graph_id, episode_uuid, now, result)
+    resolver = _NodeResolver(conn, graph_id, episode_uuid, now, result, accounts)
     for line in parsed.lines:
+        line = _line_in(line, language)
         agent_uuid = resolver.account(line.agent, line.platform_name, line.language)
         if not agent_uuid:  # a blank agent name: nothing to attribute, not even a target node
             result.skipped_lines += 1
@@ -865,13 +1231,14 @@ def ingest_activity_episode(conn: sqlite3.Connection, episode_uuid: str, *, mode
         _set_episode_state(conn, episode_uuid, status="skipped", processed=True)
         return ActivityIngestResult(mode, "skipped", True, False)
 
-    sim_id = row["simulation_id"]
-    if not sim_id:
-        metadata = json_loads(row["metadata_json"], {})
-        sim_id = metadata.get("simulation_id") if isinstance(metadata, dict) else None
+    metadata = json_loads(row["metadata_json"], {})
+    metadata = metadata if isinstance(metadata, dict) else {}
+    sim_id = row["simulation_id"] or metadata.get("simulation_id")
     rules = _apply_rules_contained(
         conn, graph_id=row["graph_id"], episode_uuid=episode_uuid, content=row["content"],
         reference_time=row["reference_time"], simulation_id=sim_id, now=now,
+        language=activity_language(metadata.get("language")),
+        accounts=episode_accounts(metadata),
     )
     rules_error = _error(ERROR_RULES, f"Rules extraction failed ({rules.error}).") if rules.error else None
 
@@ -883,6 +1250,16 @@ def ingest_activity_episode(conn: sqlite3.Connection, episode_uuid: str, *, mode
     status = "degraded" if rules_error else "succeeded"
     _set_episode_state(conn, episode_uuid, status=status, processed=True, error=rules_error)
     return ActivityIngestResult(mode, status, True, False, rules, rules_error)
+
+
+def episode_accounts(metadata: Any) -> dict[str, str]:
+    """The "accounts" an activity episode's metadata names (a JSON object, sent as a string)."""
+
+    value = metadata.get("accounts") if isinstance(metadata, Mapping) else None
+    value = json_loads(value, {}) if isinstance(value, str) else value
+    if not isinstance(value, Mapping):
+        return {}
+    return {name: uuid for name, uuid in value.items() if isinstance(name, str) and isinstance(uuid, str)}
 
 
 def _set_episode_state(conn: sqlite3.Connection, episode_uuid: str, *, status: str, processed: bool,
@@ -1176,12 +1553,33 @@ changed opinion), with "invalid_at" when TEXT says when. Leave empty when unsure
 RETURN_SHAPE = 'Return: {"entities":[...],"relations":[...],"invalidated_facts":[...]}'
 
 
-def activity_system_prompt(max_entities: int = 30, max_relations: int = 50) -> str:
-    """:data:`ACTIVITY_SYSTEM_PROMPT` with the per-call limits filled in."""
+# The words "summary" and "fact" are written in, when the gathering's language is known.
+LANGUAGE_NAMES: Mapping[str, str] = {LANG_EN: "English", LANG_ZH: "Simplified Chinese"}
 
-    return ACTIVITY_SYSTEM_PROMPT.replace("{max_entities}", str(int(max_entities))).replace(
+
+def written_in(language: str | None, *, names_in_language: bool = False) -> str:
+    """The prompt's "in the language of TEXT", or "in English" (Chinese) for a known record language.
+
+    Names are kept as written (an account's name is how the rules find its
+    node), unless ``names_in_language``: a document window names its
+    entities as the record's readers know them (the entity's "name").
+    """
+
+    name = LANGUAGE_NAMES.get(activity_language(language) or "")
+    if name is None:
+        return "in the language of TEXT"
+    names = 'name each entity by its "name"' if names_in_language else "keep names as written"
+    return f"in {name} (translate what TEXT quotes in another language; {names})"
+
+
+def activity_system_prompt(max_entities: int = 30, max_relations: int = 50,
+                           language: str | None = None) -> str:
+    """:data:`ACTIVITY_SYSTEM_PROMPT` with the per-call limits (and the record language, when known) filled in."""
+
+    prompt = ACTIVITY_SYSTEM_PROMPT.replace("{max_entities}", str(int(max_entities))).replace(
         "{max_relations}", str(int(max_relations))
     )
+    return prompt.replace("in the language of TEXT", written_in(language))
 
 
 class PromptFact(NamedTuple):
@@ -1204,6 +1602,9 @@ class ActivityWindow:
     episode_uuids: tuple[str, ...]  # every episode of the group, with or without signal
     accounts: tuple[str, ...]  # agents and person targets of the signal lines, first-seen order
     reference_time: str | None
+    # The gathering's record language, from the episodes' metadata "language"
+    # (rows read with metadata_json); None when unknown.
+    language: str | None = None
 
     @property
     def has_signal(self) -> bool:
@@ -1214,9 +1615,10 @@ def render_activity_window(episodes: Sequence[Any]) -> ActivityWindow:
     """Render the signal records of a group's episodes, in the given order.
 
     ``episodes`` are rows or mappings with ``uuid``, ``content`` and
-    ``reference_time``. Each episode that has signal records gets a
-    ``[episode N | time T]`` marker (T is its reference time); episodes
-    without signal are left out of the text but stay in ``episode_uuids``.
+    ``reference_time`` (and optionally ``metadata_json``). Each episode that
+    has signal records gets a ``[episode N | time T]`` marker (T is its
+    reference time); episodes without signal are left out of the text but
+    stay in ``episode_uuids``.
     """
 
     blocks: list[str] = []
@@ -1224,6 +1626,7 @@ def render_activity_window(episodes: Sequence[Any]) -> ActivityWindow:
     accounts: dict[str, None] = {}
     uuids: list[str] = []
     latest: str | None = None
+    stated: set[str] = set()  # the metadata's record languages
     for row in episodes:
         episode_uuid = str(_row_value(row, "uuid"))
         uuids.append(episode_uuid)
@@ -1231,6 +1634,10 @@ def render_activity_window(episodes: Sequence[Any]) -> ActivityWindow:
         lines = parse_activity_text(str(_row_value(row, "content", ""))).signal_lines
         if not lines:
             continue
+        metadata = json_loads(_row_value(row, "metadata_json"), {})
+        language = activity_language(metadata.get("language")) if isinstance(metadata, dict) else None
+        if language:
+            stated.add(language)
         number = len(markers) + 1
         markers[number] = episode_uuid
         header = f"[episode {number} | time {reference}]" if reference else f"[episode {number}]"
@@ -1241,7 +1648,8 @@ def render_activity_window(episodes: Sequence[Any]) -> ActivityWindow:
                 accounts.setdefault(line.target, None)
         if reference and (latest is None or reference > latest):
             latest = reference
-    return ActivityWindow("\n".join(blocks), markers, tuple(uuids), tuple(accounts), latest)
+    language = next(iter(stated)) if len(stated) == 1 else None
+    return ActivityWindow("\n".join(blocks), markers, tuple(uuids), tuple(accounts), latest, language)
 
 
 def _render_known(known_entities: Iterable[tuple[str, str | None]]) -> str:
@@ -1284,7 +1692,7 @@ def build_activity_messages(window: ActivityWindow, *, ontology: OntologyView | 
         RETURN_SHAPE,
     ])
     return [
-        {"role": "system", "content": activity_system_prompt(max_entities, max_relations)},
+        {"role": "system", "content": activity_system_prompt(max_entities, max_relations, window.language)},
         {"role": "user", "content": user},
     ]
 

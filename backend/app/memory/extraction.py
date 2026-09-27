@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .activity import activity_language, written_in
 from .models import json_dumps, json_loads
 from .ontology import OntologyView, load_ontology
 from .resolution import (
@@ -58,6 +59,7 @@ logger = logging.getLogger("mirofish.memory.extraction")
 __all__ = [
     "DEDUP_SYSTEM_PROMPT",
     "DOCUMENT_SYSTEM_PROMPT",
+    "document_system_prompt",
     "FATAL_ERROR_CODES",
     "RETURN_SHAPE",
     "UNKNOWN_REFERENCE_TIME",
@@ -578,6 +580,13 @@ def parse_extraction(raw: Any, *, max_entities: int = 30, max_relations: int = 5
 # ---------------------------------------------------------------------------
 
 
+def _stated_language(metadata_json: Any) -> str | None:
+    """The record language an episode's metadata states ("language"), or None."""
+
+    metadata = json_loads(metadata_json, {})
+    return activity_language(metadata.get("language")) if isinstance(metadata, dict) else None
+
+
 @dataclass(frozen=True)
 class WindowEpisode:
     """A claimed document episode as the extraction step sees it."""
@@ -592,6 +601,9 @@ class WindowEpisode:
     reference_time_explicit: bool
     strict_ontology: bool
     chunk: int
+    # The gathering's record language, when the sender stated it in the
+    # episode's metadata ("language": "en" or "zh").
+    language: str | None = None
 
     @property
     def marker_kind(self) -> str:
@@ -621,6 +633,13 @@ class Window:
     def explicit_reference_time(self) -> str | None:
         times = [e.reference_time for e in self.episodes if e.reference_time_explicit and e.reference_time]
         return max(times) if times else None
+
+    @property
+    def language(self) -> str | None:
+        """The record language its episodes state, when they state one and agree on it."""
+
+        stated = {episode.language for episode in self.episodes if episode.language}
+        return stated.pop() if len(stated) == 1 else None
 
     @property
     def reference_time(self) -> str:
@@ -789,7 +808,7 @@ def pack_window(
         row["uuid"]: row
         for row in conn.execute(
             "SELECT id, uuid, graph_id, batch_id, sequence_index, content, reference_time, "
-            f"reference_time_explicit, strict_ontology FROM episodes WHERE uuid IN ({marks})",
+            f"reference_time_explicit, strict_ontology, metadata_json FROM episodes WHERE uuid IN ({marks})",
             tuple(uuids),
         )
     }
@@ -808,6 +827,7 @@ def pack_window(
             strict_ontology=bool(row["strict_ontology"]),
             chunk=row["sequence_index"] if row["batch_id"] is not None and row["sequence_index"] is not None
             else position,
+            language=_stated_language(row["metadata_json"]),
         ))
     return Window(new_id(), rows[0]["graph_id"], batch_id, tuple(episodes), owner, lease_until)
 
@@ -867,6 +887,9 @@ class PromptContext:
     # The window's explicit reference time; None when no episode gave one
     # (the ingestion clock says nothing about when the text takes place).
     reference_time: str | None
+    # The record language the summaries and facts are written in; None: the
+    # language of the text itself.
+    language: str | None = None
 
     @property
     def fact_map(self) -> dict[str, str]:
@@ -975,7 +998,7 @@ def gather_prompt_context(conn: Any, window: Window, settings: LocalMemorySettin
                                            limit=settings.prompt_known_entities)
     facts = find_existing_facts(conn, window.graph_id, mentioned, limit=settings.prompt_existing_facts)
     return PromptContext(ontology=ontology, known=known, facts=facts,
-                         reference_time=window.explicit_reference_time)
+                         reference_time=window.explicit_reference_time, language=window.language)
 
 
 def build_document_prompt(
@@ -1011,11 +1034,36 @@ def build_document_prompt(
     return "\n".join(lines)
 
 
+# Rule 3's last sentence, and what an English record adds to it: the node's
+# name is the one its readers know, the scroll's own form an alias.
+_NAME_RULE_END = 'Put other spellings, abbreviations and short forms in "aliases".'
+_ENGLISH_NAMES = (
+    '\n   Write "name" in English: a name TEXT gives in Chinese in its usual English form,'
+    '\n   with TEXT\'s own form in "aliases".'
+)
+
+
+def document_system_prompt(max_entities: int, max_relations: int, language: str | None = None) -> str:
+    """:data:`DOCUMENT_SYSTEM_PROMPT` with its limits filled in.
+
+    With a known record language, "summary" and "fact" are written in it
+    rather than in the language of TEXT (an English gathering built from a
+    Chinese scroll still gets an English memory). An English record also
+    names its entities in English (苏格拉底 is Socrates, with 苏格拉底 as an
+    alias), so the Web, the citizens' cards and the Chronicle show one name.
+    A Chinese record keeps names as TEXT writes them.
+    """
+
+    system = DOCUMENT_SYSTEM_PROMPT.format(max_entities=max_entities, max_relations=max_relations)
+    english = activity_language(language) == "en"
+    system = system.replace("in the language of TEXT", written_in(language, names_in_language=english))
+    return system.replace(_NAME_RULE_END, _NAME_RULE_END + _ENGLISH_NAMES) if english else system
+
+
 def build_document_messages(window: Window, context: PromptContext,
                             settings: LocalMemorySettings) -> list[dict[str, str]]:
-    system = DOCUMENT_SYSTEM_PROMPT.format(
-        max_entities=settings.max_entities_per_window,
-        max_relations=settings.max_relations_per_window,
+    system = document_system_prompt(
+        settings.max_entities_per_window, settings.max_relations_per_window, context.language,
     )
     user = build_document_prompt(window.text, context.ontology, context.known, context.facts,
                                  context.reference_time)

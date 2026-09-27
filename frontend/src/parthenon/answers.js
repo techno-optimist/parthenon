@@ -3,6 +3,8 @@
 // citizen answering from memory (once the square has closed) also gets the
 // question and the recent turns apart, so the backend can hold them straight.
 
+import { readable } from './vocabulary.js'
+
 export const MEMORY_HISTORY_TURNS = 6
 
 // The prompt the live city has always been sent, byte for byte, plus the
@@ -35,8 +37,9 @@ export const answerFrom = (data, idx, { anyFallback = false } = {}) => {
   const remembered = entry?.from_memory === true || resultData.from_memory === true || data?.from_memory === true
   const memory = !!text && remembered
   // Only a remembered entry's error is already in the city's words; a live
-  // entry's error is engine text (a platform, a raw exception) and is never shown.
-  const error = remembered && typeof entry?.error === 'string' ? entry.error : ''
+  // entry's error is engine text (a platform, a raw exception) and is never
+  // shown. Nor is one in a language the visitor does not read.
+  const error = remembered && typeof entry?.error === 'string' ? readable(entry.error, '') : ''
   return { text, memory, error }
 }
 
@@ -49,7 +52,7 @@ export const cityError = (message) => Object.assign(new Error(String(message || 
 export const troubleFrom = (err, fallback) => {
   if (err?.cityWords) return err.message
   const data = err?.response?.data
-  if (data?.from_memory === true && typeof data.error === 'string' && data.error.trim()) return data.error
+  if (data?.from_memory === true && typeof data.error === 'string' && data.error.trim()) return readable(data.error, fallback)
   return fallback
 }
 

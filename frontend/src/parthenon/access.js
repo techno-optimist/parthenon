@@ -47,7 +47,11 @@ export const access = reactive({
   // given was not known.
   inviteRequired: false,
   invite: readInvite(storage()) || linkedInvite,
-  inviteWrong: false
+  inviteWrong: false,
+  // The one language the city keeps every gathering's record in ('en' | 'zh'),
+  // when it keeps them in one (the public steps); else null, and each record
+  // is kept in the language of the visitor who began it.
+  recordLanguage: null
 })
 
 // Another tab of this browser began a gathering or was given the admin key.
@@ -108,6 +112,8 @@ export const applyStatus = (data) => {
   }
   access.limits = data.limits && typeof data.limits === 'object' ? { ...data.limits } : null
   access.inviteRequired = data.invite_required === true
+  const kept = String(data.recordLanguage ?? data.record_language ?? '').trim().toLowerCase()
+  access.recordLanguage = /^zh(?:$|[-_])/.test(kept) ? 'zh' : /^en(?:$|[-_])/.test(kept) ? 'en' : null
 }
 
 /**

@@ -15,7 +15,10 @@ import {
   isPlatformNode,
   citizenName,
   platformName,
-  stripIds
+  stripIds,
+  foreignScript,
+  readable,
+  getVocabularyLocale
 } from './vocabulary.js'
 
 // ---------------------------------------------------------------------------
@@ -87,15 +90,114 @@ export const keyRadius = (n) => n.r + 14
 // Words
 
 const SQUARE_FACT = /^\s*(?:On|In)\s+(?:Twitter|X|Reddit|the Agora|the Stoa)\b/i
+// The same deeds as the memory records them in Chinese: '{agent}在{platform}{deed}'.
+const SQUARE_FACT_ZH = /^\s*[^「“"\n]{1,120}?在\s*(?:Twitter|X|Reddit|广场|柱廊)/
 
 const HAN = /[㐀-鿿]/
 
-// Facts arrive in the engine's words; the square has its own. The squares are
-// named in the fact's own language: an English fact keeps "the Agora" in the
-// Chinese city, a Chinese one says 广场.
-export const cityWords = (text) => {
+// The memory's Chinese activity lines, read back into the English ones it
+// writes for an English gathering (app/memory/activity.py FACT_TEMPLATES and
+// zep_graph_memory_updater._DESCRIPTION_TEMPLATES, both languages), so an
+// English reader of an older gathering meets the same words either way.
+const DEEDS = [
+  ['发布了一条帖子：「{content}」', 'posted: “{content}”'],
+  ['发布了一条帖子', 'posted'],
+  ...[['点赞', 'liked'], ['踩', 'disliked']].flatMap(([zh, en]) => [
+    [`${zh}了{author}的帖子：「{content}」`, `${en} {author}'s post: “{content}”`],
+    [`${zh}了一条帖子：「{content}」`, `${en} a post: “{content}”`],
+    [`${zh}了{author}的一条帖子`, `${en} a post by {author}`],
+    [`${zh}了一条帖子`, `${en} a post`],
+    [`${zh}了{author}的评论：「{content}」`, `${en} {author}'s comment: “{content}”`],
+    [`${zh}了一条评论：「{content}」`, `${en} a comment: “{content}”`],
+    [`${zh}了{author}的一条评论`, `${en} a comment by {author}`],
+    [`${zh}了一条评论`, `${en} a comment`]
+  ]),
+  ['转发了{author}的帖子：「{content}」', 'reposted {author}\'s post: “{content}”'],
+  ['转发了一条帖子：「{content}」', 'reposted a post: “{content}”'],
+  ['转发了{author}的一条帖子', 'reposted a post by {author}'],
+  ['转发了一条帖子', 'reposted a post'],
+  ...['，并评论道：「{quote}」', ''].flatMap((suffix) => {
+    const added = suffix ? ', adding: “{quote}”' : ''
+    return [
+      [`引用了{author}的帖子「{content}」${suffix}`, `quoted {author}'s post “{content}”${added}`],
+      [`引用了一条帖子「{content}」${suffix}`, `quoted a post “{content}”${added}`],
+      [`引用了{author}的一条帖子${suffix}`, `quoted a post by {author}${added}`],
+      [`引用了一条帖子${suffix}`, `quoted a post${added}`]
+    ]
+  }),
+  ['关注了用户「{name}」', 'followed the user “{name}”'],
+  ['关注了一个用户', 'followed a user'],
+  ['在{author}的帖子「{post}」下评论道：「{content}」', 'commented on {author}\'s post “{post}”: “{content}”'],
+  ['在帖子「{post}」下评论道：「{content}」', 'commented on a post “{post}”: “{content}”'],
+  ['在{author}的帖子下评论道：「{content}」', 'commented on {author}\'s post: “{content}”'],
+  ['评论道：「{content}」', 'commented: “{content}”'],
+  ['发表了评论', 'left a comment'],
+  ['搜索了用户「{query}」', 'searched for the user “{query}”'],
+  ['搜索了用户', 'searched for users'],
+  ['搜索了「{query}」', 'searched for “{query}”'],
+  ['进行了搜索', 'ran a search'],
+  ['屏蔽了用户「{name}」', 'muted the user “{name}”'],
+  ['屏蔽了一个用户', 'muted a user'],
+  ['执行了{action}操作', 'performed {action}'],
+  ['执行了操作', 'performed an action']
+].map(([zh, en]) => {
+  const slots = []
+  const source = zh
+    .split(/(\{\w+\})/)
+    .map((part) => {
+      const slot = /^\{(\w+)\}$/.exec(part)
+      if (!slot) return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      slots.push(slot[1])
+      return '([\\s\\S]+?)'
+    })
+    .join('')
+  return { re: new RegExp(`^${source}$`), slots, en }
+})
+const SQUARE_NAMES = { Twitter: 'Twitter', X: 'Twitter', 广场: 'Twitter', Reddit: 'Reddit', 柱廊: 'Reddit' }
+const ZH_FACT = /^\s*([^「“"\n]{1,120}?)在\s*(Twitter|X|Reddit|广场|柱廊)\s*([\s\S]+?)\s*$/
+const ZH_ACCOUNT = /^\s*(.+?)是\s*(Twitter|Reddit)\s*上的模拟账号。?\s*$/
+const ZH_HUB = /^\s*(Twitter|Reddit)\s*是模拟中使用的社交媒体平台。?\s*$/
+
+/** A Chinese activity line (fact or account summary) in the English words the memory uses, or '' when it is no such line. */
+export const englishActivityLine = (text) => {
+  const s = String(text ?? '')
+  let m = ZH_HUB.exec(s)
+  if (m) return `${m[1]} is the social media platform used in the simulation.`
+  m = ZH_ACCOUNT.exec(s)
+  if (m) return `${m[1].trim()} is a simulated account on ${m[2]}.`
+  m = ZH_FACT.exec(s)
+  if (!m) return ''
+  let words = deedIn(m[3])
+  // The memory cuts a long line short (MAX_FACT_CHARS), often inside a
+  // quotation: it is read with the quotation closed after an ellipsis.
+  const open = (m[3].match(/「/g) || []).length - (m[3].match(/」/g) || []).length
+  if (!words && open > 0) words = deedIn(`${m[3].replace(/[\s…]+$/, '')}…」`)
+  // Or just after one, inside the words that begin a comment on it.
+  if (!words) words = deedIn(m[3].replace(/」，[并评论道：]*$/, '」'))
+  return words ? `On ${SQUARE_NAMES[m[2]]}, ${m[1].trim()} ${words}` : ''
+}
+const deedIn = (text) => {
+  for (const deed of DEEDS) {
+    const d = deed.re.exec(text)
+    if (d) return deed.en.replace(/\{(\w+)\}/g, (x, slot) => d[deed.slots.indexOf(slot) + 1] ?? '')
+  }
+  return ''
+}
+
+const readerLang = (locale) => (String(locale ?? getVocabularyLocale() ?? 'en').slice(0, 2).toLowerCase() === 'zh' ? 'zh' : 'en')
+
+// Facts arrive in the engine's words; the square has its own. For a Chinese
+// reader the squares are named in the fact's own language: an English fact
+// keeps "the Agora", a Chinese one says 广场. An English reader never meets
+// Chinese: the memory's Chinese activity lines are read in its English words,
+// and anything else in Chinese is left out (the tie's own word stands in).
+export const cityWords = (text, locale) => {
   let s = stripIds(text)
   if (!s) return ''
+  if (readerLang(locale) !== 'zh' && foreignScript(s, 'en')) {
+    s = readable(HAN.test(s) ? stripIds(englishActivityLine(s)) : s, '', 'en')
+    if (!s) return ''
+  }
   const zh = HAN.test(s)
   const agora = platformName('twitter', 'name', zh ? 'zh' : 'en')
   const stoa = platformName('reddit', 'name', zh ? 'zh' : 'en')
@@ -133,7 +235,8 @@ export const tieStance = (name) => {
 // The chatter of the square: who spoke, answered, nodded, quoted. A tie with an
 // activity name that the scroll itself states ("Plato follows Socrates") is
 // part of the shape of the city, not chatter.
-export const isChatterEdge = (name, fact) => isActivityTie(name) && (!fact || SQUARE_FACT.test(String(fact)))
+export const isChatterEdge = (name, fact) =>
+  isActivityTie(name) && (!fact || SQUARE_FACT.test(String(fact)) || SQUARE_FACT_ZH.test(String(fact)))
 
 export const nodeRadius = (degree, maxDegree) => {
   if (!(maxDegree > 0)) return R_MIN + 1

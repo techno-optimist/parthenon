@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import json
 import threading
 from queue import Queue
 
@@ -324,8 +325,8 @@ def test_episode_text_is_english_for_en_and_unchanged_chinese_for_zh(action_type
     activity = _described(action_type, args)
     assert activity.to_episode_text("en") == PREFIX + english
     assert activity.to_episode_text("zh") == PREFIX + chinese
-    # This thread has no locale set, so it keeps the upstream 'zh' default.
-    assert activity.to_episode_text() == PREFIX + chinese
+    # This thread has no locale set, so it reads in the English default.
+    assert activity.to_episode_text() == PREFIX + english
 
 
 def test_every_non_chinese_locale_gets_english_and_zh_variants_stay_chinese():
@@ -380,19 +381,32 @@ def _recording_updater(monkeypatch, writes, **kwargs):
     return updater
 
 
-def test_updater_writes_every_line_in_the_locale_of_the_run(monkeypatch):
+def _record_in(monkeypatch, language):
+    asked = []
+
+    def record_language(**ids):
+        asked.append(ids)
+        return language
+
+    monkeypatch.setattr(updater_module, "record_language", record_language)
+    return asked
+
+
+def test_updater_writes_every_line_in_the_record_language(monkeypatch):
     writes = []
-    # The run starts from an English request; the updater captures that locale.
-    with Flask(__name__).test_request_context(headers={"Accept-Language": "en"}):
+    asked = _record_in(monkeypatch, "en")
+    # The run starts from a Chinese request; the gathering's record language decides.
+    with Flask(__name__).test_request_context(headers={"Accept-Language": "zh-CN"}):
         updater = _recording_updater(monkeypatch, writes)
     assert updater.locale == "en"
+    assert asked == [{"simulation_id": "sim-1"}]
 
     updater.start()
     # One full batch goes out from the worker; the tail is flushed by stop()
-    # on this thread, whose own locale is still the 'zh' default.
+    # on this thread, whose own locale is Chinese.
     for index in range(updater.BATCH_SIZE + 2):
         updater.add_activity(_activity(index))
-    assert get_locale() == "zh"
+    set_locale("zh")
     updater.stop()
 
     lines = [line for write in writes for line in write["data"].splitlines()]
@@ -401,11 +415,15 @@ def test_updater_writes_every_line_in_the_locale_of_the_run(monkeypatch):
     tail = [write for write in writes if write["thread"] == threading.current_thread().name]
     assert tail and all(write["thread_locale"] == "zh" for write in tail)
     assert all("posted: “hello”" in write["data"] for write in tail)
+    # The local memory is told the record language, so its facts are written in it.
+    assert {write["metadata"]["language"] for write in writes} == {"en"}
 
 
-def test_updater_in_a_chinese_run_keeps_the_upstream_text(monkeypatch):
+def test_updater_in_a_chinese_gathering_keeps_the_upstream_text(monkeypatch):
     writes = []
-    updater = _recording_updater(monkeypatch, writes)  # no request: the 'zh' default
+    _record_in(monkeypatch, "zh")
+    with Flask(__name__).test_request_context(headers={"Accept-Language": "en"}):
+        updater = _recording_updater(monkeypatch, writes)
     assert updater.locale == "zh"
     updater.start()
     updater.add_activity(_activity(1))
@@ -413,6 +431,34 @@ def test_updater_in_a_chinese_run_keeps_the_upstream_text(monkeypatch):
     assert writes[0]["data"] == (
         "[2026-07-22T12:00:00+08:00] [twitter round 1] Agent 1: 发布了一条帖子：「hello」"
     )
+    assert writes[0]["metadata"]["language"] == "zh"
+
+
+def test_an_unknown_gathering_writes_english_never_the_threads_chinese(monkeypatch):
+    monkeypatch.delenv("PARTHENON_RECORD_LANGUAGE", raising=False)
+    set_locale("zh")
+    writes = []
+    updater = _recording_updater(monkeypatch, writes)  # sim-1 has no record on disk
+    assert updater.locale == "en"
+    assert ZepGraphMemoryUpdater._worker_loop.__defaults__ == (None,)
+
+
+def test_the_manager_passes_the_record_language_to_the_updater(monkeypatch):
+    created = []
+
+    class Recording:
+        def __init__(self, graph_id, **kwargs):
+            created.append((graph_id, kwargs))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(updater_module, "ZepGraphMemoryUpdater", Recording)
+    try:
+        ZepGraphMemoryManager.create_updater("sim-lang", "graph-1", locale="zh")
+        assert created == [("graph-1", {"simulation_id": "sim-lang", "locale": "zh", "accounts": None})]
+    finally:
+        ZepGraphMemoryManager._updaters.pop("sim-lang", None)
 
 
 def test_an_explicit_updater_locale_wins_over_the_creating_thread(monkeypatch):
@@ -422,3 +468,32 @@ def test_an_explicit_updater_locale_wins_over_the_creating_thread(monkeypatch):
     assert updater.locale == "zh"
     updater._send_batch_activities([_activity(1)], "twitter")
     assert writes[0]["data"].endswith("Agent 1: 发布了一条帖子：「hello」")
+
+
+def test_the_local_memory_is_told_each_accounts_graph_node(monkeypatch):
+    """An English record may name 苏格拉底 "Socrates": the episode says which node he is."""
+
+    writes = []
+    client = _client(lambda **kwargs: writes.append(kwargs) or SimpleNamespace(uuid_="episode-1"))
+    monkeypatch.setattr(updater_module, "get_zep_client", lambda _key: client)
+    accounts = updater_module.account_nodes({"agent_configs": [
+        {"agent_id": 1, "entity_name": "Agent 1", "entity_uuid": "node-1"},
+        {"agent_id": 2, "entity_name": "Agent 2", "entity_uuid": "node-2"},
+        {"agent_id": 3, "entity_name": "Agent 3", "entity_uuid": ""},
+        "not an agent",
+    ]})
+    assert accounts == {"Agent 1": "node-1", "Agent 2": "node-2"}
+    assert updater_module.account_nodes(None) == {} and updater_module.account_nodes({"agent_configs": 3}) == {}
+
+    monkeypatch.setattr(updater_module.Config, "MEMORY_BACKEND", "local")
+    local = ZepGraphMemoryUpdater("graph-1", simulation_id="sim-1", locale="en", accounts=accounts)
+    local._send_batch_activities([_activity(1)], "twitter")
+    # Only the accounts the episode names, as a string (metadata values are scalars).
+    assert json.loads(writes[0]["metadata"]["accounts"]) == {"Agent 1": "node-1"}
+
+    # Zep Cloud extracts its own nodes: its episodes carry no accounts.
+    monkeypatch.setattr(updater_module.Config, "MEMORY_BACKEND", "zep")
+    cloud = ZepGraphMemoryUpdater("graph-1", api_key="test-key", simulation_id="sim-1", locale="en",
+                                  accounts=accounts)
+    cloud._send_batch_activities([_activity(1)], "twitter")
+    assert "accounts" not in writes[1]["metadata"]

@@ -824,6 +824,13 @@ def test_public_status_reports_the_limits(city, fake_ontology):
     assert other['visitor_left'] == 2
 
 
+def test_the_status_says_which_language_the_records_are_written_in(city):
+    city.env(PARTHENON_RECORD_LANGUAGE='en')
+    assert city.client().get('/api/parthenon/status').json['data']['recordLanguage'] == 'en'
+    city.monkeypatch.delenv('PARTHENON_RECORD_LANGUAGE')
+    assert city.client(public=False).get('/api/parthenon/status').json['data']['recordLanguage'] is None
+
+
 def test_public_status_reads_the_bridge(city, monkeypatch):
     monkeypatch.setattr(parthenon_api, '_llm_status_and_health', lambda: (
         False, 'The LLM bridge at http://127.0.0.1:5055 is not answering. Check that npm run dev is still running.',
@@ -976,6 +983,17 @@ def test_keepers_routes(city):
     assert client.get('/api/graph/tasks', headers={'X-Parthenon-Admin': ADMIN_KEY}).status_code == 200
 
 
+def test_the_mend_is_the_keepers_alone(city):
+    client = city.client()
+    for response in (
+        client.get('/api/parthenon/mend/scan?scope=all'),
+        client.post('/api/parthenon/mend', json={'scope': 'all', 'apply': True}),
+    ):
+        assert response.status_code == 403 and response.json['code'] == 'not_yours'
+    kept = client.get('/api/parthenon/mend/scan?scope=all', headers={'X-Parthenon-Admin': ADMIN_KEY})
+    assert kept.status_code == 200 and kept.json['data']['records'] == []
+
+
 # ------------------------------------------------------------------ nothing internal leaves
 
 def test_no_trace_or_path_in_a_public_error(city, monkeypatch):
@@ -1024,6 +1042,63 @@ def test_paths_in_a_task_message_are_scrubbed(city, monkeypatch):
     text = city.client().get(f'/api/graph/task/{task_id}').get_data(as_text=True)
 
     assert '/app/backend' not in text
+
+
+# ------------------------------------------------------------------ the visitor's language in an answer that succeeded
+
+def _answering(city, body):
+    app = city.app()
+    app.view_functions['graph.get_task'] = lambda task_id: (jsonify(body), 200)
+    return app.test_client()
+
+
+def test_a_chinese_note_in_an_answer_is_put_in_the_citys_words(city):
+    client = _answering(city, {'success': True, 'data': {
+        'status': 'failed', 'error': '进程退出码: 1, 错误: 模拟失败', 'message': '模拟失败',
+        'task': {'status': 'processing', 'message': '正在构建图谱', 'progress': 40},
+        'runs': [{'simulation_id': 'sim_a', 'error': '该运行停留在「stopping」状态'}],
+    }})
+
+    data = client.get('/api/graph/task/t1', headers={'Accept-Language': 'en-US,en;q=0.9'}).json['data']
+
+    assert data['error'] == 'The city stumbled. Try again in a moment.'
+    assert data['message'] == 'The city stumbled. Try again in a moment.'
+    # A progress note has nothing the city could say instead: it goes.
+    assert data['task'] == {'status': 'processing', 'message': '', 'progress': 40}
+    assert data['runs'][0]['error'] == 'The city stumbled. Try again in a moment.'
+
+
+def test_an_english_answer_is_left_as_it_is(city):
+    body = {'success': True, 'data': {'status': 'completed', 'message': 'Graph built', 'error': None,
+                                      'items': [{'name': '苏格拉底', 'summary': '雅典的哲学家'}]}}
+    client = _answering(city, body)
+
+    english = client.get('/api/graph/task/t1', headers={'Accept-Language': 'en'}).json
+    chinese = client.get('/api/graph/task/t1', headers={'Accept-Language': 'zh-CN'}).json
+
+    # Only the notes are read: a record's own words are the mend's business.
+    assert english == body
+    # The public steps keep their records in English: a Chinese visitor keeps an English progress note.
+    assert chinese == body
+
+
+def test_an_english_error_in_an_answer_is_put_in_a_chinese_visitors_words(city):
+    client = _answering(city, {'success': True, 'data': {
+        'status': 'stopped', 'error': "This run was left 'stopping' at round 136/336.", 'message': 'Stopped',
+    }})
+
+    data = client.get('/api/graph/task/t1', headers={'Accept-Language': 'zh-CN,zh;q=0.9'}).json['data']
+
+    assert data['error'] == '城邦绊了一下。请稍后再试。'
+    assert data['message'] == 'Stopped'
+
+
+def test_a_refusal_inside_an_answer_is_already_the_visitors(city):
+    body = {'success': True, 'data': {'status': 'done', 'code': '', 'result': {
+        'success': False, 'error': '城邦需要稍作喘息。请过一会儿再问。', 'code': 'slow_down'}}}
+    client = _answering(city, body)
+
+    assert client.get('/api/graph/task/t1', headers={'Accept-Language': 'en'}).json == body
 
 
 def test_pages_from_the_public_origin_are_welcome(city):

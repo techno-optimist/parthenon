@@ -230,24 +230,52 @@ def test_rules_parser_matches_updater_templates(action_type, args, expected_acti
 
 
 def test_parser_handles_tricky_names_and_content():
-    # Author names containing 的, quoted content containing 的帖子/colons/quotes, newlines.
+    # A Chinese record: author names containing 的, quoted content containing
+    # 的帖子/colons/quotes, newlines.
     tricky = "王五的帖子：「转」\n第二行: still the same post"
-    line = _only_line(_activity("LIKE_POST", {"post_author_name": "张三的帖子迷", "post_content": tricky}))
-    assert (line.action, line.target) == ("LIKED_POST_OF", "张三的帖子迷")
+    line = _only_line(_activity("LIKE_POST", {"post_author_name": "张三的帖子迷", "post_content": tricky}), "zh")
+    assert (line.action, line.target, line.language) == ("LIKED_POST_OF", "张三的帖子迷", "zh")
 
-    line = _only_line(_activity("LIKE_POST", {"post_author_name": "一条鱼"}))
+    line = _only_line(_activity("LIKE_POST", {"post_author_name": "一条鱼"}), "zh")
     assert (line.action, line.target) == ("LIKED_POST_OF", "一条鱼")
 
-    line = _only_line(_activity("LIKE_COMMENT", {"comment_author_name": "张三", "comment_content": "李四的帖子不错"}))
+    line = _only_line(_activity("LIKE_COMMENT", {"comment_author_name": "张三", "comment_content": "李四的帖子不错"}),
+                      "zh")
     assert (line.action, line.target) == ("LIKED_COMMENT_OF", "张三")
 
-    line = _only_line(_activity("CREATE_COMMENT", {"post_content": "赵六的帖子「嵌套」", "content": "同意"}))
+    line = _only_line(_activity("CREATE_COMMENT", {"post_content": "赵六的帖子「嵌套」", "content": "同意"}), "zh")
     assert (line.action, line.target) == ("COMMENTED", None)
 
-    line = _only_line(_activity("CREATE_POST", {"content": "第一段\n\n第二段：「引用」"}, agent="Alice Chen"))
+    line = _only_line(_activity("CREATE_POST", {"content": "第一段\n\n第二段：「引用」"}, agent="Alice Chen"), "zh")
     assert line.agent == "Alice Chen"
     assert line.action == "POSTED"
     assert line.description.endswith("第二段：「引用」」")
+    assert line.is_signal
+
+    # The same shapes in an English record: "'s post" inside names, quoted
+    # content holding "'s post", colons, curly quotes and newlines.
+    tricky = "Wang Wu's post: “repost”\nsecond line: still the same post"
+    line = _only_line(_activity("LIKE_POST", {"post_author_name": "Zhang's post fan", "post_content": tricky},
+                                agent="Alice Chen"), "en")
+    assert (line.action, line.target, line.language) == ("LIKED_POST_OF", "Zhang's post fan", "en")
+
+    line = _only_line(_activity("LIKE_POST", {"post_author_name": "A Fish"}, agent="Alice Chen"), "en")
+    assert (line.action, line.target) == ("LIKED_POST_OF", "A Fish")
+
+    line = _only_line(_activity("LIKE_COMMENT", {"comment_author_name": "Zhang San",
+                                                 "comment_content": "Li Si's post is good"},
+                                agent="Alice Chen"), "en")
+    assert (line.action, line.target) == ("LIKED_COMMENT_OF", "Zhang San")
+
+    line = _only_line(_activity("CREATE_COMMENT", {"post_content": "Zhao Liu's post “nested”", "content": "Agreed"},
+                                agent="Alice Chen"), "en")
+    assert (line.action, line.target) == ("COMMENTED", None)
+
+    line = _only_line(_activity("CREATE_POST", {"content": "First paragraph\n\nsecond: “a quote”"},
+                                agent="Alice Chen"), "en")
+    assert line.agent == "Alice Chen"
+    assert line.action == "POSTED"
+    assert line.description.endswith("second: “a quote””")
     assert line.is_signal
 
 
@@ -677,26 +705,42 @@ def _node_episode_links(store, node_uuid: str) -> list[str]:
         return [r[0] for r in conn.execute("SELECT episode_uuid FROM node_episodes WHERE node_uuid = ?", (node_uuid,))]
 
 
-def test_rules_create_generic_account_hub_and_event_edge(local, seed):
+# (record language, account, post, account summary, hub summary, fact)
+GENERIC_CREATE_CASES = [
+    ("zh", "陈屿", POST, "陈屿是Twitter上的模拟账号。", "Twitter是模拟中使用的社交媒体平台。",
+     f"陈屿在Twitter发布了一条帖子：「{POST}」"),
+    ("en", "Alice Chen", EN_POST, "Alice Chen is a simulated account on Twitter.",
+     "Twitter is the social media platform used in the simulation.",
+     f"On Twitter, Alice Chen posted: “{EN_POST}”"),
+]
+
+
+@pytest.mark.parametrize(
+    "locale, agent, content, account_summary, hub_summary, fact", GENERIC_CREATE_CASES,
+    ids=[case[0] for case in GENERIC_CREATE_CASES],
+)
+def test_rules_create_generic_account_hub_and_event_edge(local, seed, locale, agent, content, account_summary,
+                                                         hub_summary, fact):
     seed.graph("g1")
-    episode_uuid, result = _add(local.store, "g1", [_activity("CREATE_POST", {"content": POST}, round_num=3)])
+    episode_uuid, result = _add(local.store, "g1", [_activity("CREATE_POST", {"content": content}, agent=agent,
+                                                              round_num=3)], locale=locale)
 
     assert result.extraction_status == "succeeded"
     assert (result.rules.lines, result.rules.nodes_created, result.rules.edges_created) == (1, 2, 1)
     nodes = _nodes(local.store)
-    account, hub = nodes["陈屿"], nodes["Twitter"]
+    account, hub = nodes[agent], nodes["Twitter"]
     for node in (account, hub):
         assert json.loads(node["labels_json"]) == ["Entity"]
         assert node["entity_type"] is None
         assert node["origin"] == "rules"
         assert _node_episode_links(local.store, node["uuid"]) == [episode_uuid]
-    assert account["summary"] == "陈屿是Twitter上的模拟账号。"
-    assert "Twitter" in hub["summary"]
+    assert account["summary"] == account_summary
+    assert hub["summary"] == hub_summary
 
     [edge] = _edges(local.store)
     assert edge["name"] == "POSTED"
-    assert (edge["source_name"], edge["target_name"]) == ("陈屿", "Twitter")
-    assert edge["fact"] == f"陈屿在Twitter发布了一条帖子：「{POST}」"
+    assert (edge["source_name"], edge["target_name"]) == (agent, "Twitter")
+    assert edge["fact"] == fact
     assert edge["origin"] == "rules"
     assert edge["valid_at"] == TS_UTC
     assert edge["invalid_at"] is None and edge["expired_at"] is None

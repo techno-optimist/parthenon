@@ -182,12 +182,12 @@ class SimulationIPCClient:
                     logger.info(f"收到IPC响应: command_id={command_id}, status={response.status.value}")
                     return response
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"解析响应失败: {e}")
+                    logger.warning(f"Could not parse the IPC response: {e}")
             
             time.sleep(poll_interval)
         
         # 超时
-        logger.error(f"等待IPC响应超时: command_id={command_id}")
+        logger.error(f"Timed out waiting for the IPC response: command_id={command_id}")
         if by_budget:
             time_budget.mark_spent()
         
@@ -197,7 +197,8 @@ class SimulationIPCClient:
         except OSError:
             pass
         
-        raise TimeoutError(f"等待命令响应超时 ({timeout}秒)")
+        # The interview routes pass these words on to the page (api.interviewTimeout).
+        raise TimeoutError(f"No answer to the command within {timeout} seconds")
     
     def send_interview(
         self,

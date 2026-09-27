@@ -20,7 +20,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.json_files import write_json_atomic
 from ..utils import pools
-from ..utils.locale import get_language_instruction, get_locale, set_locale, t
+from ..utils.locale import get_locale, language_instruction_for, normalize_lang, set_locale, t
 from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
 from ..utils.zep import (
     call_zep_read_with_retry,
@@ -29,13 +29,82 @@ from ..utils.zep import (
     is_retryable_zep_error,
     normalize_zep_search_query,
 )
+from .language_guard import ensure_language_many, foreign_script
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.oasis_profile')
 
 # Where a citizen is from when neither the model nor the rest of the crowd says:
-# every gathering is held in Athens. (MiroFish's default was China.)
+# every gathering is held in Athens. (MiroFish's default was China.) Written in
+# the gathering's record language.
 DEFAULT_COUNTRY = "Greece"
+DEFAULT_COUNTRIES = {"en": DEFAULT_COUNTRY, "zh": "希腊"}
+
+# Countries a model has named in Chinese, as an English record writes them
+# (the upstream prompt asked for Chinese country names).
+COUNTRY_NAMES_EN = {
+    "希腊": "Greece", "古希腊": "Ancient Greece", "雅典": "Athens", "斯巴达": "Sparta",
+    "普萨莫斯": "Psammos", "荷兰": "Netherlands", "埃及": "Egypt", "阿尔巴尼亚": "Albania",
+    "俄罗斯": "Russia", "美国": "United States", "中国": "China", "英国": "United Kingdom",
+    "法国": "France", "德国": "Germany", "意大利": "Italy", "日本": "Japan", "韩国": "South Korea",
+    "土耳其": "Turkey", "波斯": "Persia", "马其顿": "Macedonia", "罗马": "Rome", "西班牙": "Spain",
+}
+
+
+def profile_language(generator: Any = None, language: Optional[str] = None) -> str:
+    """The language profiles are written in: the one given, the generator's own, else the thread's."""
+
+    chosen = language or getattr(generator, "language", None)
+    return normalize_lang(chosen) if chosen else get_locale()
+
+
+def country_in(country: Any, lang: str) -> Optional[str]:
+    """A country as a record in ``lang`` writes it, or None when it cannot be.
+
+    A Chinese record keeps what the model wrote. An English one gets a
+    Chinese name in English (希腊 is Greece); a name still in another script
+    is None, and the crowd's country (or Greece) is given instead.
+    """
+
+    text = _coerce_to_str(country).strip().strip("「」“”\"' ")
+    if not text:
+        return None
+    if normalize_lang(lang) == "zh" or not foreign_script(text, lang):
+        return text
+    return COUNTRY_NAMES_EN.get(text)
+
+
+def display_names(names: Any, lang: str, *, llm: Any = None) -> Dict[str, str]:
+    """{name as the graph has it: name a reader of the record sees} for the names that need one.
+
+    A Chinese record shows every name as the graph has it (an empty map).
+    Any other record shows a name the graph has in Chinese in its usual form
+    in the record language (苏格拉底 is Socrates), all of them in one
+    translate-only call. A name that cannot be put in that language is left
+    out, and its caller gives the citizen a stand-in name.
+    """
+
+    lang = normalize_lang(lang)
+    wanted = list(dict.fromkeys(
+        name for name in (names or ()) if isinstance(name, str) and foreign_script(name, lang)
+    ))
+    if lang == "zh" or not wanted:
+        return {}
+    shown = ensure_language_many(wanted, lang, llm=llm, context="the names of a crowd's citizens")
+    found = {}
+    for name, text in zip(wanted, shown):
+        text = " ".join(text.split()) if isinstance(text, str) else ""
+        if text and not foreign_script(text, lang):
+            found[name] = text
+    return found
+
+
+def fallback_persona(entity_name: str, entity_type: str, lang: str) -> str:
+    """The persona of an entity nothing more is known about, in the record language."""
+
+    if normalize_lang(lang) == "zh":
+        return f"{entity_name}是一个{entity_type}。"
+    return f"{entity_name} is a {entity_type}."
 
 
 def _coerce_to_str(value: Any) -> str:
@@ -253,14 +322,20 @@ class OasisProfileGenerator:
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
         zep_api_key: Optional[str] = None,
-        graph_id: Optional[str] = None
+        graph_id: Optional[str] = None,
+        language: Optional[str] = None,
     ):
+        """``language`` is the gathering's record language: every field of
+        every profile is written in it. None means the thread's locale."""
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
-        
+        self.language = profile_language(language=language)
+        # Graph name -> the name the record shows ('' when none could be found).
+        self._shown_names: Dict[str, str] = {}
+
         if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
+            raise ValueError("LLM_API_KEY is not configured")
         
         self.client = OpenAI(
             api_key=self.api_key,
@@ -296,14 +371,14 @@ class OasisProfileGenerator:
             OasisAgentProfile
         """
         entity_type = entity.get_entity_type() or "Entity"
-        
-        # 基础信息
-        name = entity.name
+
+        # 基础信息: the name the record shows; the graph keeps its own (joined by the uuid)
+        name = self.shown_name(entity.name, user_id)
         user_name = self._generate_username(name)
-        
+
         # 构建上下文信息
         context = self._build_entity_context(entity)
-        
+
         if use_llm:
             # 使用LLM生成详细人设
             profile_data = self._generate_profile_with_llm(
@@ -311,7 +386,8 @@ class OasisProfileGenerator:
                 entity_type=entity_type,
                 entity_summary=entity.summary,
                 entity_attributes=entity.attributes,
-                context=context
+                context=context,
+                source_name=entity.name,
             )
         else:
             # 使用规则生成基础人设
@@ -322,6 +398,8 @@ class OasisProfileGenerator:
                 entity_attributes=entity.attributes
             )
         
+        profile_data = self._in_record_language(profile_data, name)
+
         return OasisAgentProfile(
             user_id=user_id,
             user_name=user_name,
@@ -342,6 +420,68 @@ class OasisProfileGenerator:
             source_entity_type=entity_type,
         )
     
+    def shown_name(self, name: str, user_id: int) -> str:
+        """The citizen's name as the record shows it: the graph's, in the record language.
+
+        A Chinese record, or a name with no Chinese in it, keeps the graph's
+        name. Otherwise the name is put in the record language once
+        (display_names) and reused by every card, the Symposium, the Web and
+        the Chronicle; "Citizen <id>" when it cannot be. The graph keeps its
+        own name: the profile's source_entity_uuid and the configuration's
+        entity_uuid join the two.
+        """
+
+        lang = profile_language(self)
+        if lang == "zh" or not foreign_script(name, lang):
+            return name
+        self._learn_names([name])
+        return self._known_names().get(name) or f"Citizen {user_id}"
+
+    def _known_names(self) -> Dict[str, str]:
+        return self.__dict__.setdefault("_shown_names", {})
+
+    def _learn_names(self, names: List[str]) -> None:
+        """Find the shown names of those not yet asked for, in one call."""
+
+        lang = profile_language(self)
+        known = self._known_names()
+        wanted = [name for name in dict.fromkeys(names)
+                  if isinstance(name, str) and name not in known and foreign_script(name, lang)]
+        if lang == "zh" or not wanted:
+            return
+        found = display_names(wanted, lang)
+        known.update({name: found.get(name, "") for name in wanted})
+
+    # The fields a profile shows or hands to its citizen (the name: shown_name).
+    RECORD_FIELDS = ("bio", "persona", "country", "profession")
+
+    def _in_record_language(self, data: Dict[str, Any], name: str) -> Dict[str, Any]:
+        """The profile's fields in the record language (the last-line guard).
+
+        A Chinese country name is put in English without a model call; any
+        other field still carrying Chinese for an English record is
+        translated, all in one call. A Chinese record is left as written.
+        """
+        lang = profile_language(self)
+        if lang == "zh" or not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if data.get("country"):
+            data["country"] = country_in(data["country"], lang) or data["country"]
+        fields = [key for key in self.RECORD_FIELDS if isinstance(data.get(key), str)]
+        topics = _coerce_to_str_list(data.get("interested_topics"))
+        texts = [data[key] for key in fields] + topics
+        if not any(foreign_script(text, lang) for text in texts):
+            return data
+        fixed = ensure_language_many(texts, lang, context=f"a citizen's profile ({name})")
+        for key, text in zip(fields, fixed):
+            data[key] = text
+        if topics:
+            data["interested_topics"] = [text for text in fixed[len(fields):] if text]
+        if data.get("country") and not country_in(data["country"], lang):
+            data["country"] = None  # the crowd's country is given when the profiles are saved
+        return data
+
     def _generate_username(self, name: str) -> str:
         """生成用户名"""
         # 移除特殊字符，转换为小写
@@ -383,8 +523,9 @@ class OasisProfileGenerator:
             logger.debug(f"跳过Zep检索：未设置graph_id")
             return results
         
+        # The memory is written in the record language: ask it in that language.
         comprehensive_query = normalize_zep_search_query(
-            t('progress.zepSearchQuery', name=entity_name)
+            t('progress.zepSearchQuery', locale=profile_language(self), name=entity_name)
         )
         
         def search_edges():
@@ -441,15 +582,15 @@ class OasisProfileGenerator:
                     if hasattr(node, 'summary') and node.summary:
                         all_summaries.add(node.summary)
                     if hasattr(node, 'name') and node.name and node.name != entity_name:
-                        all_summaries.add(f"相关实体: {node.name}")
+                        all_summaries.add(f"Related entity: {node.name}")
             results["node_summaries"] = list(all_summaries)
             
             # 构建综合上下文
             context_parts = []
             if results["facts"]:
-                context_parts.append("事实信息:\n" + "\n".join(f"- {f}" for f in results["facts"][:20]))
+                context_parts.append("Facts:\n" + "\n".join(f"- {f}" for f in results["facts"][:20]))
             if results["node_summaries"]:
-                context_parts.append("相关实体:\n" + "\n".join(f"- {s}" for s in results["node_summaries"][:10]))
+                context_parts.append("Related entities:\n" + "\n".join(f"- {s}" for s in results["node_summaries"][:10]))
             results["context"] = "\n\n".join(context_parts)
             
             logger.info(f"Zep混合检索完成: {entity_name}, 获取 {len(results['facts'])} 条事实, {len(results['node_summaries'])} 个相关节点")
@@ -479,7 +620,7 @@ class OasisProfileGenerator:
                 if value and str(value).strip():
                     attrs.append(f"- {key}: {value}")
             if attrs:
-                context_parts.append("### 实体属性\n" + "\n".join(attrs))
+                context_parts.append("### Entity attributes\n" + "\n".join(attrs))
         
         # 2. 添加相关边信息（事实/关系）
         existing_facts = set()
@@ -495,12 +636,12 @@ class OasisProfileGenerator:
                     existing_facts.add(fact)
                 elif edge_name:
                     if direction == "outgoing":
-                        relationships.append(f"- {entity.name} --[{edge_name}]--> (相关实体)")
+                        relationships.append(f"- {entity.name} --[{edge_name}]--> (a related entity)")
                     else:
-                        relationships.append(f"- (相关实体) --[{edge_name}]--> {entity.name}")
+                        relationships.append(f"- (a related entity) --[{edge_name}]--> {entity.name}")
             
             if relationships:
-                context_parts.append("### 相关事实和关系\n" + "\n".join(relationships))
+                context_parts.append("### Related facts and relationships\n" + "\n".join(relationships))
         
         # 3. 添加关联节点的详细信息
         if entity.related_nodes:
@@ -520,7 +661,7 @@ class OasisProfileGenerator:
                     related_info.append(f"- **{node_name}**{label_str}")
             
             if related_info:
-                context_parts.append("### 关联实体信息\n" + "\n".join(related_info))
+                context_parts.append("### Related entities\n" + "\n".join(related_info))
         
         # 4. 使用Zep混合检索获取更丰富的信息
         zep_results = self._search_zep_for_entity(entity)
@@ -529,10 +670,10 @@ class OasisProfileGenerator:
             # 去重：排除已存在的事实
             new_facts = [f for f in zep_results["facts"] if f not in existing_facts]
             if new_facts:
-                context_parts.append("### Zep检索到的事实信息\n" + "\n".join(f"- {f}" for f in new_facts[:15]))
+                context_parts.append("### Facts found in memory\n" + "\n".join(f"- {f}" for f in new_facts[:15]))
         
         if zep_results.get("node_summaries"):
-            context_parts.append("### Zep检索到的相关节点\n" + "\n".join(f"- {s}" for s in zep_results["node_summaries"][:10]))
+            context_parts.append("### Related nodes found in memory\n" + "\n".join(f"- {s}" for s in zep_results["node_summaries"][:10]))
         
         return "\n\n".join(context_parts)
     
@@ -550,7 +691,8 @@ class OasisProfileGenerator:
         entity_type: str,
         entity_summary: str,
         entity_attributes: Dict[str, Any],
-        context: str
+        context: str,
+        source_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         使用LLM生成非常详细的人设
@@ -558,17 +700,22 @@ class OasisProfileGenerator:
         根据实体类型区分：
         - 个人实体：生成具体的人物设定
         - 群体/机构实体：生成代表性账号设定
+
+        ``entity_name`` is the name the record shows; ``source_name`` the
+        graph's, when it differs (the context writes that one).
         """
         
         is_individual = self._is_individual_entity(entity_type)
         
         if is_individual:
             prompt = self._build_individual_persona_prompt(
-                entity_name, entity_type, entity_summary, entity_attributes, context
+                entity_name, entity_type, entity_summary, entity_attributes, context,
+                source_name=source_name,
             )
         else:
             prompt = self._build_group_persona_prompt(
-                entity_name, entity_type, entity_summary, entity_attributes, context
+                entity_name, entity_type, entity_summary, entity_attributes, context,
+                source_name=source_name,
             )
 
         # 尝试多次生成，直到成功或达到最大重试次数
@@ -605,7 +752,9 @@ class OasisProfileGenerator:
                     if "bio" not in result or not result["bio"]:
                         result["bio"] = entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}"
                     if "persona" not in result or not result["persona"]:
-                        result["persona"] = entity_summary or f"{entity_name}是一个{entity_type}。"
+                        result["persona"] = entity_summary or fallback_persona(
+                            entity_name, entity_type, profile_language(self)
+                        )
                     
                     return result
                     
@@ -702,7 +851,9 @@ class OasisProfileGenerator:
         persona_match = re.search(r'"persona"\s*:\s*"([^"]*)', content)  # 可能被截断
         
         bio = bio_match.group(1) if bio_match else (entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}")
-        persona = persona_match.group(1) if persona_match else (entity_summary or f"{entity_name}是一个{entity_type}。")
+        persona = persona_match.group(1) if persona_match else (
+            entity_summary or fallback_persona(entity_name, entity_type, profile_language(self))
+        )
         
         # 如果提取到了有意义的内容，标记为已修复
         if bio_match or persona_match:
@@ -717,62 +868,96 @@ class OasisProfileGenerator:
         logger.warning(f"JSON修复失败，返回基础结构")
         return {
             "bio": entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}",
-            "persona": entity_summary or f"{entity_name}是一个{entity_type}。"
+            "persona": entity_summary or fallback_persona(entity_name, entity_type, profile_language(self))
         }
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """获取系统提示词"""
-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。"
-        return f"{base_prompt}\n\n{get_language_instruction()}"
-    
+        base_prompt = (
+            "You are an expert in social media user profiles. Write detailed, realistic personas for an "
+            "opinion simulation, as close to the known facts as you can. Return valid JSON; no string value "
+            "may contain an unescaped line break."
+        )
+        return f"{base_prompt}\n\n{language_instruction_for(profile_language(self))}"
+
+    @staticmethod
+    def _language_rule(lang: str, gender_rule: str) -> str:
+        """The prompt's last rule: every written field in the record language, and why.
+
+        A Chinese record keeps names as the context writes them; any other
+        writes a Chinese name in its usual form (the entity's own as given
+        above), as the cards and the Chronicle show it.
+        """
+        names = ("keeping names as they are" if normalize_lang(lang) == "zh"
+                 else "writing a name the context gives in Chinese in its usual English form "
+                      "(the entity's own name exactly as given above)")
+        return (
+            "- Write bio, persona, country, profession and interested_topics in the gathering's language, "
+            f"translating anything the context quotes in another language and {names} "
+            f"({gender_rule}).\n"
+            f"- {language_instruction_for(lang)}"
+        )
+
+    @staticmethod
+    def _name_lines(entity_name: str, source_name: Optional[str]) -> str:
+        """The prompt's name, and the graph's when the record shows another."""
+        line = f"Entity name: {entity_name}"
+        if source_name and source_name != entity_name:
+            line += f"\nThe context writes this name as: {source_name}"
+        return line
+
     def _build_individual_persona_prompt(
         self,
         entity_name: str,
         entity_type: str,
         entity_summary: str,
         entity_attributes: Dict[str, Any],
-        context: str
+        context: str,
+        language: Optional[str] = None,
+        source_name: Optional[str] = None,
     ) -> str:
         """构建个人实体的详细人设提示词"""
         
-        attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
-        context_str = context[:3000] if context else "无额外上下文"
+        lang = profile_language(self, language)
+        home = DEFAULT_COUNTRIES[lang]
+        attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "none"
+        context_str = context[:3000] if context else "no further context"
         
-        return f"""为实体生成详细的社交媒体用户人设,最大程度还原已有现实情况。
+        return f"""Write a detailed social media persona for this entity, as close to the known facts as you can.
 
-实体名称: {entity_name}
-实体类型: {entity_type}
-实体摘要: {entity_summary}
-实体属性: {attrs_str}
+{OasisProfileGenerator._name_lines(entity_name, source_name)}
+Entity type: {entity_type}
+Entity summary: {entity_summary}
+Entity attributes: {attrs_str}
 
-上下文信息:
+Context:
 {context_str}
 
-请生成JSON，包含以下字段:
+Return JSON with these fields:
 
-1. bio: 社交媒体简介，200字
-2. persona: 详细人设描述（2000字的纯文本），需包含:
-   - 基本信息（年龄、职业、教育背景、所在地）
-   - 人物背景（重要经历、与事件的关联、社会关系）
-   - 性格特征（MBTI类型、核心性格、情绪表达方式）
-   - 社交媒体行为（发帖频率、内容偏好、互动风格、语言特点）
-   - 立场观点（对话题的态度、可能被激怒/感动的内容）
-   - 独特特征（口头禅、特殊经历、个人爱好）
-   - 个人记忆（人设的重要部分，要介绍这个个体与事件的关联，以及这个个体在事件中的已有动作与反应）
-3. age: 年龄数字（必须是整数）
-4. gender: 性别，必须是英文: "male" 或 "female"
-5. mbti: MBTI类型（如INTJ、ENFP等）
-6. country: 此人所属的国家或城邦，从实体信息与上下文推断（例如雅典的公民写"希腊"）；上下文没有说明时写"希腊"
-7. profession: 职业
-8. interested_topics: 感兴趣话题数组
+1. bio: the social media bio, about 200 characters
+2. persona: a detailed persona (plain text, about 2000 characters) covering:
+   - basic facts (age, occupation, education, where they live)
+   - background (important experiences, their tie to the events, their relationships)
+   - character (MBTI type, core temperament, how they show feeling)
+   - social media habits (how often they post, what they post, how they engage, how they speak)
+   - positions (their view of the question, what angers or moves them)
+   - particular traits (sayings, notable experiences, pastimes)
+   - personal memory (the heart of the persona: this person's tie to the events, and what they have already done and said in them)
+3. age: age as a whole number
+4. gender: in English, "male" or "female"
+5. mbti: MBTI type (e.g. INTJ, ENFP)
+6. country: the country or city-state this person belongs to, inferred from the entity and the context (a citizen of Athens: "{home}"); "{home}" when the context does not say
+7. profession: occupation
+8. interested_topics: an array of the topics they care about
 
-重要:
-- 所有字段值必须是字符串或数字，不要使用换行符
-- persona必须是一段连贯的文字描述
-- persona须写明此人发言从不使用#话题标签或@用户名，总是以本人身份平实地说话
-- {get_language_instruction()} (gender字段必须用英文male/female)
-- 内容要与实体信息保持一致
-- age必须是有效的整数，gender必须是"male"或"female"
+Important:
+- Every field value is a string or a number, with no line breaks
+- persona is one continuous description
+- persona says this person never uses #hashtags or @handles and always speaks plainly, as themselves
+- The content agrees with the entity information
+- age is a valid whole number; gender is "male" or "female"
+{OasisProfileGenerator._language_rule(lang, 'gender stays in English: male or female')}
 """
 
     def _build_group_persona_prompt(
@@ -781,48 +966,52 @@ class OasisProfileGenerator:
         entity_type: str,
         entity_summary: str,
         entity_attributes: Dict[str, Any],
-        context: str
+        context: str,
+        language: Optional[str] = None,
+        source_name: Optional[str] = None,
     ) -> str:
         """构建群体/机构实体的详细人设提示词"""
         
-        attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
-        context_str = context[:3000] if context else "无额外上下文"
+        lang = profile_language(self, language)
+        home = DEFAULT_COUNTRIES[lang]
+        attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "none"
+        context_str = context[:3000] if context else "no further context"
         
-        return f"""为机构/群体实体生成详细的社交媒体账号设定,最大程度还原已有现实情况。
+        return f"""Write a detailed social media account for this institution or group, as close to the known facts as you can.
 
-实体名称: {entity_name}
-实体类型: {entity_type}
-实体摘要: {entity_summary}
-实体属性: {attrs_str}
+{OasisProfileGenerator._name_lines(entity_name, source_name)}
+Entity type: {entity_type}
+Entity summary: {entity_summary}
+Entity attributes: {attrs_str}
 
-上下文信息:
+Context:
 {context_str}
 
-请生成JSON，包含以下字段:
+Return JSON with these fields:
 
-1. bio: 官方账号简介，200字，专业得体
-2. persona: 详细账号设定描述（2000字的纯文本），需包含:
-   - 机构基本信息（正式名称、机构性质、成立背景、主要职能）
-   - 账号定位（账号类型、目标受众、核心功能）
-   - 发言风格（语言特点、常用表达、禁忌话题）
-   - 发布内容特点（内容类型、发布频率、活跃时间段）
-   - 立场态度（对核心话题的官方立场、面对争议的处理方式）
-   - 特殊说明（代表的群体画像、运营习惯）
-   - 机构记忆（机构人设的重要部分，要介绍这个机构与事件的关联，以及这个机构在事件中的已有动作与反应）
-3. age: 固定填30（机构账号的虚拟年龄）
-4. gender: 固定填"other"（机构账号使用other表示非个人）
-5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
-6. country: 此机构所在的国家或城邦，从实体信息与上下文推断（例如雅典的机构写"希腊"）；上下文没有说明时写"希腊"
-7. profession: 机构职能描述
-8. interested_topics: 关注领域数组
+1. bio: the official account's bio, about 200 characters, professional and fitting
+2. persona: a detailed account description (plain text, about 2000 characters) covering:
+   - the institution (full name, what kind of body it is, how it came to be, what it does)
+   - the account (what kind of account, its audience, what it is for)
+   - its voice (how it speaks, what it often says, what it will not talk about)
+   - what it posts (kinds of posts, how often, when it is active)
+   - its positions (its official view of the question, how it handles controversy)
+   - particulars (who it speaks for, how it is run)
+   - institutional memory (the heart of the account: the institution's tie to the events, and what it has already done and said in them)
+3. age: always 30 (the account's nominal age)
+4. gender: always "other" (an institution is not a person)
+5. mbti: an MBTI type for the account's style, e.g. ISTJ for strict and conservative
+6. country: the country or city-state the institution is in, inferred from the entity and the context (an institution of Athens: "{home}"); "{home}" when the context does not say
+7. profession: what the institution does
+8. interested_topics: an array of the fields it follows
 
-重要:
-- 所有字段值必须是字符串或数字，不允许null值
-- persona必须是一段连贯的文字描述，不要使用换行符
-- persona须写明此账号发言从不使用#话题标签或@用户名，总是以本机构身份平实地说话
-- {get_language_instruction()} (gender字段必须用英文"other")
-- age必须是整数30，gender必须是字符串"other"
-- 机构账号发言要符合其身份定位"""
+Important:
+- Every field value is a string or a number; no null values
+- persona is one continuous description, with no line breaks
+- persona says this account never uses #hashtags or @handles and always speaks plainly, as the institution itself
+- age is the whole number 30; gender is the string "other"
+- The account speaks as fits its standing
+{OasisProfileGenerator._language_rule(lang, 'gender stays in English: "other"')}"""
     
     def _generate_profile_rule_based(
         self,
@@ -969,12 +1158,14 @@ class OasisProfileGenerator:
                 except Exception as e:
                     logger.warning(f"实时保存 profiles 失败: {e}")
         
-        # Capture locale before spawning thread pool workers
-        current_locale = get_locale()
+        # The workers write the record: in its language, not the asker's.
+        record_locale = profile_language(self)
+        # Every name the record shows, found in one call before the workers start.
+        self._learn_names([entity.name for entity in entities])
 
         def generate_single_profile(idx: int, entity: EntityNode) -> tuple:
             """生成单个profile的工作函数"""
-            set_locale(current_locale)
+            set_locale(record_locale)
             entity_type = entity.get_entity_type() or "Entity"
             
             try:
@@ -985,23 +1176,14 @@ class OasisProfileGenerator:
                 )
                 
                 # 实时输出生成的人设到控制台和日志
-                self._print_generated_profile(entity.name, entity_type, profile)
+                self._print_generated_profile(profile.name, entity_type, profile)
                 
                 return idx, profile, None
                 
             except Exception as e:
                 logger.error(f"生成实体 {entity.name} 的人设失败: {str(e)}")
                 # 创建一个基础profile
-                fallback_profile = OasisAgentProfile(
-                    user_id=idx,
-                    user_name=self._generate_username(entity.name),
-                    name=entity.name,
-                    bio=f"{entity_type}: {entity.name}",
-                    persona=entity.summary or f"A participant in social discussions.",
-                    source_entity_uuid=entity.uuid,
-                    source_entity_type=entity_type,
-                )
-                return idx, fallback_profile, str(e)
+                return idx, self._stand_in_profile(idx, entity, entity_type), str(e)
         
         logger.info(f"开始并行生成 {total} 个Agent人设（并行数: {parallel_count}）...")
         print(f"\n{'='*60}")
@@ -1042,7 +1224,8 @@ class OasisProfileGenerator:
                         progress_callback(
                             current, 
                             total, 
-                            t('progress.profileDone', current=current, total=total, name=entity.name, type=entity_type)
+                            t('progress.profileDone', current=current, total=total,
+                              name=profile.name if profile else entity.name, type=entity_type)
                         )
                     
                     if error:
@@ -1054,15 +1237,7 @@ class OasisProfileGenerator:
                     logger.error(f"处理实体 {entity.name} 时发生异常: {str(e)}")
                     with lock:
                         completed_count[0] += 1
-                    profiles[idx] = OasisAgentProfile(
-                        user_id=idx,
-                        user_name=self._generate_username(entity.name),
-                        name=entity.name,
-                        bio=f"{entity_type}: {entity.name}",
-                        persona=entity.summary or "A participant in social discussions.",
-                        source_entity_uuid=entity.uuid,
-                        source_entity_type=entity_type,
-                    )
+                    profiles[idx] = self._stand_in_profile(idx, entity, entity_type)
                     # 实时写入文件（即使是备用人设）
                     save_profiles_realtime()
         
@@ -1072,6 +1247,23 @@ class OasisProfileGenerator:
         
         return profiles
     
+    def _stand_in_profile(self, idx: int, entity: EntityNode, entity_type: str) -> OasisAgentProfile:
+        """The basic profile of a citizen whose own could not be written (its summary in the record language)."""
+        name = self.shown_name(entity.name, idx)
+        data = self._in_record_language({
+            "bio": f"{entity_type}: {name}",
+            "persona": entity.summary or "A participant in social discussions.",
+        }, name)
+        return OasisAgentProfile(
+            user_id=idx,
+            user_name=self._generate_username(name),
+            name=name,
+            bio=data["bio"],
+            persona=data["persona"],
+            source_entity_uuid=entity.uuid,
+            source_entity_type=entity_type,
+        )
+
     def _print_generated_profile(self, entity_name: str, entity_type: str, profile: OasisAgentProfile):
         """实时输出生成的人设到控制台（完整内容，不截断）"""
         separator = "-" * 70
@@ -1178,8 +1370,8 @@ class OasisProfileGenerator:
         logger.info(f"已保存 {len(profiles)} 个Twitter Profile到 {file_path} (OASIS CSV格式)")
     
     @staticmethod
-    def crowd_country(profiles: List[OasisAgentProfile]) -> str:
-        """The country most of the crowd gave, or Greece (the city is Athens)."""
+    def crowd_country(profiles: List[OasisAgentProfile], default: str = DEFAULT_COUNTRY) -> str:
+        """The country most of the crowd gave, or ``default`` (Greece: the city is Athens)."""
 
         counts: Dict[str, int] = {}
         for profile in profiles:
@@ -1187,7 +1379,7 @@ class OasisProfileGenerator:
             if country:
                 counts[country] = counts.get(country, 0) + 1
         if not counts:
-            return DEFAULT_COUNTRY
+            return default
         return max(counts.items(), key=lambda item: item[1])[0]
 
     def _normalize_gender(self, gender: Optional[str]) -> str:
@@ -1234,9 +1426,16 @@ class OasisProfileGenerator:
         - country: 国家
         """
         data = []
+        # A generator that knows its record language writes every country in
+        # it (希腊 is Greece in an English record); one made without that
+        # (only tests) keeps what the profiles say.
+        lang = getattr(self, "language", None)
+        if lang:
+            for profile in profiles:
+                profile.country = country_in(profile.country, lang)
         # OASIS tells each citizen where they are from; one the model left
         # without a country is from where the rest of the crowd is.
-        crowd_country = self.crowd_country(profiles)
+        crowd_country = self.crowd_country(profiles, DEFAULT_COUNTRIES.get(lang or "en", DEFAULT_COUNTRY))
         for idx, profile in enumerate(profiles):
             # 使用与 to_reddit_format() 一致的格式
             item = {

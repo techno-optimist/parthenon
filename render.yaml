@@ -59,6 +59,18 @@ services:
       # puts its own model in its place, so the fallback still works.
       - key: LOCAL_MEMORY_LLM_MODEL
         value: grok-4.20-0309-non-reasoning
+
+      # The language every gathering's record is written in (en or zh): the
+      # profiles, the memory, the Chronicle, the stances, the film. A visitor
+      # reading in Chinese still has the Chinese page and Chinese answers.
+      # deploy/start.py sets en on the public steps when this is left out.
+      - key: PARTHENON_RECORD_LANGUAGE
+        value: en
+      # The model the language guard translates stray foreign lines with
+      # (before a Chronicle, an answer or a record is saved). Empty: the app's
+      # own model. A Grok name passes through on the subscription.
+      - key: PARTHENON_TRANSLATE_MODEL
+        value: grok-4.20-0309-non-reasoning
       - key: OPENROUTER_API_KEY
         sync: false
       - key: XAI_API_KEY

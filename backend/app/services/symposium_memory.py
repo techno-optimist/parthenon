@@ -47,9 +47,10 @@ from ..memory import existing_local_memory_client
 from ..models.project import ProjectManager
 from ..utils import time_budget
 from ..utils.llm_client import LLMClient, LLMResponseError
-from ..utils.locale import known_language, language_instruction_for, t
+from ..utils.locale import language_instruction_for, normalize_lang, t
 from ..utils.logger import get_logger
 from . import citizen_portraits
+from . import language_guard
 from . import model_output
 from .citizen_portraits import (
     CJK_PATTERN,
@@ -143,9 +144,23 @@ LLM_TEMPERATURE = 0.6
 LLM_MAX_TOKENS = 4096
 
 MEMORY_ONLY_KEYS = ('question', 'history')
-# A copy of app.api.simulation.INTERVIEW_PROMPT_PREFIX (importing it would be
-# a cycle); tests pin the two equal.
-LIVE_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
+# Copies of app.api.simulation's live interview prefixes, English, Chinese
+# and the upstream Chinese older prompts carry (importing them would be a
+# cycle); tests pin them equal. A page's prompt may carry any: all are stripped.
+LIVE_PROMPT_PREFIX = (
+    "Drawing on your persona and all your past memories and actions, answer me directly in plain text, "
+    "without calling any tools. Answer in English, even if the question is in another language. "
+    + language_instruction_for('en') + "\n\n"
+)
+LIVE_PROMPT_PREFIX_ZH = (
+    "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我。"
+    "无论问题、人设或记忆使用何种语言，请始终用简体中文回答。"
+    + language_instruction_for('zh') + "\n\n"
+)
+LIVE_PROMPT_PREFIX_ZH_UPSTREAM = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
+LIVE_PROMPT_PREFIXES = tuple(sorted(
+    {LIVE_PROMPT_PREFIX, LIVE_PROMPT_PREFIX_ZH, LIVE_PROMPT_PREFIX_ZH_UPSTREAM}, key=len, reverse=True,
+))
 LEGACY_OPENING = 'Earlier in our conversation:\n'
 LEGACY_TURN = '\n\nNow my next question is: '
 
@@ -463,14 +478,17 @@ def _build_gathering(canonical: str, folder: str) -> Gathering:
     g.minutes_per_round = minutes if minutes else 60
     g.time_unit = {60: 'hour', 1440: 'day'}.get(g.minutes_per_round)
 
-    # 5-7. Language, the default square, the memory graph.
-    samples = [g.citizens[key]['persona'] for key in sorted(g.citizens)[:3]]
-    g.language = citizen_portraits.gathering_language(g.requirement, samples)
-    g.default_platform = 'reddit' if state.get('enable_reddit', True) is not False else 'twitter'
+    # 5-7. The memory graph, the default square, the record's language (the
+    # one stored on the project; a gathering older than that reads its
+    # question's, and the public steps' is PARTHENON_RECORD_LANGUAGE).
     graph_id = state.get('graph_id') or config.get('graph_id')
     g.graph_id = graph_id if isinstance(graph_id, str) and graph_id else None
     project_id = state.get('project_id')
     g.project_id = project_id if isinstance(project_id, str) and project_id else None
+    g.default_platform = 'reddit' if state.get('enable_reddit', True) is not False else 'twitter'
+    g.language = language_guard.record_language(
+        project_id=g.project_id, simulation_id=canonical, requirement=g.requirement or None,
+    )
 
     # 8. The one who had the floor.
     g.scroll_name = citizen_portraits.gathering_scroll_name(canonical)
@@ -588,7 +606,7 @@ def _build_gathering(canonical: str, folder: str) -> Gathering:
     # 13. The stance ledger, read only; turns in another language are hidden.
     reading = citizen_portraits.read_stances(canonical)
     if reading is not None:
-        lang = reading.get('lang') or citizen_portraits.gathering_language_of(canonical)
+        lang = reading.get('lang') or g.language
         for entry in citizen_portraits.hide_foreign_turns(reading.get('citizens') or [], lang):
             if isinstance(entry, dict):
                 agent_id = _agent_id(entry.get('agent_id'))
@@ -723,8 +741,10 @@ def split_conversation(prompt: Any) -> Tuple[str, List[Dict[str, str]]]:
     """(question, history) from the page's legacy prompt ('Earlier in our conversation: ...')."""
 
     text = prompt if isinstance(prompt, str) else ''
-    if text.startswith(LIVE_PROMPT_PREFIX):
-        text = text[len(LIVE_PROMPT_PREFIX):]
+    for prefix in LIVE_PROMPT_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
     if text.startswith(LEGACY_OPENING) and LEGACY_TURN in text:
         head, question = text.rsplit(LEGACY_TURN, 1)
         head = head[len(LEGACY_OPENING):]
@@ -822,11 +842,17 @@ def _zh_punctuation(text: str) -> str:
     return _ZH_PUNCT_RUN.sub(mark, text)
 
 
+_DOUBLE_DASH = re.compile(r'\s*\u2014\u2014\s*')
+
+
 def _undash(text: str, lang: Optional[str] = None) -> str:
-    """Dashes as commas: a hyphen in a number range, a Chinese comma beside Chinese words."""
+    """Dashes as commas: a hyphen in a number range, a Chinese comma beside Chinese words or in Chinese.
+
+    The doubled dash is Chinese's own, but in anything but Chinese it is an
+    English comma unless Chinese words stand on either side of it.
+    """
 
     text = _DIGIT_DASH.sub('-', text)
-    text = text.replace('\u2014\u2014', '，')
 
     def comma(match):
         before = match.string[match.start() - 1] if match.start() > 0 else ''
@@ -835,20 +861,23 @@ def _undash(text: str, lang: Optional[str] = None) -> str:
             return '，'
         return ', '
 
+    text = _DOUBLE_DASH.sub(comma, text)
     return _DASH.sub(comma, text)
 
 
 def city_words(text: str, g: Gathering) -> str:
     """A data block in the city's words: engine words outside quotes, tags and handles everywhere.
 
-    Dashes become commas too: a model echoes what it reads.
+    Dashes become commas too: a model echoes what it reads. The block is the
+    record's, so it is voiced in the record's language (never guessed from it).
     """
 
     if not text:
         return text
+    relabelled = observation_in_city_words(text, g.language)
     voiced, _notes = scribe_voice(
-        _undash(observation_in_city_words(text)), roster=g.roster, time_unit=g.time_unit,
-        question=g.requirement,
+        _undash(relabelled, g.language), roster=g.roster, time_unit=g.time_unit,
+        question=g.requirement, lang=g.language,
     )
     return _leftovers(voiced)
 
@@ -1203,7 +1232,8 @@ def memory_facts(graph_id: Any, entity_uuid: Any, limit: int = MEMORY_FACTS) -> 
             skipped['repeated'] += 1
             continue
         seen.add(key)
-        facts.append(observation_in_city_words(_plain(fact, FACT_CHARS)))
+        # Relabelled once, with the rest of its block, in the gathering's language (city_words).
+        facts.append(_plain(fact, FACT_CHARS))
         if len(facts) >= limit:
             break
     logger.info('Read the city memory: edges=%d kept=%d skipped_engine=%d skipped_invalid=%d skipped_other=%d',
@@ -1244,16 +1274,24 @@ def citizen_blocks(g: Gathering, agent_id: int, scale: float = 1.0) -> Dict[str,
 # ═══════════════════════════════════════════════════════════════
 
 def resolve_lang(lang: Any, g: Gathering) -> str:
-    """The language asked for, else the gathering's own (never the Accept-Language header)."""
+    """The reading language asked for ('en' or 'zh'), else the gathering's own (never the Accept-Language header)."""
 
-    return known_language(lang) or g.language
+    return normalize_lang(lang, default=None) or g.language
+
+
+# The record may hold words in another language (an older Chronicle quoted
+# citizens in Chinese): an English answer carries them over in English.
+QUOTE_IN_ENGLISH = (
+    'Answer in English, whatever language your notes are in: put into English any words from them '
+    'that you quote.'
+)
 
 
 def language_lines(lang: str) -> str:
     instruction = language_instruction_for(lang)
     if lang == 'zh':
         return f'{SYMPOSIUM_WORDS_ZH}\n{instruction}'
-    return instruction
+    return f'{QUOTE_IN_ENGLISH}\n{instruction}'
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1348,7 +1386,7 @@ NO_SCROLL = '(The scroll is not on the shelf tonight.)'
 # Every template text a model reads (tests hold them to the banned words).
 TEMPLATE_TEXTS = (
     CITIZEN_SYSTEM_PROMPT, SPEAKER_SYSTEM_PROMPT, NO_OWN_WORDS, NO_STANCE, NO_HEARD_SPEAKER,
-    NO_CHRONICLE, NO_MEMORY, NO_SCROLL, SYMPOSIUM_WORDS_ZH,
+    NO_CHRONICLE, NO_MEMORY, NO_SCROLL, SYMPOSIUM_WORDS_ZH, QUOTE_IN_ENGLISH,
     '(You did not speak in the Agora or the Stoa that night.)',
     "(No citizen's words to you or about you are written down.)",
     NO_STANCE_HISTORY, '(not written down)',
@@ -1428,8 +1466,12 @@ def scroll_text(g: Gathering, budget: int = SCROLL_CHARS) -> str:
 
 
 def _floor_names(g: Gathering) -> List[str]:
+    """The names the record calls the one who had the floor: the Chinese one only in a Chinese record
+    (in any other it marks words quoted in the wrong language)."""
+
     entry = g.floor_entry or {}
-    names = [entry.get('name'), entry.get('zh'), *(entry.get('aliases') or ())]
+    chinese = entry.get('zh') if g.language == 'zh' else None
+    names = [entry.get('name'), chinese, *(entry.get('aliases') or ())]
     if g.floor_agent_id is not None:
         names.append(_citizen_name(g, g.floor_agent_id))
     seen: List[str] = []
@@ -1483,7 +1525,9 @@ def chronicle_for(g: Gathering, report_id: Any = None) -> str:
     text = '\n\n'.join(taken)
     if not text:
         return ''
-    return scribe_voice(text, roster=g.roster, time_unit=g.time_unit, question=g.requirement)[0]
+    return scribe_voice(
+        text, roster=g.roster, time_unit=g.time_unit, question=g.requirement, lang=g.language,
+    )[0]
 
 
 def speaker_blocks(g: Gathering, report_id: Any = None, scale: float = 1.0) -> Dict[str, str]:
@@ -1774,8 +1818,25 @@ def _left_terms(text: str) -> Dict[str, int]:
     return left
 
 
-def tidy_answer(text: Any, g: Gathering, names=(), lang: Optional[str] = None) -> str:
-    """The answer as the page shows it: no tags, labels, headings, dashes or engine words; capped."""
+def _translator(seconds: Optional[float]) -> Any:
+    """The language guard's model, held to the time left (None: the guard's own default)."""
+
+    if seconds is None:
+        return None
+    try:
+        return _timed(language_guard.default_translator(), seconds)
+    except Exception:  # noqa: BLE001 - no model: the guard removes what it cannot translate
+        return None
+
+
+def tidy_answer(text: Any, g: Gathering, names=(), lang: Optional[str] = None,
+                seconds: Optional[float] = None) -> str:
+    """The answer as the page shows it: no tags, labels, headings, dashes or engine words; capped.
+
+    For a reader of anything but Chinese the last guard is the language
+    guard: lines still in Chinese, or set in its full-width punctuation, are
+    translated (within seconds, when given) or removed.
+    """
 
     text = text if isinstance(text, str) else ''
     # A small model's own call markup (<|tool_call_start|>[...], <function=...>) is not an answer.
@@ -1811,6 +1872,12 @@ def tidy_answer(text: Any, g: Gathering, names=(), lang: Optional[str] = None) -
         lang='zh' if lang == 'zh' else 'en' if lang == 'en' else None,
     )
     voiced = answer_words(voiced, g, lang)
+    if lang is not None and normalize_lang(lang) != 'zh' and language_guard.foreign_script(voiced, lang):
+        guarded = language_guard.ensure_language(
+            voiced, lang, llm=_translator(seconds), context='an answer spoken at the Symposium',
+        )
+        # A translation may bring its own dashes and engine words.
+        voiced = answer_words(_undash(guarded, lang), g, lang)
     left = _left_terms(voiced)
     if left:
         logger.info('A remembered answer kept words for the owner: %s',
@@ -1870,7 +1937,7 @@ def _answer_one(g: Gathering, llm: Any, agent_id: int, question: str, history: L
         if remaining < MIN_CALL_SECONDS or remaining <= 0:
             code = 'timed_out'
             return 'timed_out', None
-        answer = tidy_answer(ask(llm, messages, remaining), g, names, lang)
+        answer = tidy_answer(ask(llm, messages, remaining), g, names, lang, seconds=end - time.monotonic())
         code = None
         return None, answer
     except RecordError as error:
@@ -2007,7 +2074,10 @@ def answer_as_speaker(simulation_id: Any, *, question: str, history: List[Dict[s
                 code = 'timed_out'
                 raise AnswerTimedOut()
             try:
-                answer = tidy_answer(ask(llm, messages, seconds), g, names, lang)
+                answer = tidy_answer(
+                    ask(llm, messages, seconds), g, names, lang,
+                    seconds=SPEAKER_DEADLINE_SECONDS - (time.monotonic() - started),
+                )
             except RecordError as error:
                 code = error.code
                 raise

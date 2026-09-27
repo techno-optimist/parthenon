@@ -605,7 +605,115 @@ test('within one tie, a fact that says less than another is left out', () => {
 
 test('the squares are named in the fact\'s own language, and chatter counted in threads', () => {
   assert.equal(cityWords('On Twitter, Marina said: yes.'), 'In the Agora, Marina said: yes.')
-  assert.equal(cityWords('在 Twitter 上，玛丽娜说'), '在广场上，玛丽娜说')
+  // For a Chinese reader; an English reader is never handed the Chinese.
+  assert.equal(cityWords('在 Twitter 上，玛丽娜说', 'zh'), '在广场上，玛丽娜说')
+  assert.equal(cityWords('在 Twitter 上，玛丽娜说'), '')
   const m = buildWebModel(athens())
   assert.equal(m.chatterThreads, 3)
+})
+
+import { englishActivityLine } from './web.js'
+import { setVocabularyLocale } from './vocabulary.js'
+
+// The memory's Chinese activity lines (an older gathering's), as it wrote them.
+const zhAthens = () => ({
+  graph_id: 'g',
+  nodes: [
+    node('s', 'Socrates', 'Philosopher'),
+    node('c', 'Crito', 'Follower'),
+    node('p', 'Plato', 'Follower'),
+    { uuid: 't', name: 'Twitter', labels: ['Entity'], summary: 'Twitter是模拟中使用的社交媒体平台。' },
+    { uuid: 'k', name: 'Kallias', labels: ['Entity', '哲人'], summary: 'Kallias是Twitter上的模拟账号。' },
+    { uuid: 'z', name: 'Zeno', labels: ['Entity', 'Follower'], summary: '芝诺是一位来自埃利亚的哲人。' }
+  ],
+  edges: [
+    edge('c', 's', 'DEFENDS', 'Crito plans to bribe the guards so Socrates can escape.'),
+    edge('s', 't', 'POSTED', 'Socrates在Twitter发布了一条帖子：「Know thyself.」'),
+    edge('c', 'p', 'QUOTED', 'Crito在Twitter引用了Plato的帖子「He was the best of us.」，并评论道：「Truly.」'),
+    edge('p', 's', 'LIKED_POST_OF', 'Plato在Reddit点赞了Socrates的帖子：「我认识我自己」'),
+    edge('k', 's', 'FOLLOWS', 'Kallias在广场关注了用户「socrates_1」'),
+    edge('z', 's', 'SUPPORTS', '芝诺支持苏格拉底的主张。')
+  ]
+})
+
+test('the memory\'s Chinese activity lines read in its English words', () => {
+  assert.equal(englishActivityLine('Crito在Twitter发布了一条帖子：「I cannot stop weeping…」'), 'On Twitter, Crito posted: “I cannot stop weeping…”')
+  assert.equal(englishActivityLine('Renata Lindahl在Reddit评论道：「We appreciate it.」'), 'On Reddit, Renata Lindahl commented: “We appreciate it.”')
+  assert.equal(
+    englishActivityLine('Socrates在Twitter引用了Parents for Pencils的帖子「As the vote nears」，并评论道：「Ask why.」'),
+    'On Twitter, Socrates quoted Parents for Pencils\'s post “As the vote nears”, adding: “Ask why.”'
+  )
+  assert.equal(englishActivityLine('Plato在柱廊在Socrates的帖子「Know thyself」下评论道：「Indeed.」'), 'On Reddit, Plato commented on Socrates\'s post “Know thyself”: “Indeed.”')
+  assert.equal(englishActivityLine('Plato在Twitter踩了一条评论'), 'On Twitter, Plato disliked a comment')
+  assert.equal(englishActivityLine('Plato在Twitter执行了REFRESH操作'), 'On Twitter, Plato performed REFRESH')
+  assert.equal(englishActivityLine('Crito是Reddit上的模拟账号。'), 'Crito is a simulated account on Reddit.')
+  assert.equal(englishActivityLine('Twitter是模拟中使用的社交媒体平台。'), 'Twitter is the social media platform used in the simulation.')
+  assert.equal(englishActivityLine('苏格拉底在广场上质疑了雅典的法律'), '')
+  // In the city's words, as an English fact would read.
+  assert.equal(cityWords('Crito在Twitter发布了一条帖子：「I cannot stop weeping…」'), 'In the Agora, Crito said: “I cannot stop weeping…”')
+  assert.equal(cityWords('Plato在Twitter点赞了Socrates的帖子：「Know thyself.」'), 'In the Agora, Plato nodded to Socrates’s words: “Know thyself.”')
+  // What a citizen said in Chinese, or a line in no known shape, is left out.
+  assert.equal(cityWords('Crito在Twitter发布了一条帖子：「我无法停止哭泣」'), '')
+  assert.equal(cityWords('苏格拉底在广场上质疑了雅典的法律'), '')
+  // A Chinese reader keeps the fact as written, with the squares in Chinese.
+  assert.equal(cityWords('Crito在Twitter发布了一条帖子：「I cannot stop weeping…」', 'zh'), 'Crito在广场发布了一条帖子：「I cannot stop weeping…」')
+})
+
+test('Chinese activity is chatter, and an English reader of the Web meets no Chinese', () => {
+  assert.equal(isChatterEdge('POSTED', 'Socrates在Twitter发布了一条帖子：「Know thyself.」'), true)
+  assert.equal(isChatterEdge('LIKED_POST_OF', 'Plato在广场点赞了Socrates的帖子'), true)
+  assert.equal(isChatterEdge('SUPPORTS', 'Plato在Twitter点赞了Socrates的帖子'), false)
+  const m = buildWebModel(zhAthens())
+  // Quoting, nodding and following are the square's chatter, not the city's shape.
+  assert.equal(m.tieCount, 2)
+  assert.equal(m.chatterThreads, 3)
+  const han = /[\u3400-\u9fff]/
+  for (const n of m.nodes) {
+    assert.ok(!han.test(n.name + n.role + n.summary), `${n.name}: ${n.role} / ${n.summary}`)
+  }
+  for (const l of m.links) {
+    for (const tie of l.ties) {
+      assert.ok(!han.test(tie.word), tie.word)
+      for (const f of tie.facts) assert.ok(!han.test(f), f)
+    }
+  }
+  const crito = nodeDossier(m, 'c')
+  assert.deepEqual(crito.chatterFacts.map((f) => f.text), ['In the Agora, Crito quoted Plato “He was the best of us.”, adding: “Truly.”'])
+  // Plato's nod was said in Chinese: the tie's own words stand in for it.
+  const plato = nodeDossier(m, 'p')
+  assert.ok(plato.chatterFacts.some((f) => f.text === 'Plato nodded to Socrates.'))
+  assert.equal(m.nodes.find((n) => n.id === 'k').role, 'philosopher')
+  assert.equal(m.nodes.find((n) => n.id === 'k').summary, 'Kallias is a simulated account on the Agora.')
+  assert.equal(m.nodes.find((n) => n.id === 'z').summary, '')
+  // Zeno's tie was stated in Chinese; his side of it is still told in English.
+  const zeno = nodeDossier(m, 'z')
+  assert.deepEqual(zeno.facts.map((f) => f.text), ['Zeno supports Socrates.'])
+})
+
+test('a Chinese reader of the Web keeps the Chinese', () => {
+  setVocabularyLocale('zh')
+  try {
+    const m = buildWebModel(zhAthens())
+    assert.equal(m.nodes.find((n) => n.id === 'z').summary, '芝诺是一位来自埃利亚的哲人。')
+    const zeno = nodeDossier(m, 'z')
+    assert.deepEqual(zeno.facts.map((f) => f.text), ['芝诺支持苏格拉底的主张。'])
+  } finally {
+    setVocabularyLocale('en')
+  }
+})
+
+test('a Chinese activity line the memory cut short is still read in English', () => {
+  // The memory keeps a fact to a thousand characters, often ending mid-quotation.
+  assert.equal(
+    englishActivityLine('Gloria在Twitter引用了Curtis的帖子「Excited to see community support for evidence-based tools'),
+    'On Twitter, Gloria quoted Curtis\'s post “Excited to see community support for evidence-based tools…”'
+  )
+  assert.equal(
+    englishActivityLine('Gloria在Twitter引用了Curtis的帖子「The vote nears」，并评'),
+    'On Twitter, Gloria quoted Curtis\'s post “The vote nears”'
+  )
+  assert.equal(
+    englishActivityLine('Gloria在Twitter引用了Curtis的帖子「The vote nears」，并评论道：「We shall'),
+    'On Twitter, Gloria quoted Curtis\'s post “The vote nears”, adding: “We shall…”'
+  )
 })

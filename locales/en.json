@@ -23,7 +23,8 @@
     "minutes": "minutes",
     "rounds": "rounds",
     "items": "items",
-    "files": "files"
+    "files": "files",
+    "otherTongue": "The city gave its reason in another tongue."
   },
   "meta": {
     "title": "Parthenon",
@@ -645,7 +646,31 @@
       "ticketLost": "The city lost the thread of that question. Ask it again.",
       "manyQuestions": "Many questions are before the city at once. Ask again in a moment.",
       "gatheringInterrupted": "The gathering was interrupted before all its citizens arrived. The one who began it can call them again."
-    }
+    },
+    "simConfigMissingPrepare": "This simulation has no settings yet. Prepare it first.",
+    "simGraphIdRequired": "A graph_id is required when graph memory updates are on.",
+    "simUpdaterInitFailed": "The graph memory updater could not start: {error}",
+    "simScriptMissing": "The simulation script is missing: {path}",
+    "simGraphCleanupFailed": "Graph memory cleanup failed: {error}",
+    "simProcessEndFailed": "Could not end the simulation process: {error}",
+    "simLogCloseFailed": "Could not close the simulation log: {error}",
+    "simProcessExited": "The simulation process exited with code {code}.",
+    "simProcessExitedLog": "The simulation process exited with code {code}. Its last output: {log}",
+    "simGraphWriteIncomplete": "Graph memory writes did not finish: {error}",
+    "simNotRunning": "Simulation {id} is not running (status {status}).",
+    "simStopFailed": "The simulation could not be stopped.",
+    "simStopNotFinal": "Simulation {id} did not reach a stopped state (status {status}).",
+    "simEnvNotRunningInterview": "The simulation environment of {id} is not running or has closed, so no interview can be held.",
+    "simConfigNotFound": "Simulation settings not found: {id}",
+    "simNoAgents": "The settings of simulation {id} list no citizens.",
+    "simEnvAlreadyClosed": "The environment is already closed.",
+    "simEnvCloseSent": "The command to close the environment was sent.",
+    "simEnvCloseSentNoReply": "The command to close the environment was sent. No reply came in time, so it may still be closing.",
+    "simNothingToClean": "The simulation folder does not exist, so there is nothing to clean.",
+    "simDeleteFailed": "Could not delete {name}: {error}",
+    "simNoEntities": "No usable entities were found. Check that the graph was built correctly.",
+    "simUnsupportedPlatform": "Unsupported platform: {platform}",
+    "simRunInstructions": "1. Activate the conda environment: conda activate MiroFish\n2. Run the simulation (the scripts are in {scripts_dir}):\n   - Twitter only: python {scripts_dir}/run_twitter_simulation.py --config {config_path}\n   - Reddit only: python {scripts_dir}/run_reddit_simulation.py --config {config_path}\n   - Both platforms in parallel: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
   },
   "progress": {
     "initGraphService": "Initializing graph build service...",
@@ -710,7 +735,9 @@
     "preparingScripts": "Preparing Scripts",
     "profileDone": "Done {current}/{total}: {name} ({type})",
     "readingScroll": "The city reads the scroll...",
-    "scrollRead": "The scroll is read."
+    "scrollRead": "The scroll is read.",
+    "defaultTimeConfig": "Default daily rhythm (one hour per round)",
+    "defaultEventConfig": "Default event settings"
   },
   "log": {
     "preparingGoBack": "Preparing to return to Step 2, closing simulation...",

@@ -19,6 +19,7 @@ from PIL import Image
 from app import create_app
 from app.config import Config
 from app.services import chronicle_film as film
+from app.services import language_guard
 from app.services.report_agent import (
     Report,
     ReportManager,
@@ -26,6 +27,7 @@ from app.services.report_agent import (
     ReportSection,
     ReportStatus,
 )
+from app.utils.locale import language_instruction_for, set_locale
 
 
 FFMPEG = film.find_tool('ffmpeg')
@@ -180,6 +182,20 @@ class FakeLLM:
         return copy.deepcopy(self.screenplay)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_translator(monkeypatch):
+    """The language guard never reaches the real model, nor a configured record language."""
+
+    def refuse():
+        raise AssertionError('tests never reach the real model')
+
+    language_guard.clear_cache()
+    monkeypatch.delenv('PARTHENON_RECORD_LANGUAGE', raising=False)
+    monkeypatch.setattr(language_guard, 'default_translator', refuse)
+    yield
+    language_guard.clear_cache()
+
+
 @pytest.fixture
 def reports_dir(tmp_path, monkeypatch):
     folder = tmp_path / 'reports'
@@ -189,7 +205,7 @@ def reports_dir(tmp_path, monkeypatch):
         film._active_jobs.clear()
 
 
-def _save_report(report_id=REPORT_ID, status=ReportStatus.COMPLETED):
+def _save_report(report_id=REPORT_ID, status=ReportStatus.COMPLETED, language=None):
     report = Report(
         report_id=report_id,
         simulation_id='sim_test',
@@ -203,6 +219,7 @@ def _save_report(report_id=REPORT_ID, status=ReportStatus.COMPLETED):
         ),
         markdown_content='# The Marble Question\n\nIctinus argued for marble; the farmers for bread.',
         created_at='2026-09-25T10:00:00',
+        language=language,
     )
     ReportManager.save_report(report)
     return report
@@ -366,6 +383,70 @@ def test_screenplay_prompt_carries_chronicle_and_language():
     assert 'exactly 6 shots' in user and 'Please respond in English.' in user
 
 
+def test_screenplay_prompt_defaults_to_the_chronicles_language():
+    report = Report(
+        report_id=REPORT_ID, simulation_id='sim', graph_id='g',
+        simulation_requirement='Should the city rebuild?', status=ReportStatus.COMPLETED,
+        markdown_content='# Chronicle', language='zh',
+    )
+    set_locale('en')  # whoever pressed Film read in English
+    user = film.build_screenplay_messages(report)[1]['content']
+    assert language_instruction_for('zh') in user and language_instruction_for('en') not in user
+
+
+class TranslatingLLM:
+    """A translate-only model for the language guard."""
+
+    TABLE = {'雅典的神庙': 'The Temple of Athens', '雅典人投票重建神庙。': 'The Athenians vote to rebuild the temple.'}
+
+    def __init__(self):
+        self.calls = []
+
+    def chat_json(self, messages, temperature=None, max_tokens=None):
+        lines = json.loads(messages[-1]['content'])['lines']
+        self.calls.append(lines)
+        return {'lines': [self.TABLE.get(line, line) for line in lines]}
+
+
+def test_the_viewer_hears_and_reads_the_films_language():
+    data = copy.deepcopy(SCREENPLAY)
+    data['title'] = '雅典的神庙'
+    data['shots'][2]['narration'] = '雅典人投票重建神庙。'
+    screenplay = film.normalise_screenplay(data)
+    llm = TranslatingLLM()
+
+    english = film.screenplay_in_language(screenplay, 'en', llm=llm)
+
+    assert english['title'] == 'The Temple of Athens'
+    shot = english['shots'][2]
+    assert shot['narration'] == shot['caption'] == 'The Athenians vote to rebuild the temple.'
+    assert shot['duration'] >= film.MIN_SHOT_SECONDS
+    assert english['shots'][0] is screenplay['shots'][0]  # a clean shot is left as it was
+    assert len(llm.calls) == 1  # one call for every line that needed it
+    # A Chinese film keeps its Chinese, and a clean screenplay costs no call.
+    assert film.screenplay_in_language(screenplay, 'zh', llm=llm) is screenplay
+    assert film.screenplay_in_language(english, 'en', llm=llm) is english and len(llm.calls) == 1
+
+
+def test_a_shot_whose_narration_cannot_be_put_in_the_films_language_is_dropped():
+    data = copy.deepcopy(SCREENPLAY)
+    data['shots'][1]['narration'] = '雅典人沉默。'
+    screenplay = film.normalise_screenplay(data)
+
+    english = film.screenplay_in_language(screenplay, 'en')  # the translator refuses: Chinese is removed
+
+    assert len(english['shots']) == 3
+    assert all(not language_guard.HAN_RE.search(shot['narration']) for shot in english['shots'])
+
+
+def test_the_film_is_made_in_the_chronicles_language_by_default(reports_dir):
+    set_locale('en')
+    maker = film.ChronicleFilmMaker(_save_report(language='zh'), bridge=object(), llm=FakeLLM())
+    assert (maker.locale, maker.language, maker.snapshot()['lang']) == ('zh', 'zh', 'zh')
+    english = film.ChronicleFilmMaker(_save_report('report_english0001'), bridge=object(), llm=FakeLLM())
+    assert english.locale == 'en' and english.snapshot()['lang'] == 'en'
+
+
 def test_image_prompt_repeats_cast_appearance_and_style():
     screenplay = film.normalise_screenplay(copy.deepcopy(SCREENPLAY))
     second = film.compose_image_prompt(screenplay['shots'][1], screenplay)
@@ -488,6 +569,7 @@ def test_full_pipeline_produces_film_poster_and_captions(reports_dir, media):
     assert manifest['status'] == 'completed', manifest['error']
     assert manifest['stage'] == 'done' and manifest['progress'] == 100
     assert manifest['title'] == 'The Marble Question' and manifest['voice'] == 'eve'
+    assert manifest['lang'] == 'en'
     assert [shot['status'] for shot in manifest['shots']] == ['done'] * 4
     assert [shot['thumb'] for shot in manifest['shots']] == [f'shot_{n:02d}.jpg' for n in range(1, 5)]
     assert manifest['shots'][0]['narration'] == 'Athens, at dawn. A city asks what its temple is worth.'

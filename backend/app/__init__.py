@@ -213,7 +213,10 @@ def create_app(config_class=Config):
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')
     app.register_blueprint(parthenon_bp, url_prefix='/api/parthenon')
-    
+    # The mend: records written in the wrong language, put right (the keepers' in public).
+    from .api.mend import mend_bp
+    app.register_blueprint(mend_bp, url_prefix='/api/parthenon/mend')
+
     # 健康检查
     @app.route('/health')
     def health():

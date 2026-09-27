@@ -11,6 +11,7 @@ field or query parameter, else Accept-Language, else English. The words
 live in locales/*.json under api.public.
 """
 
+import re
 from typing import Optional
 
 from flask import jsonify, request
@@ -28,6 +29,8 @@ NOT_YOURS = 'not_yours'
 NOT_ON_PUBLIC_STEPS = 'not_on_public_steps'
 INVITE_NEEDED = 'invite_needed'
 TICKET_LOST = 'ticket_lost'
+
+_CHINESE = re.compile('[\u4e00-\u9fff]')
 
 
 def _language_of(value) -> Optional[str]:
@@ -69,10 +72,9 @@ def header_language(header: Optional[str]) -> str:
 def settle_request_language() -> None:
     """Read a browser's own Accept-Language as the city's code, for the whole request.
 
-    The backend's t() takes the header as an exact locale code and falls
-    back to Chinese, so 'en-US' was answered in Chinese. On the public steps
-    the header becomes 'en' or 'zh' before any view reads it (the page itself
-    already sends one of the two).
+    A view reads the header through t() or on its own; on the public steps
+    it becomes 'en' or 'zh' before any view reads it, so every reader agrees
+    (the page itself already sends one of the two).
     """
 
     header = request.headers.get('Accept-Language')
@@ -81,12 +83,18 @@ def settle_request_language() -> None:
         request.environ['HTTP_ACCEPT_LANGUAGE'] = code
 
 
+def has_chinese(text) -> bool:
+    """Whether text holds a Chinese character."""
+
+    return isinstance(text, str) and _CHINESE.search(text) is not None
+
+
 def in_other_language(text: str, lang: str) -> bool:
     """Whether a message is plainly not in the visitor's language (Chinese for 'en', no Chinese for 'zh')."""
 
     if not isinstance(text, str) or not text.strip():
         return False
-    chinese = any('\u4e00' <= ch <= '\u9fff' for ch in text)
+    chinese = has_chinese(text)
     if lang == 'zh':
         return not chinese and any(ch.isalpha() for ch in text)
     return chinese

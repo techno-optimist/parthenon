@@ -272,7 +272,7 @@ class IPCHandler:
                     print(f"  警告: 无法获取Agent {agent_id}: {e}")
             
             if not actions:
-                self.send_response(command_id, "failed", error="没有有效的Agent")
+                self.send_response(command_id, "failed", error="No valid agent")
                 return False
             
             # 执行批量Interview
@@ -374,11 +374,11 @@ class IPCHandler:
             
         elif command_type == CommandType.CLOSE_ENV:
             print("收到关闭环境命令")
-            self.send_response(command_id, "completed", result={"message": "环境即将关闭"})
+            self.send_response(command_id, "completed", result={"message": "The environment is closing"})
             return False
         
         else:
-            self.send_response(command_id, "failed", error=f"未知命令类型: {command_type}")
+            self.send_response(command_id, "failed", error=f"Unknown command type: {command_type}")
             return True
 
 

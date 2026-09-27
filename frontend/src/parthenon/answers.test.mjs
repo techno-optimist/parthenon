@@ -164,3 +164,10 @@ test('canQuestion and isRemembering', () => {
     assert.equal(isRemembering(state, ready), remembering, `isRemembering ${state} ${ready}`)
   }
 })
+
+test('a remembered error the visitor cannot read gives way to the room\'s own words', () => {
+  const data = { from_memory: true, result: { results: { reddit_5: { agent_id: 5, response: '', error: '弗罗索没有回答。' } } } }
+  assert.equal(answerFrom(data, 5).error, '')
+  const err = { response: { data: { from_memory: true, error: '记忆尚未准备好' } } }
+  assert.equal(troubleFrom(err, 'Try again.'), 'Try again.')
+})

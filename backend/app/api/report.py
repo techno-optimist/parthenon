@@ -11,14 +11,15 @@ from flask import request, jsonify, send_file
 from . import report_bp
 from ..config import Config
 from .. import public
-from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
+from ..services.language_guard import record_language
+from ..services.report_agent import ReportAgent, ReportManager, ReportStatus, chronicle_language
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..models.project import ProjectManager, ProjectStatus
 from ..models.task import TaskManager, TaskStatus
 from ..utils.logger import get_logger
-from ..utils.locale import t, get_locale, set_locale
+from ..utils.locale import t, get_locale, normalize_lang, set_locale
 from ..utils.zep_lifecycle import (
     graph_lifecycle_lock,
     register_graph_reader,
@@ -26,6 +27,18 @@ from ..utils.zep_lifecycle import (
 )
 
 logger = get_logger('mirofish.api.report')
+
+
+def _chronicle_record(report):
+    """A report's to_dict() with the language its Chronicle is written in.
+
+    language is 'en' or 'zh': the one stored with the Chronicle, else (for one
+    begun before it was stored) its gathering's record language. The page can
+    tell a visitor reading in another language which one the record is in.
+    """
+    data = report.to_dict()
+    data['language'] = chronicle_language(report)
+    return data
 
 
 # ============== 报告生成接口 ==============
@@ -240,23 +253,31 @@ def generate_report():
                     "report_id": report_id
                 }
             )
-            current_locale = get_locale()
+            # The Chronicle is written in the gathering's record language, not
+            # in the language of whoever asked for it; the task's own words
+            # (starting, failed) are for the one watching it, in theirs.
+            viewer_locale = get_locale()
+            record_locale = record_language(
+                project_id=refreshed_project.project_id,
+                requirement=simulation_requirement,
+            )
             register_graph_reader(graph_id, report_id)
 
             def run_generate():
-                set_locale(current_locale)
+                set_locale(record_locale)
                 try:
                     task_manager.update_task(
                         task_id,
                         status=TaskStatus.PROCESSING,
                         progress=0,
-                        message=t('api.initReportAgent')
+                        message=t('api.initReportAgent', locale=viewer_locale)
                     )
 
                     agent = ReportAgent(
                         graph_id=graph_id,
                         simulation_id=simulation_id,
-                        simulation_requirement=simulation_requirement
+                        simulation_requirement=simulation_requirement,
+                        language=record_locale,
                     )
 
                     def progress_callback(stage, progress, message):
@@ -284,7 +305,7 @@ def generate_report():
                     else:
                         task_manager.fail_task(
                             task_id,
-                            report.error or t('api.reportGenerateFailed')
+                            report.error or t('api.reportGenerateFailed', locale=viewer_locale)
                         )
                 except Exception as e:
                     logger.error(f"报告生成失败: {str(e)}")
@@ -410,7 +431,8 @@ def get_report(report_id: str):
                 "outline": {...},
                 "markdown_content": "...",
                 "created_at": "...",
-                "completed_at": "..."
+                "completed_at": "...",
+                "language": "en"            // the language the Chronicle is written in: en | zh
             }
         }
     """
@@ -425,7 +447,7 @@ def get_report(report_id: str):
         
         return jsonify({
             "success": True,
-            "data": report.to_dict()
+            "data": _chronicle_record(report)
         })
         
     except Exception as e:
@@ -463,7 +485,7 @@ def get_report_by_simulation(simulation_id: str):
         
         return jsonify({
             "success": True,
-            "data": report.to_dict(),
+            "data": _chronicle_record(report),
             "has_report": True
         })
         
@@ -511,7 +533,7 @@ def list_reports():
         
         return jsonify({
             "success": True,
-            "data": [r.to_dict() for r in reports],
+            "data": [_chronicle_record(r) for r in reports],
             "count": len(reports)
         })
         
@@ -612,7 +634,8 @@ def chat_with_report_agent():
             "chat_history": [                   // 可选，对话历史
                 {"role": "user", "content": "..."},
                 {"role": "assistant", "content": "..."}
-            ]
+            ],
+            "lang": "en"                         // optional: the visitor's language (else Accept-Language)
         }
     
     返回：
@@ -669,6 +692,9 @@ def chat_with_report_agent():
             }), 400
         
         simulation_requirement = project.simulation_requirement or ""
+        # The Scribe answers a visitor in the visitor's language (the page's
+        # lang, else Accept-Language), whatever language the Chronicle is in.
+        viewer_lang = normalize_lang(data.get('lang'), default=None) or get_locale()
         
         # 创建Agent并进行对话
         agent = ReportAgent(
@@ -677,7 +703,7 @@ def chat_with_report_agent():
             simulation_requirement=simulation_requirement
         )
         
-        result = agent.chat(message=message, chat_history=chat_history)
+        result = agent.chat(message=message, chat_history=chat_history, lang=viewer_lang)
         
         return jsonify({
             "success": True,
@@ -774,7 +800,8 @@ def get_report_sections(report_id: str):
                 "report_id": report_id,
                 "sections": sections,
                 "total_sections": len(sections),
-                "is_complete": is_complete
+                "is_complete": is_complete,
+                "language": chronicle_language(report) if report is not None else None,
             }
         })
         

@@ -831,7 +831,7 @@ def test_stop_during_a_start_in_progress_waits_then_stops_the_started_run(
     monkeypatch.setattr(
         manager,
         "create_updater",
-        classmethod(lambda _cls, sid, _gid: updaters.setdefault(sid, object())),
+        classmethod(lambda _cls, sid, _gid, locale=None, accounts=None: updaters.setdefault(sid, object())),
     )
     monkeypatch.setattr(
         manager, "get_updater", classmethod(lambda _cls, sid: updaters.get(sid))
@@ -884,6 +884,30 @@ def test_stop_during_a_start_in_progress_waits_then_stops_the_started_run(
     assert drained == ["stopping"]
     assert _persisted_run_status(sim_env.root)["runner_status"] == "stopped"
     assert SimulationRunner._graph_memory_enabled.get(SIM_ID) is None
+
+
+def test_the_memory_updater_keeps_each_citizen_on_its_graph_node(sim_env, monkeypatch):
+    # An English record shows 苏格拉底 as "Socrates": the updater is told his node.
+    sim_dir = _write_prepared_simulation(sim_env.root)
+    config = json.loads((sim_dir / "simulation_config.json").read_text(encoding="utf-8"))
+    config["agent_configs"] = [
+        {"agent_id": 0, "entity_uuid": "node-socrates", "entity_name": "Socrates"},
+        {"agent_id": 1, "entity_uuid": "", "entity_name": "Crito"},
+    ]
+    (sim_dir / "simulation_config.json").write_text(json.dumps(config), encoding="utf-8")
+    created = {}
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "create_updater",
+        classmethod(lambda _cls, sid, _gid, locale=None, accounts=None: created.setdefault(sid, accounts)),
+    )
+
+    run = SimulationRunner.start_simulation(
+        SIM_ID, platform="parallel", enable_graph_memory_update=True, graph_id="graph_1"
+    )
+
+    assert run.runner_status == RunnerStatus.RUNNING
+    assert created == {SIM_ID: {"Socrates": "node-socrates"}}
 
 
 def test_stop_refuses_when_a_start_stays_in_progress(sim_env, monkeypatch):

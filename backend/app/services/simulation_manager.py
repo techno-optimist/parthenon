@@ -19,7 +19,8 @@ from ..utils import pools
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
-from ..utils.locale import get_locale, t
+from ..utils.locale import t
+from .language_guard import record_language
 
 logger = get_logger('mirofish.simulation')
 
@@ -302,8 +303,13 @@ class SimulationManager:
         """
         state = self._load_simulation_state(simulation_id)
         if not state:
-            raise ValueError(f"模拟不存在: {simulation_id}")
-        
+            raise ValueError(t('api.simulationNotFound', id=simulation_id))
+
+        # The profiles, the settings and any note on the state are part of the
+        # record: written in the gathering's record language, whoever asked.
+        # (The progress messages are the asker's, in the thread's locale.)
+        lang = record_language(simulation_id=simulation_id, requirement=simulation_requirement)
+
         try:
             state.status = SimulationStatus.PREPARING
             state.error = None
@@ -346,7 +352,7 @@ class SimulationManager:
             
             if filtered.filtered_count == 0:
                 state.status = SimulationStatus.FAILED
-                state.error = "没有找到符合条件的实体，请检查图谱是否正确构建"
+                state.error = t('api.simNoEntities', locale=lang)
                 self._save_simulation_state(state)
                 raise ValueError(state.error)
             
@@ -362,7 +368,7 @@ class SimulationManager:
                 )
             
             # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
-            generator = OasisProfileGenerator(graph_id=state.graph_id)
+            generator = OasisProfileGenerator(graph_id=state.graph_id, language=lang)
             
             def profile_progress(current, total, msg):
                 if progress_callback:
@@ -459,7 +465,10 @@ class SimulationManager:
                 document_text=document_text,
                 entities=filtered.entities,
                 enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_reddit=state.enable_reddit,
+                language=lang,
+                # The configuration names each citizen as its profile does.
+                agent_names={p.user_id: p.name for p in profiles if p is not None},
             )
             
             if progress_callback:
@@ -501,7 +510,7 @@ class SimulationManager:
         except pools.Interrupted:
             # The public steps are stopping (utils/pools.py): said calmly, and
             # the owner's page prepares again when it is next opened.
-            note = interrupted_preparation_note(get_locale())
+            note = interrupted_preparation_note(lang)
             logger.warning(f"模拟准备被中断（进程正在停止）: {simulation_id}")
             state.status = SimulationStatus.FAILED
             state.error = note
@@ -534,14 +543,14 @@ class SimulationManager:
         already written are left for _check_simulation_prepared to call ready;
         one with a live preparation task (is_live) is left alone. The note in
         ``error`` says what happened in the city's words; the owner's page
-        prepares again when it is opened. Returns the IDs marked failed; a
+        prepares again when it is opened. The note is in each gathering's
+        record language unless one is given. Returns the IDs marked failed; a
         failure on one simulation is logged and does not stop the scan.
         """
 
         root = self.SIMULATION_DATA_DIR
         if not os.path.isdir(root):
             return []
-        note = note or interrupted_preparation_note()
         marked = []
         for simulation_id in sorted(os.listdir(root)):
             state_file = os.path.join(root, simulation_id, "state.json")
@@ -558,7 +567,7 @@ class SimulationManager:
                 if state is None or state.status != SimulationStatus.PREPARING:
                     continue
                 state.status = SimulationStatus.FAILED
-                state.error = note
+                state.error = note or interrupted_preparation_note(record_language(simulation_id=simulation_id))
                 self._save_simulation_state(state)
                 marked.append(simulation_id)
             except Exception as error:
@@ -591,13 +600,13 @@ class SimulationManager:
         """获取模拟的Agent Profile"""
         state = self._load_simulation_state(simulation_id)
         if not state:
-            raise ValueError(f"模拟不存在: {simulation_id}")
+            raise ValueError(t('api.simulationNotFound', id=simulation_id))
 
         if platform is None:
             platform = state.get_default_platform()
 
         if platform not in {"twitter", "reddit"}:
-            raise ValueError(f"不支持的平台: {platform}")
+            raise ValueError(t('api.simUnsupportedPlatform', platform=platform))
 
         sim_dir = self._get_simulation_dir(simulation_id)
         profile_path = os.path.join(
@@ -643,11 +652,5 @@ class SimulationManager:
                 "reddit": f"python {scripts_dir}/run_reddit_simulation.py --config {config_path}",
                 "parallel": f"python {scripts_dir}/run_parallel_simulation.py --config {config_path}",
             },
-            "instructions": (
-                f"1. 激活conda环境: conda activate MiroFish\n"
-                f"2. 运行模拟 (脚本位于 {scripts_dir}):\n"
-                f"   - 单独运行Twitter: python {scripts_dir}/run_twitter_simulation.py --config {config_path}\n"
-                f"   - 单独运行Reddit: python {scripts_dir}/run_reddit_simulation.py --config {config_path}\n"
-                f"   - 并行运行双平台: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
-            )
+            "instructions": t('api.simRunInstructions', scripts_dir=scripts_dir, config_path=config_path),
         }

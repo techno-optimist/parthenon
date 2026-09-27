@@ -27,10 +27,12 @@ from app.config import Config
 from app.models.project import ProjectManager
 from app.services import citizen_portraits as portraits
 from app.services import floor
+from app.services import language_guard
 from app.services import symposium_memory as sm
 from app.services.report_agent import SCRIBE_BANNED, ReportManager
 from app.services.simulation_manager import SimulationManager
 from app.services.simulation_runner import SimulationRunner
+from app.utils.locale import language_instruction_for
 
 
 SIM = 'sim_0123456789ab'
@@ -389,6 +391,34 @@ def llm(monkeypatch):
     fake = FakeLLM()
     monkeypatch.setattr(sm, '_make_llm', lambda: fake)
     return fake
+
+
+class FakeTranslator:
+    """language_guard's model: the table's translation of each line (else the line); records every call."""
+
+    def __init__(self):
+        self.table = {}
+        self.error = None
+        self.calls = []
+
+    def chat_json(self, messages, **_kwargs):
+        lines = json.loads(messages[-1]['content'])['lines']
+        self.calls.append(lines)
+        if self.error is not None:
+            raise self.error
+        return {'lines': [self.table.get(line, line) for line in lines]}
+
+
+@pytest.fixture(autouse=True)
+def translator(monkeypatch):
+    """No test reaches a real model through the language guard; the record language is never configured."""
+
+    fake = FakeTranslator()
+    monkeypatch.setattr(language_guard, 'default_translator', lambda: fake)
+    monkeypatch.delenv(language_guard.RECORD_LANGUAGE_ENV, raising=False)
+    language_guard.clear_cache()
+    yield fake
+    language_guard.clear_cache()
 
 
 @pytest.fixture
@@ -760,7 +790,7 @@ def _no_memory(monkeypatch):
 
 
 def test_alive_batch_goes_to_the_live_run_unchanged(client, monkeypatch):
-    from app.api.simulation import INTERVIEW_PROMPT_PREFIX
+    from app.api.simulation import INTERVIEW_PROMPT_PREFIX_ZH
 
     make_sand_gathering()
     _no_memory(monkeypatch)
@@ -778,9 +808,10 @@ def test_alive_batch_goes_to_the_live_run_unchanged(client, monkeypatch):
     }, headers=EN)
     assert response.status_code == 200
     assert response.get_json() == {'success': True, 'data': result}
+    # The page's lang (zh) is the visitor's: it wins over the header.
     assert seen == [{
         'simulation_id': SIM, 'platform': None, 'timeout': 120,
-        'interviews': [{'agent_id': 2, 'prompt': INTERVIEW_PROMPT_PREFIX + 'Why?', 'platform': 'reddit'}],
+        'interviews': [{'agent_id': 2, 'prompt': INTERVIEW_PROMPT_PREFIX_ZH + 'Why?', 'platform': 'reddit'}],
     }]
 
 
@@ -1359,3 +1390,304 @@ def test_the_symposium_model_can_be_chosen(monkeypatch):
     monkeypatch.setenv('PARTHENON_SYMPOSIUM_MODEL', 'grok-4.20-0309-non-reasoning')
     sm._make_llm()
     assert made == [None, 'grok-4.20-0309-non-reasoning']
+
+
+# ═══════════════════════════════════════════════════════════════
+# One language: the record's in the prompts, the visitor's in the answers
+# ═══════════════════════════════════════════════════════════════
+
+def _set_project_language(project_id, language):
+    path = os.path.join(ProjectManager.PROJECTS_DIR, project_id, 'project.json')
+    with open(path, encoding='utf-8') as handle:
+        data = json.load(handle)
+    data['language'] = language
+    _write_json(path, data)
+    sm.clear_cache()
+
+
+def test_the_live_prefixes_are_pinned_and_either_is_stripped():
+    from app.api import simulation as simulation_api
+
+    assert sm.LIVE_PROMPT_PREFIX == simulation_api.INTERVIEW_PROMPT_PREFIX
+    assert sm.LIVE_PROMPT_PREFIX_ZH == simulation_api.INTERVIEW_PROMPT_PREFIX_ZH
+    assert sm.LIVE_PROMPT_PREFIX_ZH_UPSTREAM == simulation_api.INTERVIEW_PROMPT_PREFIX_ZH_UPSTREAM
+    assert sm.LIVE_PROMPT_PREFIXES == simulation_api.KNOWN_INTERVIEW_PROMPT_PREFIXES
+    assert set(sm.LIVE_PROMPT_PREFIXES) == set(simulation_api.INTERVIEW_PROMPT_PREFIXES.values()) | {
+        sm.LIVE_PROMPT_PREFIX_ZH_UPSTREAM}
+    assert not language_guard.foreign_script(sm.LIVE_PROMPT_PREFIX, 'en') and '\u2014' not in sm.LIVE_PROMPT_PREFIX
+    assert sm.LIVE_PROMPT_PREFIX.rstrip().endswith('Please respond in English.')
+    # Both ask for the visitor's language whatever the persona and memories are written in:
+    # the guard puts a stray answer into English, but nothing would put one into Chinese.
+    assert '无论问题、人设或记忆使用何种语言，请始终用简体中文回答。' in sm.LIVE_PROMPT_PREFIX_ZH
+    assert sm.LIVE_PROMPT_PREFIX_ZH.rstrip().endswith(language_instruction_for('zh'))
+    assert sm.LIVE_PROMPT_PREFIX_ZH.endswith('\n\n') and '\u2014' not in sm.LIVE_PROMPT_PREFIX_ZH
+    for lang, prefix in (('en-US,en;q=0.9', sm.LIVE_PROMPT_PREFIX), (None, sm.LIVE_PROMPT_PREFIX),
+                         ('fr', sm.LIVE_PROMPT_PREFIX), ('zh-CN', sm.LIVE_PROMPT_PREFIX_ZH)):
+        assert simulation_api.interview_prompt_prefix(lang) == prefix, lang
+    assert len(sm.LIVE_PROMPT_PREFIXES) == 3
+    for prefix in sm.LIVE_PROMPT_PREFIXES:
+        assert sm.split_conversation(prefix + LEGACY)[0] == 'And then?'
+        assert sm.split_conversation(prefix + 'Why?') == ('Why?', [])
+        # A prefix already there, in any language (the upstream one too), gives way to the visitor's once.
+        assert simulation_api.optimize_interview_prompt(prefix + 'Why?', 'en') == sm.LIVE_PROMPT_PREFIX + 'Why?'
+        assert simulation_api.optimize_interview_prompt(prefix + 'Why?', 'zh') == sm.LIVE_PROMPT_PREFIX_ZH + 'Why?'
+
+
+def test_the_live_prefix_follows_the_visitors_language(client, monkeypatch):
+    from app.api.simulation import INTERVIEW_PROMPT_PREFIX, INTERVIEW_PROMPT_PREFIX_ZH
+
+    make_sand_gathering()
+    _no_memory(monkeypatch)
+    seen = []
+
+    def fake(**kwargs):
+        seen.append(kwargs['interviews'][0]['prompt'])
+        return {'success': True, 'result': {'results': {'reddit_2': {'response': 'live'}}}}
+
+    monkeypatch.setattr(SimulationRunner, 'interview_agents_batch', fake)
+    body = {'simulation_id': SIM, 'interviews': [{'agent_id': 2, 'prompt': 'Why?'}]}
+    url = '/api/simulation/interview/batch'
+    client.post(url, json=body, headers={'Accept-Language': 'zh-CN,zh;q=0.9'})
+    client.post(url, json=body, headers={'Accept-Language': 'en-US,en;q=0.9'})
+    client.post(url, json=body)
+    client.post(url, json={**body, 'lang': 'en'}, headers={'Accept-Language': 'zh'})
+    assert seen == [INTERVIEW_PROMPT_PREFIX_ZH + 'Why?'] + [INTERVIEW_PROMPT_PREFIX + 'Why?'] * 3
+
+
+def test_a_live_answer_reaches_the_visitor_in_their_language(client, monkeypatch, translator):
+    make_sand_gathering()
+    _no_memory(monkeypatch)
+    translator.table = {'我欢迎一个神经。': 'I would welcome a Nerve.'}
+    monkeypatch.setattr(SimulationRunner, 'interview_agents_batch', lambda **_kwargs: {
+        'success': True, 'result': {'results': {
+            'reddit_2': {'agent_id': 2, 'response': '我欢迎一个神经。', 'platform': 'reddit'},
+            'twitter_2': {'agent_id': 2, 'response': 'Plain words.', 'platform': 'twitter'},
+        }}})
+    body = {'simulation_id': SIM, 'interviews': [{'agent_id': 2, 'prompt': 'Why?'}]}
+    english = client.post('/api/simulation/interview/batch', json=body, headers=EN).get_json()
+    results = english['data']['result']['results']
+    assert results['reddit_2']['response'] == 'I would welcome a Nerve.'
+    assert results['twitter_2']['response'] == 'Plain words.'
+    assert translator.calls == [['我欢迎一个神经。']]
+    chinese = client.post('/api/simulation/interview/batch', json={**body, 'lang': 'zh'}, headers=EN).get_json()
+    assert chinese['data']['result']['results']['reddit_2']['response'] == '我欢迎一个神经。'
+    assert len(translator.calls) == 1
+    # One citizen on both squares, and a refusal the runner still words in Chinese.
+    monkeypatch.setattr(SimulationRunner, 'interview_agent', lambda **_kwargs: {
+        'success': True, 'result': {'agent_id': 2, 'platforms': {'reddit': {'response': '我欢迎一个神经。'}}}})
+    one = client.post('/api/simulation/interview', json={'simulation_id': SIM, 'agent_id': 2, 'prompt': 'Why?'},
+                      headers=EN).get_json()
+    assert one['data']['result']['platforms']['reddit']['response'] == 'I would welcome a Nerve.'
+
+    def closed(**_kwargs):
+        raise ValueError('模拟环境未运行或已关闭，无法执行Interview: sim_0123456789ab')
+
+    monkeypatch.setattr(SimulationRunner, 'interview_agent', closed)
+    refused = client.post('/api/simulation/interview', json={'simulation_id': SIM, 'agent_id': 2, 'prompt': 'Why?'},
+                          headers=EN)
+    assert refused.status_code == 400
+    assert refused.get_json()['error'] == 'Environment not running or closed'
+
+
+def test_a_doubled_dash_is_a_chinese_comma_only_in_chinese():
+    assert sm._undash('The city was divided\u2014\u2014some cheered, others wept.', 'en') == (
+        'The city was divided, some cheered, others wept.')
+    assert sm._undash('The city was divided \u2014\u2014 some cheered.', None) == 'The city was divided, some cheered.'
+    assert sm._undash('我欢迎\u2014\u2014但不是条款。', None) == '我欢迎，但不是条款。'
+    assert sm._undash('I welcome it\u2014\u2014但不是条款。', 'en') == 'I welcome it，但不是条款。'
+    make_sand_gathering()
+    g = sm.load_gathering(SIM)
+    assert sm.tidy_answer('The city was divided\u2014\u2014some cheered.', g, ('Sand',), 'en') == (
+        'The city was divided, some cheered.')
+    assert sm.city_words('Sand spoke\u2014\u2014then fell silent.', g) == 'Sand spoke, then fell silent.'
+
+
+def test_an_answer_for_an_english_reader_holds_no_chinese(translator):
+    make_sand_gathering()
+    g = sm.load_gathering(SIM)
+    names = ('Sand', '沙')
+    translator.table = {'我曾是石头。': 'I was the stone, once.'}
+    assert sm.tidy_answer('I remember the quarry.\n我曾是石头。', g, names, 'en') == (
+        'I remember the quarry.\nI was the stone, once.')
+    assert translator.calls == [['我曾是石头。']]
+    # Full-width punctuation alone is set in English marks, with no call.
+    assert sm.tidy_answer('We waited（all night）：then we spoke！', g, names, 'en') == (
+        'We waited (all night): then we spoke!')
+    assert len(translator.calls) == 1
+    # A translation's own dashes and engine words are put in the city's words too.
+    translator.table['他们整夜都在广场上说话。'] = 'The other users talked all night in the simulation \u2014 every one.'
+    voiced = sm.tidy_answer('他们整夜都在广场上说话。', g, names, 'en')
+    assert voiced == 'The other citizens talked all night in the retelling, every one.'
+    _clean(voiced)
+    assert not language_guard.foreign_script(voiced, 'en')
+    # When the model cannot translate, the Chinese goes rather than reach the page.
+    translator.error = RuntimeError('down')
+    language_guard.clear_cache()
+    left = sm.tidy_answer('I remember the quarry. 我曾是石头。', g, names, 'en')
+    assert left == 'I remember the quarry.'
+    with pytest.raises(sm.AnswerFailed):
+        sm.tidy_answer('我曾是石头。', g, names, 'en')
+    # A Chinese reader's answer is never touched, nor one whose reader is not known.
+    calls = len(translator.calls)
+    assert sm.tidy_answer('沙：我曾是石头。', g, names, 'zh') == '我曾是石头。'
+    assert sm.tidy_answer('我欢迎 \u2013 但不是条款。', g, names, None) == '我欢迎，但不是条款。'
+    assert len(translator.calls) == calls
+
+
+def test_a_remembered_answer_in_chinese_reaches_an_english_page_in_english(client, monkeypatch, translator):
+    make_sand_gathering()
+    translator.table = {'我曾是石头，也记得那座采石场。': 'I was the stone, and I remember the quarry.'}
+    monkeypatch.setattr(sm, '_make_llm', lambda: FakeLLM(reply='我曾是石头，也记得那座采石场。'))
+    response = _batch(client, 2)
+    assert response.status_code == 200
+    assert response.get_json()['data']['result']['results']['reddit_2']['response'] == (
+        'I was the stone, and I remember the quarry.')
+    speaker = _speaker(client)
+    assert speaker.get_json()['data']['answer'] == 'I was the stone, and I remember the quarry.'
+    zh = _speaker(client, lang='zh').get_json()['data']
+    assert zh['lang'] == 'zh' and zh['answer'] == '我曾是石头，也记得那座采石场。'
+
+
+def test_an_english_readers_prompt_asks_for_quotes_in_english(llm):
+    make_sand_gathering()
+    g = sm.load_gathering(SIM)
+    system = sm.citizen_messages(g, 2, 'Why?', [], 'en')[0]['content']
+    assert system.endswith(sm.QUOTE_IN_ENGLISH + '\nPlease respond in English.')
+    assert sm.QUOTE_IN_ENGLISH not in sm.citizen_messages(g, 2, 'Why?', [], 'zh')[0]['content']
+
+
+def test_the_records_blocks_are_voiced_in_the_records_language_never_a_guess():
+    make_sand_gathering()
+    g = sm.load_gathering(SIM)
+    assert g.language == 'en'
+    quote = '苏格拉底在对话中坚定论证，逃跑将违背他一生尊崇的城邦法律，他绝不会离开。' * 2
+    # Mostly Chinese quotation: a guess would call it Chinese and leave the engine's word.
+    assert sm.city_words(f'Agent Crito posted. {quote}', g).startswith('Citizen Crito posted.')
+
+
+def test_the_gathering_reads_its_stored_record_language(monkeypatch):
+    make_sand_gathering()
+    assert sm.load_gathering(SIM).language == 'en'
+    _set_project_language(PROJECT, 'zh')
+    assert sm.load_gathering(SIM).language == 'zh'
+    monkeypatch.setenv(language_guard.RECORD_LANGUAGE_ENV, 'en')
+    sm.clear_cache()
+    assert sm.load_gathering(SIM).language == 'en'
+
+
+def test_an_english_chronicle_is_not_searched_by_the_speakers_chinese_name():
+    make_socrates_gathering()
+    _report('report_eeeeeeeeeeee', SOC_SIM, '2026-09-25T19:07:40',
+            'Socrates spoke of the laws.\n\n> "苏格拉底说，法律高于一切。"\n\nNobody else.')
+    g = sm.load_gathering(SOC_SIM)
+    assert g.language == 'en' and '苏格拉底' not in sm._floor_names(g)
+    assert sm.chronicle_for(g, 'report_eeeeeeeeeeee') == 'Socrates spoke of the laws.'
+    _set_project_language(SOC_PROJECT, 'zh')
+    g = sm.load_gathering(SOC_SIM)
+    assert '苏格拉底' in sm._floor_names(g)
+    assert '苏格拉底说' in sm.chronicle_for(g, 'report_eeeeeeeeeeee')
+
+
+def test_a_chinese_gatherings_blocks_keep_their_chinese_labels():
+    make_sand_gathering()
+    block = '**采访人数:** 3 / 10 位模拟Agent\n这个模拟Agent说了话【Twitter平台回答】'
+    english = sm.city_words(block, sm.load_gathering(SIM))
+    assert '**Citizens questioned:** 3 / 10 citizens' in english and '[In the Agora]' in english
+    _set_project_language(PROJECT, 'zh')
+    g = sm.load_gathering(SIM)
+    assert g.language == 'zh'
+    chinese = sm.city_words(block, g)
+    assert '**采访人数:** 3 / 10 位公民' in chinese and '这个公民说了话【In the Agora】' in chinese
+    assert 'citizens' not in chinese and '[In the Agora]' not in chinese and 'questioned' not in chinese
+
+
+def test_the_memory_facts_are_relabelled_once_in_the_gatherings_language(monkeypatch):
+    fact = SimpleNamespace(fact='预测场景: 沙会签约吗', created_at='2026-09-25T10:00:00Z', invalid_at=None,
+                           expired_at=None)
+    graph = SimpleNamespace(node=SimpleNamespace(get_edges=lambda uuid: [fact]))
+    monkeypatch.setattr(Config, 'MEMORY_BACKEND', 'local')
+    monkeypatch.setattr(sm, 'existing_local_memory_client', lambda: SimpleNamespace(graph=graph))
+    # The fact as the memory holds it; its block puts it in the city's words.
+    assert sm.memory_facts('graph_test', 'uuid-0') == ['预测场景: 沙会签约吗']
+    make_sand_gathering()
+    assert sm.citizen_blocks(sm.load_gathering(SIM), 0)['memory'].startswith('- The question put to the city:')
+    _set_project_language(PROJECT, 'zh')
+    memory = sm.citizen_blocks(sm.load_gathering(SIM), 0)['memory']
+    assert memory.startswith('- 城中的问题:') and 'The question' not in memory
+
+
+def test_a_live_interview_out_of_time_is_told_in_the_visitors_words(client, monkeypatch):
+    make_sand_gathering()
+    _no_memory(monkeypatch)
+
+    def slow(**kwargs):
+        raise TimeoutError(f"No answer to the command within {kwargs['timeout']} seconds")
+
+    for name in ('interview_agent', 'interview_agents_batch', 'interview_all_agents'):
+        monkeypatch.setattr(SimulationRunner, name, slow)
+    single = {'simulation_id': SIM, 'agent_id': 2, 'prompt': 'Why?'}
+    batch = {'simulation_id': SIM, 'interviews': [{'agent_id': 2, 'prompt': 'Why?'}], 'timeout': 90.0}
+    every = {'simulation_id': SIM, 'prompt': 'Why?'}
+    seen = []
+    for url, body in (('/api/simulation/interview', single), ('/api/simulation/interview/batch', batch),
+                      ('/api/simulation/interview/all', every)):
+        for extra, headers in (({}, EN), ({'lang': 'zh'}, EN), ({}, {'Accept-Language': 'zh-CN'})):
+            response = client.post(url, json={**body, **extra}, headers=headers)
+            assert response.status_code == 504
+            seen.append(response.get_json()['error'])
+    assert seen == [
+        'Interview response timed out: 60s', '等待Interview响应超时: 60s', '等待Interview响应超时: 60s',
+        'Batch interview response timed out: 90s', '等待批量Interview响应超时: 90s', '等待批量Interview响应超时: 90s',
+        'Global interview response timed out: 180s', '等待全局Interview响应超时: 180s', '等待全局Interview响应超时: 180s',
+    ]
+    # The square's own words stay in the log; a visitor never reads them.
+    assert not any('command' in error for error in seen)
+
+
+def _write_trace(rows, platform='twitter'):
+    conn = sqlite3.connect(os.path.join(_sim_dir(), f'{platform}_simulation.db'))
+    try:
+        conn.execute('CREATE TABLE IF NOT EXISTS trace (user_id INTEGER, created_at DATETIME, action TEXT, info TEXT)')
+        conn.executemany('INSERT INTO trace (user_id, created_at, action, info) VALUES (?, ?, ?, ?)', [
+            (agent_id, created, action, json.dumps(info, ensure_ascii=False))
+            for agent_id, created, action, info in rows
+        ])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_the_squares_interview_trace_reaches_an_english_reader_in_english(client, translator):
+    from app.api.simulation import INTERVIEW_PROMPT_PREFIX_ZH_UPSTREAM
+
+    make_sand_gathering()
+    asked = INTERVIEW_PROMPT_PREFIX_ZH_UPSTREAM + '你会签署窑炉契约吗？'
+    _write_trace([
+        (2, '2026-09-25 10:00:00', 'interview', {'prompt': asked, 'response': '我欢迎一个神经。\nNot the terms.'}),
+        (0, '2026-09-25 10:01:00', 'interview', {'prompt': 'Why?', 'response': 'I was the stone.'}),
+        (0, '2026-09-25 10:02:00', 'create_post', {'content': '我曾是石头。'}),
+    ])
+    translator.table = {
+        asked: 'Drawing on your persona, answer me directly: will you sign the Kiln Compact?',
+        '我欢迎一个神经。': 'I would welcome a Nerve.',
+    }
+    url = '/api/simulation/interview/history'
+    english = client.post(url, json={'simulation_id': SIM}, headers=EN).get_json()['data']
+    assert english['count'] == 2
+    assert english['history'][0]['response'] == 'I was the stone.' and english['history'][0]['prompt'] == 'Why?'
+    marina = english['history'][1]
+    assert marina['prompt'] == 'Drawing on your persona, answer me directly: will you sign the Kiln Compact?'
+    assert marina['response'] == 'I would welcome a Nerve.\nNot the terms.'
+    assert not language_guard.foreign_script(json.dumps(english, ensure_ascii=False), 'en')
+    assert len(translator.calls) == 1  # one call for the whole trace
+    # A Chinese reader reads the trace as it was kept, with no call.
+    chinese = client.post(url, json={'simulation_id': SIM, 'lang': 'zh'}, headers=EN).get_json()['data']
+    assert chinese['history'][1]['prompt'] == asked
+    assert chinese['history'][1]['response'] == '我欢迎一个神经。\nNot the terms.'
+    assert len(translator.calls) == 1
+    # A trace the model cannot translate loses its Chinese rather than reach the page.
+    language_guard.clear_cache()
+    translator.error = RuntimeError('down')
+    stripped = client.post(url, json={'simulation_id': SIM}, headers=EN).get_json()['data']
+    assert stripped['history'][1]['response'] == 'Not the terms.'
+    assert not language_guard.foreign_script(json.dumps(stripped, ensure_ascii=False), 'en')

@@ -169,7 +169,7 @@ import { isGatheringId } from '../parthenon/owned.js'
 import ParthenonBrand from './ParthenonBrand.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import ListenToggle from './ListenToggle.vue'
-import { ACTS, stripIds } from '../parthenon/vocabulary.js'
+import { ACTS, stripIds, readable } from '../parthenon/vocabulary.js'
 import { sound, setBed } from '../parthenon/sound.js'
 
 const props = defineProps({
@@ -193,7 +193,7 @@ const props = defineProps({
   nameHeading: { type: Boolean, default: true }
 })
 
-const { t, tm } = useI18n()
+const { t, tm, locale } = useI18n()
 const slots = useSlots()
 
 // A guest: on the public steps, at a gathering this browser did not begin.
@@ -367,10 +367,12 @@ watch(ledgerOpen, async (open) => {
   await nextTick()
   if (ledgerList.value) ledgerList.value.scrollTop = ledgerList.value.scrollHeight
 })
+// A line the reader cannot read (the engine's, or one set down before they
+// changed language) is not shown to them.
 const cleanLogs = computed(() =>
   props.logs
     .map((l) => (typeof l === 'string' ? { time: '', text: l } : { time: l.time || l.timestamp || '', text: l.message ?? l.text ?? '' }))
-    .map((l) => ({ time: String(l.time).slice(0, 8), text: stripIds(l.text) }))
+    .map((l) => ({ time: String(l.time).slice(0, 8), text: readable(stripIds(l.text), '', locale.value) }))
     .filter((l) => l.text)
 )
 const lastLine = computed(() => cleanLogs.value.length ? cleanLogs.value[cleanLogs.value.length - 1].text : '')

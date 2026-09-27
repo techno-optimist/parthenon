@@ -164,7 +164,8 @@ test('run lengths and city words in Chinese', () => {
   assert.equal(runLengthMinutes('week', 'zh'), '2 至 3 小时')
   assert.ok(spansHours(runLengthMinutes('week', 'en')))
   assert.equal(runLengthMinutes(RUN_LENGTHS[2], 'en'), '45 to 70')
-  assert.equal(cityWords('模拟智能体', 'en'), '模拟智能体')
+  // An English reader is never handed the engine's Chinese.
+  assert.equal(cityWords('模拟智能体', 'en'), '')
 })
 
 test('a live locale source is followed, and can be let go', () => {
@@ -266,4 +267,108 @@ test('where a gathering stands, and the Way it opens', () => {
   assert.equal(gatheringStanding(failed).act, 3)
   assert.ok(!wayLinks(failed)[5])
   assert.ok(wayLinks(failed)[4])
+})
+
+import { foreignScript, readable, toAsciiPunct, dropForeign } from './vocabulary.js'
+
+test('an English reader never meets a Chinese type or tie', () => {
+  // Read back into English when the word is known, else the plainest word.
+  assert.equal(entityTypeName('哲人'), 'philosopher')
+  assert.equal(entityTypeName('组织', 'en'), 'organization')
+  assert.equal(entityTypeName('家长'), 'parent')
+  assert.equal(entityTypeName('从未听过的身份'), 'citizen')
+  assert.equal(roleLabel('公职人员'), 'Public official')
+  assert.equal(roleFamily('组织'), 'institutions')
+  assert.equal(tieName('支持'), 'supports')
+  assert.equal(tieName('点头赞同'), 'nodded to')
+  assert.equal(tieName('莫名的关系'), 'is tied to')
+  // A Chinese reader keeps them as the engine wrote them.
+  assert.equal(entityTypeName('从未听过的身份', 'zh'), '从未听过的身份')
+  assert.equal(tieName('莫名的关系', 'zh'), '莫名的关系')
+})
+
+test('engine text a reader cannot read gives way to the page\'s own words', () => {
+  assert.equal(foreignScript('没有找到', 'en'), true)
+  assert.equal(foreignScript('Stopped，at round 3', 'en'), true)
+  assert.equal(foreignScript('没有找到', 'zh'), false)
+  // Curly quotes and the ellipsis are everyone's.
+  assert.equal(foreignScript('“Yes,” she said…', 'en'), false)
+  assert.equal(readable('没有找到符合条件的实体，请检查图谱', 'The city gave its reason in another tongue.', 'en'), 'The city gave its reason in another tongue.')
+  assert.equal(readable('Stopped，at round 3（of 12）', 'fallback', 'en'), 'Stopped, at round 3 (of 12)')
+  assert.equal(readable('没有找到', 'fallback', 'zh'), '没有找到')
+  assert.equal(readable('', 'fallback', 'en'), '')
+  assert.equal(readable('Plain English.', 'fallback', 'en'), 'Plain English.')
+  // The visitor's own language when none is named.
+  assert.equal(readable('没有找到', 'fallback'), 'fallback')
+  inChinese(() => assert.equal(readable('没有找到', 'fallback'), '没有找到'))
+})
+
+test('Chinese punctuation is set as English', () => {
+  assert.equal(toAsciiPunct('Yes，we can。Then（maybe）go「now」.'), 'Yes, we can. Then (maybe) go "now".')
+  assert.equal(toAsciiPunct('2，000 at 10：30！'), '2,000 at 10:30!')
+  assert.equal(toAsciiPunct('ＡＢＣ　１２３'), 'ABC 123')
+  assert.equal(toAsciiPunct('No marks here.'), 'No marks here.')
+})
+
+test('a record\'s Chinese is dropped for an English reader, and kept for a Chinese one', () => {
+  const chapter = [
+    'Crito pressed the plan.',
+    '',
+    '> **Crito:** 若Crito的计划成功，苏格拉底逃离后，城邦最终会视此为公然违抗',
+    '> By the will of Athena，我观察到一种新趋势，即民众更倾向于将质疑限制在喜剧的舞台上',
+    '',
+    'Socrates (苏格拉底) held to the motto “认识你自己”，and stayed.',
+    '',
+    '- 一行中文',
+    '- An English item'
+  ].join('\n')
+  assert.equal(
+    dropForeign(chapter, 'en'),
+    'Crito pressed the plan.\n\nSocrates held to the motto, and stayed.\n\n- An English item'
+  )
+  assert.equal(dropForeign(chapter, 'zh'), chapter)
+  assert.equal(dropForeign('Nothing foreign.', 'en'), 'Nothing foreign.')
+  // A speaker's lead-in alone is no line.
+  assert.equal(dropForeign('**Crito:** 我不同意。', 'en'), '')
+})
+
+import { recordLanguageOf } from './vocabulary.js'
+
+test('a record is read in the language stored with it, else as the engine would guess it', () => {
+  assert.equal(recordLanguageOf({ language: 'en', simulation_requirement: '苏格拉底应当逃走吗？' }, 'zh'), 'en')
+  assert.equal(recordLanguageOf({ language: 'zh-CN' }, 'en'), 'zh')
+  // An older record: its question decides, as record_language() guesses it.
+  assert.equal(recordLanguageOf({ simulation_requirement: '苏格拉底应当逃走吗？' }, 'en'), 'zh')
+  assert.equal(recordLanguageOf({ language: null, simulation_requirement: 'Should Socrates flee?' }, 'zh'), 'en')
+  // Nothing to go on: the visitor's language.
+  assert.equal(recordLanguageOf(null, 'zh'), 'zh')
+  assert.equal(recordLanguageOf({}, 'en'), 'en')
+  assert.equal(recordLanguageOf({ language: 'fr' }, 'fr'), 'en')
+})
+
+import { forReader } from './vocabulary.js'
+
+test('only what the reader cannot read is left out of a record', () => {
+  const chapter = '## 第一章\n苹果公司的支持者认为…\n> “我们会赢。”'
+  // A Chinese reader of an English record keeps the Chinese an older run left in it.
+  assert.equal(forReader(chapter, 'en', 'zh'), chapter)
+  inChinese(() => assert.equal(forReader(chapter, 'en'), chapter))
+  // An English reader of it never meets it.
+  assert.equal(forReader(chapter, 'en', 'en'), '')
+  assert.equal(forReader('Crito pressed the plan (克力同).', 'en', 'en'), 'Crito pressed the plan.')
+  // A Chinese record is read as it was written.
+  assert.equal(forReader(chapter, 'zh', 'en'), chapter)
+  // The record's language alone never decides it.
+  inChinese(() => assert.equal(forReader('Crito said：「走吧」', 'en'), 'Crito said：「走吧」'))
+})
+
+test('the city\'s words keep Chinese for a Chinese reader of an English record', () => {
+  // The record's language is English; its reader reads Chinese.
+  assert.equal(cityWords('模拟智能体在 Twitter 上争论', 'en', 'zh'), '市民在广场上争论')
+  inChinese(() => assert.equal(cityWords('知识图谱已构建', 'en'), '雅典之网已构建'))
+  // English text stays English for either reader.
+  assert.equal(cityWords('The agents on Twitter.', 'en', 'zh'), 'The citizens on the Agora.')
+  // An English reader is never handed the engine's Chinese.
+  assert.equal(cityWords('模拟智能体', 'en', 'en'), '')
+  inChinese(() => assert.equal(cityWords('模拟智能体', 'en', 'en'), ''))
 })

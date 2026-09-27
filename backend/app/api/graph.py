@@ -15,10 +15,11 @@ from . import graph_bp
 from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import BatchSubmission, GraphBuilderService
+from ..services.language_guard import configured_record_language, record_language
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
-from ..utils.locale import t, get_locale, set_locale
+from ..utils.locale import t, get_locale, set_locale, normalize_lang
 from ..utils.zep import memory_backend_label
 from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ..models.task import TaskManager, TaskStatus
@@ -204,6 +205,20 @@ def _sanitize_progress_message(message: str) -> str:
     return _ZEP_API_ERROR_TEXT.sub(lambda m: f"HTTP {m.group(1)}", message)
 
 
+def _new_record_language() -> str:
+    """A new gathering's record language: PARTHENON_RECORD_LANGUAGE, else the language of the request that begins it."""
+    return configured_record_language() or normalize_lang(request.headers.get('Accept-Language'))
+
+
+def _project_view(project) -> dict:
+    """A project for the page. A gathering older than the stored language carries the one the backend
+    reads it in (language_guard.record_language), so the page never guesses one of its own."""
+    data = project.to_dict()
+    if not data.get("language"):
+        data["language"] = record_language(requirement=project.simulation_requirement)
+    return data
+
+
 # ============== 项目管理接口 ==============
 
 @graph_bp.route('/project/<project_id>', methods=['GET'])
@@ -219,7 +234,7 @@ def get_project(project_id: str):
             "error": t('api.projectNotFound', id=project_id)
         }), 404
 
-    data = project.to_dict()
+    data = _project_view(project)
     hearing = _hearings.get(project_id) if project.status == ProjectStatus.CREATED else None
     if hearing:
         # The public steps: the scroll is being read; the page can watch this task.
@@ -248,7 +263,7 @@ def list_projects():
     
     return jsonify({
         "success": True,
-        "data": [p.to_dict() for p in projects],
+        "data": [_project_view(p) for p in projects],
         "count": len(projects)
     })
 
@@ -346,7 +361,7 @@ def _reset_project_impl(project_id: str):
     return jsonify({
         "success": True,
         "message": t('api.projectReset', id=project_id),
-        "data": project.to_dict()
+        "data": _project_view(project)
     })
 
 
@@ -406,9 +421,11 @@ def generate_ontology():
                 "error": t('api.requireFileUpload')
             }), 400
         
-        # 创建项目 (in public mode with the hash of the key handed back below)
+        # 创建项目 (in public mode with the hash of the key handed back below),
+        # in its record language for good.
         project = ProjectManager.create_project(
-            name=project_name, owner_token_hash=public.new_owner_hash()
+            name=project_name, owner_token_hash=public.new_owner_hash(),
+            language=_new_record_language(),
         )
         project.simulation_requirement = simulation_requirement
         logger.info(f"创建项目: {project.project_id}")
@@ -468,7 +485,8 @@ def generate_ontology():
         ontology = generator.generate(
             document_texts=document_texts,
             simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
+            additional_context=additional_context if additional_context else None,
+            language=project.language,
         )
         
         # 保存本体到项目
@@ -580,6 +598,7 @@ def _hear_in_background(project, document_texts, simulation_requirement, additio
                 document_texts=document_texts,
                 simulation_requirement=simulation_requirement,
                 additional_context=additional_context if additional_context else None,
+                language=project.language,
             )
         except Exception as error:  # noqa: BLE001 - the visitor is told in the city's words
             logger.error(
@@ -676,7 +695,8 @@ def _hearing_failed(project_id, task_id, give_back):
         project = ProjectManager.get_project(project_id)
         if project is not None and project.status == ProjectStatus.CREATED:
             project.status = ProjectStatus.FAILED
-            project.error = error
+            # The project keeps the note in its record language; the task tells the one watching.
+            project.error = t('api.public.hearingFailed', locale=project.language or 'en')
             try:
                 ProjectManager.save_project(project)
             except Exception:  # noqa: BLE001
@@ -899,7 +919,7 @@ def _build_graph_impl(data=None, task_id=None):
         # 创建异步任务 (the Hearing's own task goes on, when it called)
         task_manager = TaskManager()
         if task_id is None:
-            task_id = task_manager.create_task(f"构建图谱: {graph_name}")
+            task_id = task_manager.create_task("graph_build")
         logger.info(f"创建图谱构建任务: task_id={task_id}, project_id={project_id}")
         
         # 更新项目状态

@@ -268,7 +268,7 @@
           </footer>
 
           <!-- The film, as the epilogue of the document -->
-          <ChronicleFilm v-if="!trouble" ref="filmPanel" :lang="uiLang" :report-id="reportId" :ready="isComplete" />
+          <ChronicleFilm v-if="!trouble" ref="filmPanel" :lang="uiLang" :report-id="reportId" :ready="isComplete" :record-lang="recordLang" />
         </article>
       </div>
     </div>
@@ -298,7 +298,10 @@ import {
   stripIds,
   cityWords as speakInCity,
   smartQuotes,
-  textLang
+  textLang,
+  readable,
+  forReader,
+  recordLanguageOf
 } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
 import ChronicleFilm from './ChronicleFilm.vue'
@@ -335,6 +338,12 @@ const numeral = (n) => (locale.value === 'zh' ? String(n) : greekNumeral(n))
 
 // State from the Scribe's log
 const reportOutline = ref(null)
+// A finished record's own title, summary and chapters. Once the record is
+// complete, the page reads it before the Scribe's working log, so a record
+// mended after the fact reads mended here too. { title, summary, sections: [{ title, content }] }
+const record = ref(null)
+// What the page shows: the finished record, else the outline the log gave.
+const outline = computed(() => record.value || reportOutline.value)
 const currentSectionIndex = ref(null)
 const generatedSections = ref({})
 // What the Scribe did for each chapter: [{ tool, params, iteration, digest }]
@@ -351,12 +360,21 @@ const filmPanel = ref(null)
 
 // The document
 
+// The page is read in the Chronicle's own language, the record's (never a
+// guess from its text); the city's labels on it in the visitor's. Words in
+// the record the visitor cannot read are left out on the page (forReader):
+// an English reader never meets Chinese, a Chinese reader keeps it. The
+// record itself is mended by the engine.
+const uiLang = computed(() => (String(locale.value).startsWith('zh') ? 'zh' : 'en'))
+const recordLang = computed(() => recordLanguageOf(props.report, uiLang.value))
+const pageLang = recordLang
+
 // The Scribe's own words, set as a printer would and in the city's words:
 // her prose and headings pass through the city's vocabulary ("agents" are
 // citizens, "the platforms" the Agora and the Stoa); the citizens' speech she
 // quotes is left as they said it. The record is never changed, only its setting.
-const typesetText = (text, lang = textLang(text)) => {
-  let out = speakInCity(String(text || ''), lang)
+const typesetText = (text, lang = recordLang.value) => {
+  let out = speakInCity(String(text || ''), lang, uiLang.value)
   if (lang !== 'zh') out = smartQuotes(out)
   return out
 }
@@ -392,29 +410,22 @@ const typesetParts = (html, lang) => {
       }
       if (!part || inCode) return part
       let text = part
-      if (!inQuote) text = keepEdges(text, (x) => speakInCity(x, lang))
+      if (!inQuote) text = keepEdges(text, (x) => speakInCity(x, lang, uiLang.value))
       if (lang !== 'zh') text = smartQuotes(text)
       return text
     })
     .join('')
 }
 
-const title = computed(() => (reportOutline.value?.title ? typesetText(reportOutline.value.title) : t('parthenon.chronicle.untitled')))
-const standfirst = computed(() => typesetText(reportOutline.value?.summary || ''))
+const title = computed(() => typesetText(outline.value?.title || '') || t('parthenon.chronicle.untitled'))
+const standfirst = computed(() => typesetText(outline.value?.summary || ''))
 // The Chronicle's own title names the browser tab, once the Scribe has given one.
 watch(
-  () => (props.missing || !reportOutline.value?.title ? '' : title.value),
+  () => (props.missing || !outline.value?.title ? '' : title.value),
   (name) => emit('update-title', name),
   { immediate: true }
 )
 
-// The page is read in the Chronicle's own language; the city's labels on it
-// in the visitor's.
-const uiLang = computed(() => (String(locale.value).startsWith('zh') ? 'zh' : 'en'))
-const pageLang = computed(() => {
-  const sample = `${reportOutline.value?.title || ''} ${reportOutline.value?.summary || ''} ${Object.values(generatedSections.value)[0] || ''}`.trim()
-  return sample ? textLang(sample.slice(0, 3000)) : uiLang.value
-})
 const question = computed(() => props.report?.simulation_requirement || '')
 
 const dateLine = computed(() => {
@@ -438,7 +449,7 @@ const trouble = computed(() => {
   if (props.loadError) return props.loadError
   if (localTrouble.value) return localTrouble.value
   const r = props.report
-  if (r && (r.status === 'failed' || r.error)) return stripIds(r.error) || t('parthenon.chronicle.troubleFallback')
+  if (r && (r.status === 'failed' || r.error)) return reason(r.error) || t('parthenon.chronicle.troubleFallback')
   return ''
 })
 
@@ -590,9 +601,10 @@ const castRest = (ch) => {
 
 // How the Scribe found each chapter, in plain words, from her working log.
 
-// The engine's words for what she searched, turned into the city's.
+// The engine's words for what she searched, turned into the city's. A search
+// in a language the visitor does not read is no topic for them.
 const cityWords = (text) =>
-  scrub(text)
+  said(text)
     .replace(/\bTwitter\b/g, 'the Agora')
     .replace(/\bReddit\b/g, 'the Stoa')
     .replace(/\bsimulated\s+/gi, '')
@@ -799,7 +811,7 @@ const marquee = computed(() => {
   const f = film.value
   if (!f || f.status !== 'completed' || !f.video_url) return null
   return {
-    title: f.title ? typesetText(f.title) : t('parthenon.film.untitled'),
+    title: typesetText(f.title || '') || t('parthenon.film.untitled'),
     logline: typesetText(f.logline || ''),
     poster: filmAssetUrl(f.poster_url),
     runtime: formatRuntime(f.duration)
@@ -853,7 +865,7 @@ const filmShots = computed(() => {
     .sort((a, b) => Number(a.index) - Number(b.index))
     .map((x) => ({ key: x.index, src: filmAssetUrl(x.thumb_url), narration: typesetText(String(x.narration || '').trim()) }))
 })
-const filmTitle = computed(() => typesetText(film.value?.title || t('parthenon.film.untitled')))
+const filmTitle = computed(() => typesetText(film.value?.title || '') || t('parthenon.film.untitled'))
 // The film's poster is its first scene, already held up in the marquee above
 // the page; the plates begin with the second, unless there is nothing else.
 const plateShots = computed(() => {
@@ -866,22 +878,24 @@ const watchFilm = () => {
   filmPanel.value?.reveal()
 }
 const chapters = computed(() => {
-  const sections = reportOutline.value?.sections || []
+  const sections = outline.value?.sections || []
+  const lang = recordLang.value
   return sections.map((section, i) => {
     const index = i + 1
-    const content = generatedSections.value[index]
+    const content = section.content || generatedSections.value[index]
     let state = 'pending'
     if (content) state = 'done'
     else if (currentSectionIndex.value === index) state = 'writing'
     const steps = stepsBySection.value[index] || []
-    const lang = textLang(content || section.title || '')
+    // What the chapter's reader can read of it.
+    const shown = content ? forReader(content, lang, uiLang.value) : ''
     return {
       index,
       lang,
-      title: section.title ? typesetText(section.title, lang) : t('parthenon.chronicle.chapter', { n: index }),
+      title: (section.title && typesetText(section.title, lang)) || t('parthenon.chronicle.chapter', { n: index }),
       state,
-      html: content ? typeset(renderMarkdown(content), lang) : '',
-      cast: content ? castOf(content) : [],
+      html: shown ? typeset(renderMarkdown(shown), lang) : '',
+      cast: shown ? castOf(shown) : [],
       notes: content ? notesFor(steps).map((n) => n.text) : [],
       latest: state === 'writing' ? latestFor(steps) : ''
     }
@@ -931,7 +945,7 @@ const statusLine = computed(() => {
   if (props.missing) return t('parthenon.chronicle.notFound')
   if (trouble.value) return t('parthenon.chronicle.troubleTitle')
   if (isComplete.value) return t('parthenon.chronicle.complete')
-  if (!reportOutline.value) {
+  if (!outline.value) {
     return planningStarted.value ? t('parthenon.chronicle.planning') : t('parthenon.chronicle.reading')
   }
   const writing = chapters.value.find((ch) => ch.state === 'writing')
@@ -1135,7 +1149,7 @@ const applyLog = (log) => {
   }
   // The Scribe says so herself when she cannot finish.
   if (log.action === 'error' && !isComplete.value) {
-    const why = scrub(log.details?.error || log.details?.message || '')
+    const why = reason(log.details?.error || log.details?.message || '')
     localTrouble.value = why || t('parthenon.chronicle.troubleFallback')
     currentSectionIndex.value = null
   }
@@ -1152,14 +1166,21 @@ const adoptRecord = (r) => {
   if (!r) return
   if (r.status === 'failed' || r.error) {
     if (!isComplete.value) {
-      localTrouble.value = scrub(r.error) || t('parthenon.chronicle.troubleFallback')
+      localTrouble.value = reason(r.error) || t('parthenon.chronicle.troubleFallback')
       currentSectionIndex.value = null
     }
     return
   }
-  if (r.status !== 'completed' || isComplete.value) return
+  if (r.status !== 'completed') return
   const sections = r.outline?.sections || []
   if (!sections.length) return
+  // The finished record is what the page reads, whatever the log says.
+  record.value = {
+    title: r.outline.title || '',
+    summary: r.outline.summary || '',
+    sections: sections.map((s) => ({ title: s?.title || '', content: s?.content || '' }))
+  }
+  if (isComplete.value) return
   if (!reportOutline.value) {
     reportOutline.value = { title: r.outline.title, summary: r.outline.summary, sections: sections.map((s) => ({ title: s.title })) }
   }
@@ -1224,6 +1245,10 @@ const scrub = (text) =>
       .replace(/\bLLM\b/g, 'the Scribe')
       .replace(/\bagents?\b/gi, (w) => (w.endsWith('s') ? 'citizens' : 'citizen'))
   )
+// Engine words only in a language the visitor reads: a reason stands in for
+// one they cannot read; anything else they cannot read is not said at all.
+const reason = (text) => readable(scrub(text), t('common.otherTongue'))
+const said = (text) => readable(scrub(text), '')
 // A chapter by its title, from the outline the log gave us or from the record.
 const chapterOf = (title) => {
   const wanted = String(title).trim()
@@ -1235,9 +1260,9 @@ const chapterOf = (title) => {
 }
 const chapterLine = (title, withIndex, withoutIndex) => {
   const ch = chapterOf(title)
-  return ch
-    ? t(withIndex, { n: numeral(ch.index), title: ch.title })
-    : t(withoutIndex, { title: scrub(title) })
+  if (ch) return t(withIndex, { n: numeral(ch.index), title: ch.title })
+  const named = said(title)
+  return named ? t(withoutIndex, { title: named }) : ''
 }
 // The tools the Scribe works with, each with a line in the city's words.
 const KNOWN_SOURCES = ['insight_forge', 'panorama_search', 'interview_agents', 'quick_search', 'get_graph_statistics', 'get_entities_by_type']
@@ -1272,15 +1297,15 @@ const LEDGER = [
   { re: /^Generated (\d+) interview questions/, say: (m) => t('parthenon.chronicle.ledger.questions', { n: m[1] }) },
   { re: /^Interview API returned: (\d+) results/, say: (m) => t(Number(m[1]) > 0 ? 'parthenon.chronicle.ledger.answered' : 'parthenon.chronicle.ledger.noAnswer') },
   { re: /^Interview API (call failed|returned failure|call exception)/, say: () => t('parthenon.chronicle.ledger.interviewFailed') },
-  { re: /^Section (.+) reached max iterations/, say: (m) => t('parthenon.chronicle.ledger.ranLong', { title: scrub(m[1]) }) },
-  { re: /^Section (.+) iteration \d+: LLM returned None/, say: (m) => t('parthenon.chronicle.ledger.paused', { title: scrub(m[1]) }) },
-  { re: /^Section (.+) force-finish/, say: (m) => t('parthenon.chronicle.ledger.chapterFailed', { title: scrub(m[1]) }) },
+  { re: /^Section (.+) reached max iterations/, say: (m) => said(m[1]) && t('parthenon.chronicle.ledger.ranLong', { title: said(m[1]) }) },
+  { re: /^Section (.+) iteration \d+: LLM returned None/, say: (m) => said(m[1]) && t('parthenon.chronicle.ledger.paused', { title: said(m[1]) }) },
+  { re: /^Section (.+) force-finish/, say: (m) => said(m[1]) && t('parthenon.chronicle.ledger.chapterFailed', { title: said(m[1]) }) },
   { re: /^Section (.+?) (generation complete|missing 'Final Answer:')/, say: (m) => chapterLine(m[1], 'parthenon.chronicle.log.chapterDone', 'parthenon.chronicle.ledger.chapterDoneTitle') },
   { re: /^Report generation complete/, say: () => t('parthenon.chronicle.log.done') },
-  { re: /^Report generation failed:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.failed', { error: scrub(m[1]) }) },
-  { re: /^Outline planning failed:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.planFailed', { error: scrub(m[1]) }) },
-  { re: /^Tool execution failed: \w+, error:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.toolFailed', { error: scrub(m[1]) }) },
-  { re: /^Failed to [^:]+:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.snag', { error: scrub(m[1]) }) }
+  { re: /^Report generation failed:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.failed', { error: reason(m[1]) }) },
+  { re: /^Outline planning failed:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.planFailed', { error: reason(m[1]) }) },
+  { re: /^Tool execution failed: \w+, error:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.toolFailed', { error: reason(m[1]) }) },
+  { re: /^Failed to [^:]+:?\s*(.*)/, say: (m) => t('parthenon.chronicle.ledger.snag', { error: reason(m[1]) }) }
 ]
 
 const toLedger = (line) => {
@@ -1297,7 +1322,7 @@ const toLedger = (line) => {
   }
   // Unknown lines: warnings are worth a word to the owner; the rest is noise.
   if (level === 'INFO' || level === 'DEBUG') return null
-  const message = scrub(raw)
+  const message = said(raw)
   return message ? { time, message: t('parthenon.chronicle.ledger.trouble', { message }) } : null
 }
 
@@ -1353,6 +1378,7 @@ const stopPolling = () => {
 
 const resetState = () => {
   reportOutline.value = null
+  record.value = null
   currentSectionIndex.value = null
   generatedSections.value = {}
   stepsBySection.value = {}
@@ -1384,6 +1410,8 @@ watch(trouble, (why) => {
 watch(() => props.reportId, (newId) => {
   stopPolling()
   resetState()
+  // A record already in hand for this Chronicle is read again after the reset.
+  if (props.report && props.report.status === 'completed') adoptRecord(props.report)
   if (newId && !trouble.value) startPolling()
 }, { immediate: true })
 

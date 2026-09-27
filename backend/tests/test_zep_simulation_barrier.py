@@ -13,6 +13,8 @@ from app.services.simulation_runner import (
     SimulationRunner,
     SimulationStopPending,
 )
+from app.utils import locale as locale_utils
+from app.utils.locale import set_locale
 
 
 def test_manual_stop_surfaces_graph_ingestion_failure(monkeypatch):
@@ -79,7 +81,13 @@ def test_platform_completion_does_not_publish_terminal_success_before_barrier(
     assert state.runner_status == RunnerStatus.RUNNING
 
 
-def test_manual_stop_timeout_leaves_monitor_owned_state_stopping(monkeypatch):
+@pytest.mark.parametrize(
+    "locale, expected",
+    [(None, "still stopping"), ("zh", "仍在停止中")],
+    ids=["default-en", "zh"],
+)
+def test_manual_stop_timeout_leaves_monitor_owned_state_stopping(monkeypatch, locale, expected):
+    # The pending stop is told to whoever asked for it: English unless they read Chinese.
     state = SimulationRunState(
         simulation_id="sim-timeout",
         runner_status=RunnerStatus.RUNNING,
@@ -106,11 +114,14 @@ def test_manual_stop_timeout_leaves_monitor_owned_state_stopping(monkeypatch):
     SimulationRunner._processes.pop("sim-timeout", None)
     SimulationRunner._graph_memory_enabled.pop("sim-timeout", None)
 
+    if locale:
+        set_locale(locale)
     try:
-        with pytest.raises(TimeoutError, match="仍在停止中"):
+        with pytest.raises(TimeoutError, match=expected):
             SimulationRunner.stop_simulation("sim-timeout")
         assert state.runner_status == RunnerStatus.STOPPING
     finally:
+        vars(locale_utils._thread_local).pop("locale", None)
         SimulationRunner._monitor_threads.pop("sim-timeout", None)
         SimulationRunner._manual_stop_requests.discard("sim-timeout")
 

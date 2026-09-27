@@ -3,6 +3,7 @@ Zep图谱记忆更新服务
 将模拟中的Agent活动动态更新到Zep图谱中
 """
 
+import json
 import time
 import threading
 from typing import Dict, Any, List, Optional
@@ -11,85 +12,60 @@ from datetime import datetime
 from queue import Queue, Empty
 
 from ..config import Config
+from ..memory.activity import DESCRIPTION_TEMPLATES
 from ..utils.logger import get_logger
-from ..utils.locale import get_locale, set_locale
+from ..utils.locale import get_locale, normalize_lang, set_locale
 from ..utils.zep import (
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
     client_ingestion_timeout,
     get_zep_client,
 )
+from .language_guard import record_language
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
 
-# Activity description templates per language, filled with str.format (braces
-# inside the filled-in values are safe). The Chinese set is the upstream
-# MiroFish text and must stay byte-for-byte stable; every other locale gets the
-# English set. The local memory's rules extractor (app/memory/activity.py)
-# parses both sets, so a template change must be mirrored there.
-#
-# Four-template tuples cover, in order: author and content, content only,
-# author only, neither. Two-template tuples: with the value, without it.
-_DESCRIPTION_TEMPLATES: Dict[str, Dict[str, Any]] = {
-    "zh": {
-        "post": ("发布了一条帖子：「{content}」", "发布了一条帖子"),
-        "like_post": ("点赞了{author}的帖子：「{content}」", "点赞了一条帖子：「{content}」",
-                      "点赞了{author}的一条帖子", "点赞了一条帖子"),
-        "dislike_post": ("踩了{author}的帖子：「{content}」", "踩了一条帖子：「{content}」",
-                         "踩了{author}的一条帖子", "踩了一条帖子"),
-        "repost": ("转发了{author}的帖子：「{content}」", "转发了一条帖子：「{content}」",
-                   "转发了{author}的一条帖子", "转发了一条帖子"),
-        "quote": ("引用了{author}的帖子「{content}」", "引用了一条帖子「{content}」",
-                  "引用了{author}的一条帖子", "引用了一条帖子"),
-        "quote_suffix": "，并评论道：「{quote}」",
-        "follow": ("关注了用户「{name}」", "关注了一个用户"),
-        # Keyed by the commented post: {post} is its content, {content} the comment.
-        "comment": ("在{author}的帖子「{post}」下评论道：「{content}」", "在帖子「{post}」下评论道：「{content}」",
-                    "在{author}的帖子下评论道：「{content}」", "评论道：「{content}」"),
-        "comment_empty": "发表了评论",
-        "like_comment": ("点赞了{author}的评论：「{content}」", "点赞了一条评论：「{content}」",
-                         "点赞了{author}的一条评论", "点赞了一条评论"),
-        "dislike_comment": ("踩了{author}的评论：「{content}」", "踩了一条评论：「{content}」",
-                            "踩了{author}的一条评论", "踩了一条评论"),
-        "search": ("搜索了「{query}」", "进行了搜索"),
-        "search_user": ("搜索了用户「{query}」", "搜索了用户"),
-        "mute": ("屏蔽了用户「{name}」", "屏蔽了一个用户"),
-        "generic": ("执行了{action}操作", "执行了操作"),
-    },
-    "en": {
-        "post": ("posted: “{content}”", "posted"),
-        "like_post": ("liked {author}'s post: “{content}”", "liked a post: “{content}”",
-                      "liked a post by {author}", "liked a post"),
-        "dislike_post": ("disliked {author}'s post: “{content}”", "disliked a post: “{content}”",
-                         "disliked a post by {author}", "disliked a post"),
-        "repost": ("reposted {author}'s post: “{content}”", "reposted a post: “{content}”",
-                   "reposted a post by {author}", "reposted a post"),
-        "quote": ("quoted {author}'s post “{content}”", "quoted a post “{content}”",
-                  "quoted a post by {author}", "quoted a post"),
-        "quote_suffix": ", adding: “{quote}”",
-        "follow": ("followed the user “{name}”", "followed a user"),
-        "comment": ("commented on {author}'s post “{post}”: “{content}”",
-                    "commented on a post “{post}”: “{content}”",
-                    "commented on {author}'s post: “{content}”", "commented: “{content}”"),
-        "comment_empty": "left a comment",
-        "like_comment": ("liked {author}'s comment: “{content}”", "liked a comment: “{content}”",
-                         "liked a comment by {author}", "liked a comment"),
-        "dislike_comment": ("disliked {author}'s comment: “{content}”",
-                            "disliked a comment: “{content}”",
-                            "disliked a comment by {author}", "disliked a comment"),
-        "search": ("searched for “{query}”", "ran a search"),
-        "search_user": ("searched for the user “{query}”", "searched for users"),
-        "mute": ("muted the user “{name}”", "muted a user"),
-        "generic": ("performed {action}", "performed an action"),
-    },
-}
+# Activity description templates per language: one table, kept with the local
+# memory's rules extractor (app/memory/activity.py), which parses both sets and
+# can re-render one language's lines in the other.
+_DESCRIPTION_TEMPLATES: Dict[str, Dict[str, Any]] = DESCRIPTION_TEMPLATES
 
 
 def _description_templates(locale: Optional[str]) -> Dict[str, Any]:
     """Chinese templates for a Chinese locale ('zh', 'zh-CN', ...), English otherwise."""
     code = str(locale or "").strip().lower().replace("_", "-")
     return _DESCRIPTION_TEMPLATES["zh" if code == "zh" or code.startswith("zh-") else "en"]
+
+
+def _record_language(simulation_id: Optional[str]) -> str:
+    """The gathering's record language ('en' or 'zh'); English when it cannot be told."""
+    return record_language(simulation_id=simulation_id) if simulation_id else record_language()
+
+
+def _local_memory(api_key: Optional[str]) -> bool:
+    try:
+        return Config.memory_backend(api_key) == "local"
+    except ValueError:  # a MEMORY_BACKEND the app does not know: no local memory to tell
+        return False
+
+
+def account_nodes(config: Any) -> Dict[str, str]:
+    """{account name: graph node uuid} from a simulation configuration's agent_configs.
+
+    The name is the one the record shows (the profile's, in the record
+    language); the uuid is the graph node the citizen was built from, which
+    may carry the name the sources gave (苏格拉底 for Socrates).
+    """
+    found: Dict[str, str] = {}
+    agents = config.get("agent_configs") if isinstance(config, dict) else None
+    for agent in agents if isinstance(agents, list) else []:
+        if not isinstance(agent, dict):
+            continue
+        name, uuid = agent.get("entity_name"), agent.get("entity_uuid")
+        if isinstance(name, str) and name.strip() and isinstance(uuid, str) and uuid.strip():
+            found.setdefault(name.strip(), uuid.strip())
+    return found
 
 
 def _shape(author: Any, content: Any) -> int:
@@ -120,10 +96,10 @@ class AgentActivity:
 
         ``locale`` picks the description language: Chinese for 'zh' (and
         'zh-*' variants), English for anything else. When it is None the
-        calling thread's locale (get_locale()) is used. ZepGraphMemoryUpdater
-        always passes the locale of the run, because a tail flush can run on
-        another thread. Quoted content and names are kept verbatim in both
-        languages.
+        calling thread's locale (get_locale(), English by default) is used.
+        ZepGraphMemoryUpdater always passes the gathering's record language,
+        because a tail flush can run on another thread. Quoted content and
+        names are kept verbatim in both languages.
         """
         # 根据不同的动作类型生成不同的描述
         action_descriptions = {
@@ -291,6 +267,7 @@ class ZepGraphMemoryUpdater:
         api_key: Optional[str] = None,
         simulation_id: Optional[str] = None,
         locale: Optional[str] = None,
+        accounts: Optional[Dict[str, str]] = None,
     ):
         """
         初始化更新器
@@ -301,18 +278,28 @@ class ZepGraphMemoryUpdater:
             simulation_id: the simulation whose activity this updater sends
             locale: language of the episode text ('zh' keeps the Chinese
                 templates, anything else is English). Defaults to the
-                creating thread's locale, i.e. the request that starts the run.
+                gathering's record language (language_guard.record_language),
+                never to the thread or request that starts the run.
+            accounts: account name -> graph node uuid (account_nodes). The
+                local memory links each account's activity to that node, so
+                a citizen the record names in English stays one node with
+                the entity the sources named in Chinese.
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id or "unknown"
-        # Captured once so every line of this run uses the run's language:
+        # Resolved once so every line of this run is in the record's language:
         # the worker thread sends full batches, but stop() flushes the tail on
         # whichever thread calls it (monitor, stop request, shutdown).
-        self.locale = locale or get_locale()
+        self.locale = normalize_lang(locale) if locale else _record_language(simulation_id)
         self.api_key = api_key or Config.ZEP_API_KEY
         
         if not self.api_key and Config.memory_backend(self.api_key) == "zep":
-            raise ValueError("ZEP_API_KEY未配置")
+            raise ValueError("ZEP_API_KEY is not configured")
+        # Only the local memory reads them (Zep Cloud extracts its own nodes).
+        self.accounts = (
+            {name: uuid for name, uuid in (accounts or {}).items() if name and uuid}
+            if accounts and _local_memory(self.api_key) else {}
+        )
         
         self.client = get_zep_client(self.api_key)
         
@@ -458,9 +445,9 @@ class ZepGraphMemoryUpdater:
         
         self.add_activity(activity)
     
-    def _worker_loop(self, locale: str = 'zh'):
+    def _worker_loop(self, locale: Optional[str] = None):
         """后台工作循环 - 按平台批量发送活动到Zep"""
-        set_locale(locale)
+        set_locale(locale or self.locale)
         while self._running or not self._activity_queue.empty():
             try:
                 # 尝试从队列获取活动（超时1秒）
@@ -492,6 +479,11 @@ class ZepGraphMemoryUpdater:
                 logger.error(f"工作循环异常: {e}")
                 time.sleep(1)
     
+    def _accounts_metadata(self, text: str) -> Dict[str, str]:
+        """The episode's "accounts": the graph node of each account its text names (a JSON string)."""
+        named = {name: uuid for name, uuid in getattr(self, "accounts", {}).items() if name in text}
+        return {"accounts": json.dumps(named, ensure_ascii=False, sort_keys=True)} if named else {}
+
     def _build_episode_payloads(
         self,
         activities: List[AgentActivity],
@@ -551,6 +543,9 @@ class ZepGraphMemoryUpdater:
                     metadata={
                         "source": "mirofish_simulation",
                         "simulation_id": self.simulation_id,
+                        # The record language: the local memory writes its
+                        # rules facts and summaries in it (memory/activity.py).
+                        "language": self.locale,
                         "platform": platform,
                         "activity_count": len(payload_activities),
                         "first_round": min(a.round_num for a in payload_activities),
@@ -564,6 +559,7 @@ class ZepGraphMemoryUpdater:
                             for value in sorted({a.action_type for a in payload_activities})
                             if value
                         ) or "unknown",
+                        **self._accounts_metadata(combined_text),
                     },
                 )
 
@@ -702,13 +698,22 @@ class ZepGraphMemoryManager:
     _lock = threading.Lock()
     
     @classmethod
-    def create_updater(cls, simulation_id: str, graph_id: str) -> ZepGraphMemoryUpdater:
+    def create_updater(
+        cls,
+        simulation_id: str,
+        graph_id: str,
+        locale: Optional[str] = None,
+        accounts: Optional[Dict[str, str]] = None,
+    ) -> ZepGraphMemoryUpdater:
         """
         为模拟创建图谱记忆更新器
         
         Args:
             simulation_id: 模拟ID
             graph_id: Zep图谱ID
+            locale: the gathering's record language; looked up from the
+                simulation's project when not given
+            accounts: account name -> graph node uuid (account_nodes)
             
         Returns:
             ZepGraphMemoryUpdater实例
@@ -721,6 +726,8 @@ class ZepGraphMemoryManager:
             updater = ZepGraphMemoryUpdater(
                 graph_id,
                 simulation_id=simulation_id,
+                locale=locale,
+                accounts=accounts,
             )
             updater.start()
             cls._updaters[simulation_id] = updater
@@ -830,7 +837,7 @@ class ZepGraphMemoryManager:
                 f"{simulation_id}: {error}"
                 for simulation_id, error in errors
             )
-            raise RuntimeError(f"部分图谱更新器未完整停止: {details}")
+            raise RuntimeError(f"Some graph memory updaters did not stop completely: {details}")
         logger.info("已停止所有图谱记忆更新器")
     
     @classmethod

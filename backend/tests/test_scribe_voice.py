@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.config import Config
+from app.services import language_guard
 from app.services import report_agent as ra
 from app.services.report_agent import (
     ReportAgent,
@@ -28,7 +29,7 @@ from app.services.report_agent import (
     observation_in_city_words,
     scribe_voice,
 )
-from app.utils.locale import get_language_instruction, set_locale
+from app.utils.locale import language_instruction_for, set_locale
 
 QUESTION = "Should Athens let Socrates walk free before the sacred ship returns?"
 ROSTER = {"crito_719": "Crito", "citizenjury_688": "CitizenJury"}
@@ -54,6 +55,20 @@ def banned_in(text):
     return sorted({m.group(0) for pattern in PROMPT_BANNED for m in pattern.finditer(text)})
 
 
+@pytest.fixture(autouse=True)
+def _no_real_translator(monkeypatch):
+    """The language guard never reaches the real model here, nor a configured record language."""
+
+    def refuse():
+        raise AssertionError("tests never reach the real model")
+
+    language_guard.clear_cache()
+    monkeypatch.delenv("PARTHENON_RECORD_LANGUAGE", raising=False)
+    monkeypatch.setattr(language_guard, "default_translator", refuse)
+    yield
+    language_guard.clear_cache()
+
+
 class ScriptedLLM:
     """Replies from a list, recording every conversation it was shown."""
 
@@ -73,7 +88,7 @@ class ScriptedLLM:
         return self.outline
 
 
-def make_agent(llm, simulation_id="s", question=QUESTION):
+def make_agent(llm, simulation_id="s", question=QUESTION, language=None):
     zep = MagicMock()
     zep.get_simulation_context.return_value = {
         "graph_statistics": {"total_nodes": 40, "total_edges": 90, "entity_types": {"Person": 18}},
@@ -86,6 +101,7 @@ def make_agent(llm, simulation_id="s", question=QUESTION):
         simulation_requirement=question,
         llm_client=llm,
         zep_tools=zep,
+        language=language,
     )
     agent.report_logger = None
     agent._execute_tool = MagicMock(return_value="Crito: the guards are paid and the ship is close.")
@@ -107,7 +123,7 @@ SEARCHES = [
 
 def without_data(text, *data):
     """The instructions alone: drop the question, the notes and the language line."""
-    for piece in (get_language_instruction(), *data):
+    for piece in (language_instruction_for("en"), *data):
         if piece:
             text = text.replace(piece, "")
     return text
@@ -139,15 +155,16 @@ def test_no_instruction_carries_the_machines_words(name, text):
     assert not re.search(r'[\u3400-\u9fff]', text), name
 
 
-@pytest.mark.parametrize(("locale", "glossary"), [("zh", True), ("en", False)])
-def test_a_chinese_chronicle_is_given_the_citys_chinese_names(locale, glossary):
-    set_locale(locale)
+@pytest.mark.parametrize(("language", "glossary"), [("zh", True), ("en", False)])
+def test_a_chinese_chronicle_is_given_the_citys_chinese_names(language, glossary):
+    # The Chronicle's own language decides, never the thread's or the request's.
+    set_locale("en" if language == "zh" else "zh")
     llm = ScriptedLLM(outline={"title": "T", "summary": "S", "sections": []})
-    make_agent(llm).plan_outline()
+    make_agent(llm, language=language).plan_outline()
 
     system = llm.seen[0][0]["content"]
     assert (ra.SCRIBE_WORDS_ZH in system) is glossary
-    assert system.endswith(get_language_instruction())
+    assert system.endswith(language_instruction_for(language))
     assert banned_in(ra.SCRIBE_WORDS_ZH) == []
 
 
@@ -172,7 +189,7 @@ def test_the_outline_prompt_is_the_scribes():
     system, user = llm.seen[0][0]["content"], llm.seen[0][1]["content"]
     assert system.startswith("You are the Scribe of Athens.")
     assert ra.SCRIBE_WORDS in system
-    assert system.endswith(get_language_instruction())
+    assert system.endswith(language_instruction_for("en"))
     facts = json.dumps(["Crito offered to bribe the guards."], ensure_ascii=False, indent=2)
     assert banned_in(without_data(system)) == []
     assert banned_in(without_data(user, QUESTION, facts, "['Person']")) == []
@@ -191,7 +208,7 @@ def test_every_message_in_a_chapter_is_the_scribes():
     system = llm.seen[0][0]["content"]
     assert system.startswith("You are the Scribe of Athens, writing one chapter of the Chronicle.")
     assert ra.SCRIBE_WORDS in system
-    assert system.endswith(get_language_instruction())
+    assert system.endswith(language_instruction_for("en"))
     notes = "Crito: the guards are paid and the ship is close."
     ours = [m["content"] for m in llm.seen[-1] if m["role"] in ("system", "user")]
     assert len(ours) >= 5
@@ -404,6 +421,44 @@ def test_a_chinese_chronicle_gets_its_own_words():
     assert voiced == "在广场上，公民们争论到第12小时。各类公民都发言了。雅典"
 
 
+HEMLOCK_QUOTE = "苏格拉底在对话中坚定论证，逃跑将违背他一生尊崇的城邦法律"
+
+
+def test_english_prose_quoting_chinese_at_length_is_still_english():
+    # Mostly Chinese by its letters, but every Chinese letter is a citizen's quoted words.
+    text = f'On Twitter, Socrates argued with 3 agents.\n\n> "{HEMLOCK_QUOTE * 3}"'
+    voiced, _ = scribe_voice(text)
+
+    assert voiced.startswith("In the Agora, Socrates argued with 3 citizens.")
+    assert "广场" not in voiced and "公民" not in voiced
+    inline = f'On Twitter, Socrates said “{HEMLOCK_QUOTE * 3}” and the agents left.'
+    assert scribe_voice(inline)[0].startswith("In the Agora, Socrates said")
+
+
+def test_chinese_prose_quoting_english_is_still_chinese():
+    voiced, _ = scribe_voice("在Twitter上，他们争论不休。他说“the simulated agents on Twitter lie all day long”。")
+    assert voiced.startswith("在广场上，他们争论不休。")
+
+
+def test_the_language_given_is_the_language_used():
+    text = f"On Twitter, the agents argued. {HEMLOCK_QUOTE * 3}"  # no quotation marks to go by
+    assert scribe_voice(text, lang="en")[0].startswith("In the Agora, the citizens argued.")
+    assert scribe_voice(text, lang="zh")[0].startswith("On 广场, the agents argued.")
+
+
+@pytest.mark.parametrize(("language", "expected"), [
+    ("en", "In the Agora, the citizens argued."),
+    ("zh", "在广场上，公民们争论。"),
+])
+def test_the_scribes_own_pass_is_in_the_chronicles_language(language, expected):
+    agent = make_agent(ScriptedLLM(), language=language)
+    text = "On Twitter, the simulated agents argued." if language == "en" else "在Twitter上，模拟Agent们争论。"
+    # Without quotation marks the letters alone would call this English prose Chinese.
+    text_with_notes = f"{text}\n\n{HEMLOCK_QUOTE * 3}" if language == "en" else text
+    voiced = agent._in_scribe_voice(text_with_notes, "chapter 1", agent.language)
+    assert voiced.startswith(expected)
+
+
 def test_prose_without_the_machines_words_is_untouched():
     text = (
         "Mayor Despina Nomikou holds the casting vote and refuses to spend it early.\n\n"
@@ -415,16 +470,28 @@ def test_prose_without_the_machines_words_is_untouched():
     assert notes == []
 
 
+RAW_NOTES = (
+    "## 深度采访报告\n**采访人数:** 3 / 18 位模拟Agent\n【Twitter平台回答】\nThe ship is late.\n\n"
+    "【Reddit平台回答】\n（该平台未获得回复）\nThey met on Twitter."
+)
+
+
 def test_the_scribe_reads_her_notes_relabelled():
-    raw = (
-        "**采访人数:** 3 / 18 位模拟Agent\n【Twitter平台回答】\nThe ship is late.\n\n"
-        "【Reddit平台回答】\n（该平台未获得回复）\nThey met on Twitter."
-    )
-    seen = observation_in_city_words(raw)
+    seen = observation_in_city_words(RAW_NOTES)
 
     assert "Twitter" not in seen and "Reddit" not in seen and "Agent" not in seen
-    assert "【In the Agora】" in seen and "【In the Stoa】" in seen
+    assert "[In the Agora]" in seen and "[In the Stoa]" in seen
     assert "They met in the Agora." in seen
+
+
+def test_an_english_chronicle_reads_english_labels_and_a_chinese_one_its_own():
+    english = observation_in_city_words(RAW_NOTES, "en")
+    assert english.startswith("## The citizens questioned\n**Citizens questioned:** 3 / 18 citizens\n[In the Agora]")
+    assert "(no answer here)" in english
+    assert banned_in(english.replace("The ship is late.", "")) == []
+
+    chinese = observation_in_city_words(RAW_NOTES, "zh")
+    assert chinese.startswith("## 采访记录\n**采访人数:** 3 / 18 位公民\n【In the Agora】")
 
 
 # ── Every path runs through it ──
@@ -480,7 +547,7 @@ def test_the_scribe_is_shown_interview_citizens_and_the_engine_runs_interview_ag
     assert agent._execute_tool.call_args_list[0].args[0] == "interview_agents"
     observation = llm.seen[1][-1]["content"]
     assert "interview_citizens answered" in observation
-    assert "【In the Agora】" in observation
+    assert "[In the Agora]" in observation
     assert banned_in(without_data(observation, "The city voted.")) == []
 
 
@@ -561,7 +628,7 @@ def test_the_symposium_answer_after_a_search_is_voiced_too(monkeypatch, gatherin
     # The tool calls go back under the names the Symposium already knows.
     assert [c["name"] for c in result["tool_calls"]] == ["quick_search", "interview_agents"]
     observation = llm.seen[1][-1]["content"]
-    assert observation.startswith("[quick_search answered]\n【In the Stoa】")
+    assert observation.startswith("[quick_search answered]\n[In the Stoa]")
 
 
 def test_the_symposium_reads_an_older_chronicle_in_the_citys_words(monkeypatch):
@@ -591,7 +658,7 @@ def test_what_is_left_is_logged_for_the_owner_not_shown_as_trouble():
     scribe_log.addHandler(listener)
     scribe_log.setLevel(logging.DEBUG)
     try:
-        voiced = make_agent(ScriptedLLM())._in_scribe_voice("The platform held; Twitter cheered.", "chapter 1")
+        voiced = make_agent(ScriptedLLM())._in_scribe_voice("The platform held; Twitter cheered.", "chapter 1", "en")
     finally:
         scribe_log.removeHandler(listener)
         scribe_log.setLevel(level)

@@ -45,7 +45,14 @@ from ..public.providers import remember_health
 from ..models.project import ProjectManager
 from ..services import chronicle_film, citizen_portraits, symposium_memory
 from ..services.floor import speaker_for_file
-from ..services.report_agent import ReportManager, ReportStatus, scribe_voice
+from ..services.language_guard import (
+    configured_record_language,
+    ensure_language,
+    ensure_language_many,
+    foreign_script,
+    record_language,
+)
+from ..services.report_agent import ReportManager, ReportStatus, chronicle_language, scribe_voice
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner
 from ..services.stage_oracle import (
@@ -54,7 +61,7 @@ from ..services.stage_oracle import (
     StageValidationError,
 )
 from ..utils.llm_client import LLMResponseError
-from ..utils.locale import get_locale, t
+from ..utils.locale import get_locale, normalize_lang, t
 from ..utils.logger import get_logger
 from ..utils.zep import ZepApiError, get_zep_client
 
@@ -234,7 +241,10 @@ def instance_status():
     memory backend. zepKeyValid is True once Zep Cloud accepted ZEP_API_KEY
     (always True locally), False when it rejected it (zepProblem says why)
     and None when unknown. llmProblem says why the Oracle and runs cannot
-    reach a working LLM, or is None.
+    reach a working LLM, or is None. recordLanguage is the language every
+    gathering's record is written in when this instance fixes one
+    (PARTHENON_RECORD_LANGUAGE: 'en' on the public steps), else None: each
+    gathering then keeps the language it was begun in.
     """
 
     backend = _memory_backend()
@@ -255,6 +265,7 @@ def instance_status():
             'llmProblem': public.public_problem(llm_problem),
             'upstream': (os.environ.get('PARTHENON_UPSTREAM') or 'grok').strip().lower(),
             'model': Config.LLM_MODEL_NAME,
+            'recordLanguage': configured_record_language(),
             # public, provider, features {portraits, film, voice} and limits
             # (None off the public steps).
             **public.status_fields(health),
@@ -352,7 +363,47 @@ def draft_stage():
         )
         return _error('The Oracle could not draft the stage; check the server logs.', 500)
 
-    return jsonify({'success': True, 'data': draft})
+    return jsonify({'success': True, 'data': draft_in_visitor_language(draft)})
+
+
+def draft_in_visitor_language(draft):
+    """The Oracle's draft in the language of the visitor who asked for it.
+
+    The draft is a live answer: the visitor reads it and edits it on the
+    stage, so it is checked for their language (the one the Oracle was told
+    to write in), never rewritten into the record's. What they then submit is
+    their own writing, kept as a question they wrote is kept; whatever writes
+    the record from it writes in the record language. On a Chinese visitor's
+    stage nothing is sent to the translator. The speakers' names are the
+    visitor's own and are left as they are.
+    """
+
+    if not isinstance(draft, dict):
+        return draft
+    lang = get_locale()
+    places = []  # (path, text): where each drafted text sits in the draft
+    for key in ('title', 'question', 'happensNext'):
+        places.append(((key,), draft.get(key)))
+    for group, fields in (('speakers', ('words',)), ('audience', ('name', 'description'))):
+        items = draft.get(group)
+        for index, item in enumerate(items if isinstance(items, list) else []):
+            if isinstance(item, dict):
+                places.extend(((group, index, field), item.get(field)) for field in fields)
+    if not any(foreign_script(text, lang) for _path, text in places):
+        return draft
+    checked = ensure_language_many(
+        [text for _path, text in places], lang, context='a stage drafted for a gathering in ancient Athens'
+    )
+    draft = {**draft, 'speakers': [dict(item) if isinstance(item, dict) else item
+                                   for item in draft.get('speakers') or []],
+             'audience': [dict(item) if isinstance(item, dict) else item
+                          for item in draft.get('audience') or []]}
+    for (path, _text), text in zip(places, checked):
+        if len(path) == 1:
+            draft[path[0]] = text
+        else:
+            draft[path[0]][path[1]][path[2]] = text
+    return draft
 
 
 # ============== Film the Chronicle ==============
@@ -423,7 +474,9 @@ def start_chronicle_film(report_id):
         return _error('The Chronicle is not finished yet; film it once it is complete.', 409)
 
     try:
-        chronicle_film.start_film(report, voice=voice, shots=shots, locale=get_locale())
+        # Filmed in the Chronicle's own language, whoever presses Film: there is
+        # one film of a Chronicle, and every visitor sees it.
+        chronicle_film.start_film(report, voice=voice, shots=shots, locale=chronicle_language(report))
     except chronicle_film.FilmValidationError as error:
         return _error(str(error), 400)
     except chronicle_film.FilmConflictError as error:
@@ -678,7 +731,27 @@ def citizen_stances(simulation_id):
         return _error(citizen_portraits.NOT_FOUND_MESSAGE, 404)
     reading = citizen_portraits.get_stances(canonical)
     data = {'simulation_id': canonical, **{key: reading.get(key) for key in STANCE_FIELDS}}
+    data['citizens'] = turns_in_language(data.get('citizens'), data.get('lang'))
     return jsonify({'success': True, 'data': data})
+
+
+def turns_in_language(citizens, lang):
+    """The ledger's citizens with every turn in lang, the gathering's language (new copies).
+
+    A turn in another language altogether is already hidden by the reader;
+    this catches the one that quotes a line in another script.
+    """
+
+    if not isinstance(citizens, list):
+        return citizens
+    turns = [item.get('turn') if isinstance(item, dict) else None for item in citizens]
+    if not any(foreign_script(turn, lang) for turn in turns):
+        return citizens
+    checked = ensure_language_many(turns, lang, context='how a citizen of Athens changed their mind')
+    return [
+        {**item, 'turn': turn} if isinstance(item, dict) and turn != item.get('turn') else item
+        for item, turn in zip(citizens, checked)
+    ]
 
 
 # ============== The one who had the floor ==============
@@ -755,8 +828,10 @@ def ask_the_speaker(simulation_id):
         except Exception:  # noqa: BLE001 - only the name is missing then
             entry = None
         return _speaker_error('api.speaker.failed', 500, name=_speaker_name(entry, sent_name))
+    # A live answer: in the language the visitor asked in (a quotation from a
+    # record in another is translated).
     return jsonify({'success': True, 'data': {
-        'answer': answer['answer'],
+        'answer': ensure_language(answer['answer'], answer['lang'], context='an answer at the Symposium'),
         'from_memory': True,
         'lang': answer['lang'],
         'speaker': answer['speaker'],
@@ -812,9 +887,18 @@ def speak_words():
     part = body.get('part')
     if part is not None and (isinstance(part, bool) or not isinstance(part, int)):
         return _error('part must be a number.', 400)
+    text = body.get('text')
+    if (
+        body.get('lang') is not None
+        and isinstance(text, str)
+        and len(text) <= citizen_portraits.MAX_VOICE_INPUT_CHARS
+        and foreign_script(text, body['lang'])
+    ):
+        # The visitor hears the words in the language they read in.
+        text = ensure_language(text, body['lang'], context='words spoken aloud at the Symposium')
     try:
         spoken = citizen_portraits.speak(
-            body.get('text'), voice=body.get('voice'), simulation_id=body.get('simulation_id'),
+            text, voice=body.get('voice'), simulation_id=body.get('simulation_id'),
             agent_id=agent_id, name=body.get('name'), lang=body.get('lang'), part=part,
         )
     except citizen_portraits.VoiceValidationError as error:
@@ -1148,42 +1232,58 @@ def city_facts(simulation_id):
 
 
 def _chronicle_facts(report_id):
-    """(simulation_id, question) of a Chronicle from its meta.json, or (None, '')."""
+    """(simulation_id, question, language) of a Chronicle from its meta.json, or (None, '', None).
+
+    language is the one the Chronicle is written in: stored with it, else
+    (for one begun before it was stored) its gathering's record language.
+    """
 
     if not chronicle_film.valid_report_id(report_id):
-        return None, ''
+        return None, '', None
+    path = os.path.join(ReportManager.REPORTS_DIR, report_id, 'meta.json')
+    # Cached until meta.json changes: a mended Chronicle may be given its language.
+    stamp = _file_stamp(path)
     cached = _recall(_chronicle_facts_cache, report_id)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
     try:
-        with open(os.path.join(ReportManager.REPORTS_DIR, report_id, 'meta.json'), 'r',
-                  encoding='utf-8') as handle:
+        with open(path, 'r', encoding='utf-8') as handle:
             meta = json.load(handle)
     except (OSError, ValueError):
-        return None, ''
+        return None, '', None
     if not isinstance(meta, dict):
-        return None, ''
+        return None, '', None
     simulation_id = meta.get('simulation_id') if isinstance(meta.get('simulation_id'), str) else None
     question = meta.get('simulation_requirement')
-    facts = (simulation_id, question if isinstance(question, str) else '')
-    # Neither changes once the Chronicle is begun.
-    _remember(_chronicle_facts_cache, report_id, facts, CHRONICLE_FACTS_CACHE_SIZE)
+    question = question if isinstance(question, str) else ''
+    language = normalize_lang(meta.get('language'), default=None) or record_language(
+        simulation_id=simulation_id, requirement=question or None,
+    )
+    facts = (simulation_id, question, language)
+    _remember(_chronicle_facts_cache, report_id, (stamp, facts), CHRONICLE_FACTS_CACHE_SIZE)
     return facts
 
 
 class _CityWords:
-    """scribe_voice() with one gathering's roster, clock and question."""
+    """scribe_voice() with one gathering's roster, clock and question, in its Chronicle's language.
 
-    def __init__(self, simulation_id, question):
+    The language is the Chronicle's, told, never guessed from the text: an
+    English chapter quoting a Chinese answer must not be given Chinese words.
+    """
+
+    def __init__(self, simulation_id, question, lang=None):
         self.roster, self.time_unit = city_facts(simulation_id) if simulation_id else ({}, None)
         self.question = question if isinstance(question, str) else ''
+        self.lang = normalize_lang(lang, default=None) or record_language(
+            simulation_id=simulation_id, requirement=self.question or None,
+        )
         self.rewrites = 0
 
     def __call__(self, text):
         if not isinstance(text, str) or not text.strip():
             return text
         voiced, notes = scribe_voice(
-            text, roster=self.roster, time_unit=self.time_unit, question=self.question
+            text, roster=self.roster, time_unit=self.time_unit, question=self.question, lang=self.lang,
         )
         self.rewrites += sum(1 for note in notes if note.get('kind') == 'rewrote')
         return voiced
@@ -1210,7 +1310,10 @@ def _record_in_city_words(record):
 
     if not isinstance(record, dict):
         return record, 0
-    words = _CityWords(record.get('simulation_id'), record.get('simulation_requirement'))
+    # The report routes answer with the Chronicle's language (report._chronicle_record).
+    words = _CityWords(
+        record.get('simulation_id'), record.get('simulation_requirement'), record.get('language'),
+    )
     record = dict(record)
     outline = record.get('outline')
     markdown = record.get('markdown_content')
@@ -1269,7 +1372,8 @@ def chronicle_in_city_words(endpoint, view_args, payload):
         voiced = []
         for item in data:
             if isinstance(item, dict) and isinstance(item.get('report_title'), str):
-                words = _CityWords(item.get('simulation_id'), item.get('simulation_requirement'))
+                language = _chronicle_facts(item.get('report_id'))[2] if item.get('report_id') else None
+                words = _CityWords(item.get('simulation_id'), item.get('simulation_requirement'), language)
                 item = {**item, 'report_title': words(item['report_title'])}
                 rewrites += words.rewrites
             voiced.append(item)

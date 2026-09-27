@@ -551,6 +551,59 @@ export function questionToOffer(stage, locale, lastOffered = '') {
 }
 
 // ---------------------------------------------------------------------------
+// The stage as its record keeps it
+
+// Which offered question the box holds, untouched: 'suggestion', a quarrel, or
+// null (their own words, or nothing). An offer the Oracle put in the box
+// (lastOffered) still counts after the names on the floor have changed.
+function offeredQuestion(stage, locale, lastOffered) {
+  const q = str(stage && stage.question).trim()
+  if (!q) return null
+  const era = stage && stage.era
+  const source = questionSource(stage, locale)
+  if (source === 'suggestion') return source
+  if (source) return quarrelsFor(era).find((x) => x.id === source) || null
+  if (!lastOffered || q !== str(lastOffered).trim()) return null
+  return quarrelsFor(era).find((x) => q.startsWith(quarrelText(x, locale))) || 'suggestion'
+}
+
+// An offered matter (a quarrel of an age, or one of today's `sparks`) in
+// language `to`; a matter the visitor wrote comes back as written.
+function matterIn(topic, to, sparks) {
+  const s = str(topic).trim()
+  if (!s) return topic
+  for (const list of Object.values(QUARRELS)) {
+    for (const q of list) {
+      if (q.topic && (q.topic === s || (q.zh && q.zh.topic === s))) return pick(q, to).topic || q.topic
+    }
+  }
+  const lists = [sparks && sparks.en, sparks && sparks.zh].map((l) => (Array.isArray(l) ? l.map((x) => str(x).trim()) : []))
+  for (const list of lists) {
+    const i = list.indexOf(s)
+    if (i >= 0) return lists[isZh(to) ? 1 : 0][i] || topic
+  }
+  return topic
+}
+
+// A gathering's record is kept in one language (the city's recordLanguage).
+// What the Oracle offered the visitor in theirs (`from`), a matter, a place or
+// her question, goes into the record in `to`: the same offer, in that
+// language. Whatever the visitor wrote or changed stays as written. `sparks`
+// are today's matters from the locale files, in the same order in each
+// language ({ en: [topic], zh: [topic] }); `lastOffered` is the question the
+// Oracle last put in the box. Returns a copy; the stage itself is left alone.
+export function stageForRecord(stage, from, to, { sparks = {}, lastOffered = '' } = {}) {
+  const copy = JSON.parse(JSON.stringify(stage && typeof stage === 'object' ? stage : {}))
+  if (!to || isZh(from) === isZh(to)) return copy
+  const offered = offeredQuestion(stage, from, lastOffered)
+  copy.topic = matterIn(copy.topic, to, sparks)
+  if (isOfferedSetting(copy.setting)) copy.setting = localSetting(copy.setting, to)
+  if (offered === 'suggestion') copy.question = suggestQuestionFor(copy, to)
+  else if (offered) copy.question = quarrelQuestion(copy, offered, to)
+  return copy
+}
+
+// ---------------------------------------------------------------------------
 // Validity, step by step
 
 // Problems that keep the visitor on a step, as { code, params }.

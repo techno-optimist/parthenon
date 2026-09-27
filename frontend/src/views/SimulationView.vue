@@ -54,7 +54,7 @@ import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, stopSimulation, getRunStatus, findGatherings } from '../api/simulation'
-import { RUN_LENGTHS, stripIds, wayLinks, gatheringStanding } from '../parthenon/vocabulary.js'
+import { RUN_LENGTHS, stripIds, readable, wayLinks, gatheringStanding } from '../parthenon/vocabulary.js'
 import { buildWebModel } from '../parthenon/web.js'
 import { canControl } from '../parthenon/access.js'
 
@@ -255,7 +255,7 @@ const loadSimulationData = async () => {
         }
       }
     } else {
-      addLog(t('parthenon.gathering.ledger.recordMissing', { error: simRes.error || t('common.unknownError') }))
+      addLog(t('parthenon.gathering.ledger.recordMissing', { error: readable(simRes.error, t('common.otherTongue')) || t('common.unknownError') }))
     }
   } catch (err) {
     addLog(t('parthenon.gathering.ledger.recordMissing', { error: err.message }))

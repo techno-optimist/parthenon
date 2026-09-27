@@ -41,7 +41,15 @@ export const followVocabularyLocale = (read) => {
 }
 
 // Chinese has no spaces between words and no capitals.
-const hasHan = (text) => /[㐀-鿿]/.test(String(text || ''))
+// Han, as the engine's language guard counts it: the radicals, the unified
+// ideographs and extension A, the compatibility block and the supplementary
+// planes. CJK punctuation: 、。「」『』 and the ideographic space, ，：；！？（）
+// and the other full-width forms. Curly quotes and … are everyone's.
+const HAN_CLASS = '\\u2e80-\\u2eff\\u2f00-\\u2fdf\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u{20000}-\\u{2fa1f}'
+const CJK_PUNCT_CLASS = '\\u3000-\\u303f\\ufe10-\\ufe19\\ufe30-\\ufe6f\\uff01-\\uff65\\uffe0-\\uffee'
+const HAN_RE = new RegExp(`[${HAN_CLASS}]`, 'u')
+const CJK_PUNCT_RE = new RegExp(`[${CJK_PUNCT_CLASS}]`, 'u')
+const hasHan = (text) => HAN_RE.test(String(text || ''))
 
 export const PLATFORMS = {
   twitter: { name: 'the Agora', title: 'The Agora', short: 'Agora' },
@@ -208,10 +216,28 @@ const chineseTypeName = (raw) => {
   return englishTypeName(raw)
 }
 
+// A type the engine wrote in Chinese, read back into English: the whole type
+// or one known word, else the plainest role there is. An English reader never
+// meets the Chinese.
+const firstKeyByValue = (table) => {
+  const out = new Map()
+  for (const [key, value] of Object.entries(table)) {
+    if (hasHan(value) && !out.has(value)) out.set(value, key)
+  }
+  return out
+}
+const TYPES_FROM_ZH = firstKeyByValue(ENTITY_TYPES_ZH)
+const TYPE_WORDS_FROM_ZH = firstKeyByValue(TYPE_WORDS_ZH)
+const englishFromChineseType = (raw) => {
+  if (TYPES_FROM_ZH.has(raw)) return englishTypeName(TYPES_FROM_ZH.get(raw))
+  if (TYPE_WORDS_FROM_ZH.has(raw)) return TYPE_WORDS_FROM_ZH.get(raw)
+  return ENTITY_TYPES.Person
+}
+
 export const entityTypeName = (type, locale) => {
   const raw = String(type || '').trim()
   if (!raw) return ''
-  if (hasHan(raw)) return raw
+  if (hasHan(raw)) return useLang(locale) === 'zh' ? raw : englishFromChineseType(raw)
   return useLang(locale) === 'zh' ? chineseTypeName(raw) : englishTypeName(raw)
 }
 
@@ -380,10 +406,18 @@ const TIES_ZH = {
   RIVAL_OF: '对抗'
 }
 
+// A tie the engine named in Chinese reads as its English tie, or as the
+// plainest one ("is tied to") for an English reader.
+const TIES_FROM_ZH = firstKeyByValue(TIES_ZH)
+
 export const tieName = (name, locale) => {
   const raw = String(name || '').trim()
   if (!raw) return ''
-  if (hasHan(raw)) return raw
+  if (hasHan(raw)) {
+    if (useLang(locale) === 'zh') return raw
+    const key = TIES_FROM_ZH.get(raw)
+    return key ? TIES[key] || key.replace(/_/g, ' ').toLowerCase() : TIES.RELATES_TO
+  }
   if (useLang(locale) === 'zh') {
     const key = raw.toUpperCase().replace(/[\s-]+/g, '_')
     if (key in TIES_ZH) return TIES_ZH[key]
@@ -634,14 +668,24 @@ const CITY_WORDS_ZH = [
   [/\s*\bReddit\b\s*/g, '柱廊'],
   [/\s*\bLLM\b\s*|大语言模型|大模型/g, '书记官']
 ]
-export const cityWords = (text, locale) => {
+// `locale` is the language of the words: for the gathering's own record, the
+// record's language (never a guess from the text). `reader` is the language
+// of whoever reads them (the visitor's, by default). Chinese never reaches an
+// English reader: Chinese left in English text is dropped (dropForeign). A
+// Chinese reader keeps it, the engine's words put into the city's.
+export const cityWords = (text, locale, reader) => {
   let out = String(text ?? '')
-  if (useLang(locale) === 'zh' && hasHan(out)) {
+  if (useLang(locale) === 'zh' || (useLang(reader) === 'zh' && hasHan(out))) {
+    if (!hasHan(out)) return englishCityWords(out)
     for (const [re, rep] of CITY_WORDS_ZH) out = out.replace(re, rep)
     return out.replace(/市民市民/g, '市民').replace(/[ \t]{2,}/g, ' ').trim()
   }
-  // A common word that opened its sentence keeps its capital ("Agents" becomes
-  // "Citizens"); a name the engine wrote (Twitter) is replaced as it stands.
+  return englishCityWords(dropForeign(out, 'en'))
+}
+// A common word that opened its sentence keeps its capital ("Agents" becomes
+// "Citizens"); a name the engine wrote (Twitter) is replaced as it stands.
+const englishCityWords = (text) => {
+  let out = text
   for (const [re, rep] of CITY_WORDS) {
     out = re.flags.includes('i') && rep
       ? out.replace(re, (m) => (/^\p{Lu}/u.test(m) ? rep.charAt(0).toUpperCase() + rep.slice(1) : rep))
@@ -649,6 +693,109 @@ export const cityWords = (text, locale) => {
   }
   return out.replace(/\bthe the\b/gi, 'the').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:])/g, '$1').trim()
 }
+
+// ---------------------------------------------------------------------------
+// Words a reader cannot read. A visitor reading in English never meets
+// Chinese: not in the engine's notes and errors, not in the record. Chinese
+// readers are handed everything as it is.
+
+/** Whether text carries script a reader of `locale` cannot read: Han or CJK punctuation, for anyone but a Chinese reader. */
+export const foreignScript = (text, locale) => {
+  const s = String(text ?? '')
+  if (!s || useLang(locale) === 'zh') return false
+  return HAN_RE.test(s) || CJK_PUNCT_RE.test(s)
+}
+
+// Chinese punctuation set as English: a closing mark takes a space after it
+// before a word, an opening one a space before it after a word. "2，000" and
+// "10：30" stay tight.
+const CLOSING_MARKS = { '，': ',', '、': ',', '。': '.', '．': '.', '：': ':', '；': ';', '！': '!', '？': '?', '）': ')', '」': '"', '』': '"', '》': '"', '〉': '"', '】': ']', '〕': ']' }
+const OPENING_MARKS = { '（': '(', '「': '"', '『': '"', '《': '"', '〈': '"', '【': '[', '〔': '[' }
+const CJK_PUNCT_ALL = new RegExp(`[${CJK_PUNCT_CLASS}]`, 'gu')
+export const toAsciiPunct = (text) => {
+  const s = String(text ?? '')
+  if (!CJK_PUNCT_RE.test(s)) return s
+  const chars = [...s.replace(/——/g, ' - ').replace(/……/g, '…').replace(/\u3000/g, ' ')]
+  let out = ''
+  let skipSpaces = false
+  chars.forEach((ch, i) => {
+    if (skipSpaces && (ch === ' ' || ch === '\t')) return
+    skipSpaces = false
+    const next = chars[i + 1] || ''
+    if (ch in CLOSING_MARKS) {
+      out = out.replace(/(\S)[ \t]+$/, '$1')
+      const prev = out.slice(-1)
+      out += CLOSING_MARKS[ch]
+      const tight = (ch === '，' || ch === '：') && /\d/.test(prev) && /\d/.test(next)
+      if (!tight && /[\p{L}\p{N}(“"‘[*]/u.test(next)) out += ' '
+      return
+    }
+    if (ch in OPENING_MARKS) {
+      if (/[\p{L}\p{N}.,:;!?)\]"”*]$/u.test(out)) out += ' '
+      out += OPENING_MARKS[ch]
+      skipSpaces = true
+      return
+    }
+    out += ch
+  })
+  // Full-width letters, digits and signs are their ASCII selves; any other
+  // CJK mark has no English form and goes.
+  return out.replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(CJK_PUNCT_ALL, '')
+}
+
+/**
+ * Engine text (an error, a note, a ledger line) as a reader of `locale` can
+ * read it: unchanged for a Chinese reader; for anyone else, the fallback (the
+ * page's own words) when it carries Han, and English punctuation otherwise.
+ */
+export const readable = (text, fallback = '', locale) => {
+  const s = String(text ?? '')
+  if (!s || !foreignScript(s, locale)) return s
+  return hasHan(s) ? fallback : toAsciiPunct(s)
+}
+
+// Runs of Han with the CJK marks around them, across the spaces between them.
+const HAN_RUN = new RegExp(`[${CJK_PUNCT_CLASS}]*[${HAN_CLASS}][${HAN_CLASS}${CJK_PUNCT_CLASS}]*(?:[ \\t]*[${HAN_CLASS}][${HAN_CLASS}${CJK_PUNCT_CLASS}]*)*`, 'gu')
+// A line's Markdown lead ("> ", "- ", "## ", "1. ") and a speaker's lead-in ("**Crito:**", "Crito:").
+const LINE_LEAD = /^\s*(?:(?:>\s*)+|[-*+]\s+|#{1,6}\s+|\d+[.)]\s+)?(?:\*\*[^*\n]{1,60}?:?\*\*:?\s*|[\p{L}][\p{L} .'’-]{0,40}:\s+)?/u
+
+/**
+ * Text of a record in language `lang`, with what its reader cannot read taken
+ * out, line by line: the engine's last-line guard, again at the page. A line
+ * that is mostly Chinese goes whole; a line with a Chinese phrase in English
+ * keeps its English; Chinese punctuation is set as English. Nothing changes
+ * for a Chinese record. The record itself is mended by the engine, not here.
+ */
+export const dropForeign = (text, lang) => {
+  const s = String(text ?? '')
+  if (!foreignScript(s, lang)) return s
+  const lines = []
+  for (const line of s.split('\n')) {
+    if (!hasHan(line)) {
+      lines.push(toAsciiPunct(line))
+      continue
+    }
+    if (textLang(line) === 'zh') continue
+    const kept = toAsciiPunct(line.replace(HAN_RUN, ' '))
+      .replace(/[“"‘'(\[]\s*[”"’')\]]/g, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .replace(/([,;:])(?=[,.;:!?])/g, '')
+      .replace(/[ \t]+$/, '')
+    if (/[\p{L}\p{N}]{2,}/u.test(kept.replace(LINE_LEAD, ''))) lines.push(kept)
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/**
+ * What a reader (of `locale`; the visitor, by default) can read of text from
+ * a record written in `lang`. Only what the reader cannot read goes: an
+ * English reader of an English record loses its stray Chinese; a Chinese
+ * reader reads Chinese wherever it stands, and a Chinese record is read as it
+ * was written. Never decided by the record's language alone.
+ */
+export const forReader = (text, lang, locale) =>
+  dropForeign(text, useLang(locale) === 'zh' || useLang(lang) === 'zh' ? 'zh' : 'en')
 
 // A typographic voice per class of citizen (Pentiment's lesson): philosophers
 // and poets in Cormorant italic, officials and institutions with an inscription
@@ -677,6 +824,24 @@ export const textLang = (text) => {
   if (!han) return 'en'
   const latin = (s.match(/[A-Za-z]/g) || []).length
   return han / (han + latin) > 0.3 ? 'zh' : 'en'
+}
+
+// The language a gathering's record is written in, resolved as the engine
+// resolves it (language_guard.record_language): the language stored with the
+// record; for an older record without one, 'zh' when Han is at least a third
+// of the letters of its question; else `fallback` (the visitor's language).
+// Never a guess from one piece of the record's own text.
+export const recordLanguageOf = (record, fallback) => {
+  const stored = String(record?.language || '').trim().toLowerCase()
+  if (/^zh(?:$|[-_])/.test(stored)) return 'zh'
+  if (/^en(?:$|[-_])/.test(stored)) return 'en'
+  const question = String(record?.simulation_requirement ?? record?.requirement ?? '')
+  const letters = (question.match(/\p{L}/gu) || []).length
+  if (letters) {
+    const han = (question.match(new RegExp(HAN_RE.source, 'gu')) || []).length
+    return han * 3 >= letters ? 'zh' : 'en'
+  }
+  return useLang(fallback)
 }
 
 // A length on the steps is a span of minutes, or (for a week) of hours; a

@@ -27,6 +27,7 @@ import ActShell from '../components/ActShell.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'
+import { readable } from '../parthenon/vocabulary.js'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -44,7 +45,7 @@ const statusText = ref('')
 // No Chronicle at this address: the header says so plainly, and the Way
 // leads nowhere a missing Chronicle would claim.
 const missing = ref(false)
-const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.message || err || ''))
+const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.engineMessage || err?.message || err || ''))
 
 const shellStatus = computed(() => (missing.value ? 'ready' : currentStatus.value))
 const shellStatusText = computed(() => (missing.value ? t('parthenon.chronicle.notFoundStatus') : statusText.value))
@@ -99,7 +100,7 @@ const loadReportData = async () => {
       missing.value = true
       addLog(t('parthenon.chronicle.notFound'))
     } else {
-      addLog(t('step5.symposium.ledger.chronicleMissing', { error: reportRes.error || t('common.unknownError') }))
+      addLog(t('step5.symposium.ledger.chronicleMissing', { error: readable(reportRes.error, t('common.otherTongue')) || t('common.unknownError') }))
     }
   } catch (err) {
     if (asked !== currentReportId.value) return

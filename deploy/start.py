@@ -11,7 +11,9 @@ The public container's entrypoint: the bridge, then the backend, watched.
    become links into the data folder (the backend writes to them by paths
    relative to its source), and LOCAL_MEMORY_DB_PATH, HF_HOME and the Grok
    sign-in file (GROK_BRIDGE_TOKEN_FILE, default <data>/grok-oauth.json)
-   default to places inside it.
+   default to places inside it. On the public steps (PARTHENON_PUBLIC=1)
+   every gathering's record is written in English unless
+   PARTHENON_RECORD_LANGUAGE says otherwise.
 3. Started as root (the Render disk is mounted root-owned), it hands the data
    folder to the unprivileged user PARTHENON_USER (default parthenon), makes
    the Grok sign-in file, when there is one, that user's with mode 0600 (it
@@ -65,6 +67,7 @@ DATA_LAYOUT = (
 )
 PRIVATE_DIRS = ('uploads/memory',)
 KEYED = (('XAI_API_KEY', 'xai'), ('OPENAI_API_KEY', 'openai'), ('ANTHROPIC_API_KEY', 'anthropic'))
+TRUE_WORDS = frozenset({'1', 'true', 'yes', 'on'})  # as the backend reads PARTHENON_PUBLIC
 RENDER_STOP_SECONDS = 30  # Render's SIGKILL follows its SIGTERM after this long (no delay allowed with a disk)
 
 
@@ -146,6 +149,10 @@ def child_env(environ: Mapping[str, str], data: Path, port: int, bridge_port: in
     env.setdefault('LLM_BASE_URL', f'http://127.0.0.1:{bridge_port}/v1')
     env.setdefault('LLM_API_KEY', 'parthenon-bridge')
     env.setdefault('LLM_MODEL_NAME', 'parthenon-free')
+    if str(env.get('PARTHENON_PUBLIC') or '').strip().lower() in TRUE_WORDS:
+        # The public steps write every gathering's record in English (a visitor
+        # reading in Chinese still has the Chinese page and Chinese answers).
+        env.setdefault('PARTHENON_RECORD_LANGUAGE', 'en')
     if effective_upstream(env) == 'openrouter':
         # Graph building paced for the free tier (see .env.example). Read once by the backend: after a
         # first Grok sign-in it stays until the next restart, which only makes the Hearing a little slower.

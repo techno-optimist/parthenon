@@ -54,7 +54,7 @@ from .store import (
 )
 from .words import (
     CITY_FULL, COME_BACK_TOMORROW, INVITE_NEEDED, NOT_ON_PUBLIC_STEPS, NOT_YOURS, SLOW_DOWN,
-    TOO_LONG, in_other_language, refusal, request_language, settle_request_language, words,
+    TOO_LONG, has_chinese, in_other_language, refusal, request_language, settle_request_language, words,
 )
 
 
@@ -199,6 +199,9 @@ ROUTES: Dict[str, Rule] = {
     'parthenon.speak_words': Rule(VOICE),
     'parthenon.voice_file': Rule(READ),
     'parthenon.resolve_gathering': Rule(READ),
+    # The mend (api/mend.py): old records put in their record language
+    'mend.scan_records': Rule(ADMIN),
+    'mend.mend_records': Rule(ADMIN),
     # Added by app/public
     'public.featured_list': Rule(READ),
     'public.set_featured': Rule(ADMIN),
@@ -732,9 +735,15 @@ _MESSAGE_KEYS = ('error', 'message', 'detail', 'details')
 def speak_their_language(response) -> None:
     """An error a view wrote in the other language (a fixed Chinese message for an
     English visitor, or an English one for a Chinese visitor) is put in the city's
-    words in the visitor's own. Refusals with a code are already theirs."""
+    words in the visitor's own. Refusals with a code are already theirs.
 
-    if response.direct_passthrough or not response.is_json or response.status_code < 400:
+    An answer that succeeded carries notes too (a task's or a run's error, a
+    progress message); see _speak_in_success."""
+
+    if response.direct_passthrough or not response.is_json:
+        return
+    if response.status_code < 400:
+        _speak_in_success(response)
         return
     payload = response.get_json(silent=True)
     if not isinstance(payload, dict) or payload.get('success') is not False or payload.get('code'):
@@ -746,6 +755,74 @@ def speak_their_language(response) -> None:
     key = 'notFound' if status == 404 else 'stumbled' if status >= 500 else 'cannotDoThat'
     payload['error'] = words(key, lang)
     response.set_data(current_app.json.dumps(payload))
+
+
+# A body that may hold an error field: only then is a Chinese visitor's answer read.
+_ERROR_FIELD = re.compile(r'"error"\s*:\s*"')
+# What a note describes has failed.
+_FAILED_STATES = frozenset({'failed', 'error'})
+
+
+def _note_holders(payload: dict):
+    """The objects whose error and message the pages show: the body, its data (or each item
+    of a data list), and what those hold one level down (a task, a run, a ticket's result)."""
+
+    yield payload
+    data = payload.get('data')
+    tops = [data] if isinstance(data, dict) else (
+        [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    )
+    for top in tops:
+        yield top
+        for value in top.values():
+            if isinstance(value, dict):
+                yield value
+            elif isinstance(value, list):
+                yield from (item for item in value if isinstance(item, dict))
+
+
+def _calm_notes(holder: dict, lang: str) -> bool:
+    if holder.get('code'):
+        return False  # a refusal, already in the city's words
+    changed = False
+    failed = str(holder.get('status') or '').lower() in _FAILED_STATES or bool(holder.get('error'))
+    if in_other_language(holder.get('error'), lang):
+        holder['error'] = words('stumbled', lang)
+        changed = True
+    # A progress note in Chinese is no note for an English visitor: it goes, or
+    # is the calm line when what it describes failed. An English note stays
+    # for a Chinese visitor (the public steps keep their records in English).
+    if lang != 'zh' and in_other_language(holder.get('message'), lang):
+        holder['message'] = words('stumbled', lang) if failed else ''
+        changed = True
+    return changed
+
+
+def _speak_in_success(response) -> None:
+    """The safety net of an answer that succeeded: an error in the other language, or a Chinese
+    message for an English visitor, where the pages show one (_note_holders).
+
+    Cheap: an English visitor's answer is read only when it holds Chinese, a
+    Chinese visitor's only when it holds an error field."""
+
+    try:
+        text = response.get_data(as_text=True)
+    except Exception:  # noqa: BLE001 - a body that cannot be read is left alone
+        return
+    lang = request_language()
+    if not (_ERROR_FIELD.search(text) if lang == 'zh' else has_chinese(text)):
+        return
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return
+    if not isinstance(payload, dict) or payload.get('code'):
+        return
+    changed = False
+    for holder in _note_holders(payload):
+        changed = _calm_notes(holder, lang) or changed
+    if changed:
+        response.set_data(current_app.json.dumps(payload))
 
 
 def scrub_text(text: str) -> str:

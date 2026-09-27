@@ -52,9 +52,9 @@
         <p v-if="pollTrouble" class="cf-detail cf-detail--warn">{{ $t('parthenon.film.reconnecting') }}</p>
       </div>
 
-      <p v-if="film.title" class="cf-working">
+      <p v-if="filmWords(film.title)" class="cf-working">
         <span class="cf-working-label">{{ $t('parthenon.film.workingTitle') }}</span>
-        <span class="cf-working-title">{{ film.title }}</span>
+        <span class="cf-working-title">{{ filmWords(film.title) }}</span>
       </p>
 
       <p v-if="!shots.length" class="cf-quiet-line">{{ $t('parthenon.film.shotsPending') }}</p>
@@ -243,7 +243,7 @@
         </div>
         <figcaption class="cf-caption">
           <h3 ref="filmTitleEl" class="cf-film-title" tabindex="-1">{{ filmTitle }}</h3>
-          <p v-if="film.logline" class="cf-logline">{{ film.logline }}</p>
+          <p v-if="filmWords(film.logline)" class="cf-logline">{{ filmWords(film.logline) }}</p>
           <p v-if="metaLine" class="cf-meta">{{ metaLine }}</p>
         </figcaption>
       </figure>
@@ -265,7 +265,7 @@
     <div v-if="showSetup" class="cf-setup">
       <div v-if="view === 'failed'" ref="failedEl" class="cf-failed" role="alert" tabindex="-1">
         <p class="cf-failed-title">{{ $t('parthenon.film.failedTitle') }}</p>
-        <p class="cf-failed-detail">{{ film.error || $t('parthenon.film.failedFallback') }}</p>
+        <p class="cf-failed-detail">{{ readable(film.error, '') || $t('parthenon.film.failedFallback') }}</p>
       </div>
 
       <!-- The narrators are voices: each can be heard before it is chosen. A Hear
@@ -336,10 +336,13 @@ import i18n, { availableLocales } from '../i18n'
 import { FILM_VOICES, filmAssetUrl, getChronicleFilm, startChronicleFilm } from '../api/parthenon'
 import { sound, speak, stopSpeaking, voiceUrl, holdDuck } from '../parthenon/sound.js'
 import { canControl, featureOn } from '../parthenon/access.js'
+import { forReader, readable } from '../parthenon/vocabulary.js'
 
 const props = defineProps({
   reportId: String,
-  ready: Boolean
+  ready: Boolean,
+  // The language the Chronicle's record is written in, and so its film.
+  recordLang: { type: String, default: '' }
 })
 
 const { t } = useI18n()
@@ -390,7 +393,7 @@ const emptyFilm = () => ({
   title: null,
   logline: null,
   voice: null,
-  language: null,
+  lang: null,
   duration: null,
   error: null,
   shots: [],
@@ -498,14 +501,15 @@ const stageKey = computed(() => {
 
 const stageLabel = computed(() => {
   if (stageKey.value) return t(`parthenon.film.stages.${stageKey.value}`)
-  return film.message || t('parthenon.film.stageFallback')
+  return readable(film.message, '') || t('parthenon.film.stageFallback')
 })
 
 // Under a known stage the backend's message only adds something when it counts
 // ("Filming the shots (2 of 6 ready)"); otherwise it restates the stage.
-const stageDetail = computed(() =>
-  stageKey.value && film.message && /\d/.test(film.message) ? film.message : ''
-)
+const stageDetail = computed(() => {
+  const message = readable(film.message, '')
+  return stageKey.value && message && /\d/.test(message) ? message : ''
+})
 
 const pollTrouble = computed(() => view.value === 'running' && pollFailures.value >= 2)
 
@@ -534,11 +538,11 @@ const videoSrc = computed(() => assetSrc(film.video_url))
 const posterSrc = computed(() => assetSrc(film.poster_url))
 const captionsSrc = computed(() => assetSrc(film.captions_url))
 
-// The backend narrates and captions in the UI locale of the request that started the film.
-// Prefer the manifest's record, then the locale this panel started it in; a film found on
-// load was most likely started in the UI language still in use.
+// The backend narrates and captions in the language of the Chronicle's record (older films:
+// the UI locale of the request that started them). Prefer the film's own language (film.json
+// 'lang'), then the record's, then the locale this panel started it in, then the UI language.
 const captionsLang = computed(() =>
-  [film.language, startedLocale.value, i18n.global.locale.value]
+  [film.lang, film.language, props.recordLang, startedLocale.value, i18n.global.locale.value]
     .map((tag) => String(tag || '').trim())
     .find((tag) => LANGUAGE_TAG.test(tag)) || ''
 )
@@ -555,7 +559,13 @@ const captionsLabel = computed(() => {
   }
 })
 
-const filmTitle = computed(() => film.title || t('parthenon.film.untitled'))
+// The film's words, less what the visitor cannot read of them (forReader): a
+// Chinese reader keeps a Chinese film, whatever the record's language; an
+// English reader never meets Chinese, even in an older film made in Chinese
+// for an English record. Only a Chinese record's film is left as it was made.
+const filmWords = (text) => forReader(text, props.recordLang || film.lang || undefined, i18n.global.locale.value)
+
+const filmTitle = computed(() => filmWords(film.title) || t('parthenon.film.untitled'))
 
 const formatDuration = (seconds) => {
   const total = Math.round(Number(seconds))
@@ -594,7 +604,7 @@ const shots = computed(() =>
       return {
         key: shot.index ?? i,
         number: i + 1,
-        narration: typeof shot.narration === 'string' ? shot.narration : '',
+        narration: typeof shot.narration === 'string' ? filmWords(shot.narration) : '',
         thumb: assetSrc(shot.thumb_url),
         phase,
         statusLabel: phase === 'other'
@@ -889,7 +899,7 @@ let boundTrack = null
 const onCue = () => {
   const tr = boundTrack
   const active = tr && tr.activeCues ? Array.from(tr.activeCues) : []
-  cue.value = active.map((c) => String(c.text || '').replace(/<[^>]+>/g, '')).join(' ').trim()
+  cue.value = filmWords(active.map((c) => String(c.text || '').replace(/<[^>]+>/g, '')).join(' ')).trim()
 }
 const bindWords = () => {
   const v = videoEl.value

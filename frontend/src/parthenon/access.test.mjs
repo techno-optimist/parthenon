@@ -199,3 +199,17 @@ test('an invite_needed with no word shown only learns that the city asks for one
   inviteRefused('older')
   assert.equal(access.invite, 'newer')
 })
+
+test('the city names the one language it keeps its records in, or none', () => {
+  applyStatus({ public: true, recordLanguage: 'en' })
+  assert.equal(access.recordLanguage, 'en')
+  applyStatus({ public: true, recordLanguage: 'zh-CN' })
+  assert.equal(access.recordLanguage, 'zh')
+  applyStatus({ public: false, recordLanguage: null })
+  assert.equal(access.recordLanguage, null)
+  // An older city says nothing of it; nothing is assumed.
+  applyStatus({ public: true })
+  assert.equal(access.recordLanguage, null)
+  applyStatus({ public: true, recordLanguage: 'fr' })
+  assert.equal(access.recordLanguage, null)
+})
