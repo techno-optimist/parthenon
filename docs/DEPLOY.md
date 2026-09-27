@@ -489,7 +489,7 @@ docker build -f Dockerfile.render -t parthenon-public .
 docker run --rm --name parthenon -p 10000:10000 -v parthenon-data:/data \
   -e OPENROUTER_API_KEY=... -e PARTHENON_ADMIN_KEY=choose-one \
   -e PARTHENON_INVITE_CODE=choose-a-word \
-  -e PARTHENON_EXHIBITS_URL=https://github.com/techno-optimist/parthenon/releases/download/exhibits-v1/exhibits-v1.tar.gz \
+  -e PARTHENON_EXHIBITS_URL=https://github.com/techno-optimist/parthenon/releases/download/exhibits-v2/exhibits-v2.tar.gz \
   parthenon-public
 # then http://localhost:10000/parthenon/?invite=choose-a-word
 ```

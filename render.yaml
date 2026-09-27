@@ -105,9 +105,9 @@ services:
 
       # The two finished gatherings, installed on the first boot.
       - key: PARTHENON_EXHIBITS_URL
-        value: https://github.com/techno-optimist/parthenon/releases/download/exhibits-v1/exhibits-v1.tar.gz
+        value: https://github.com/techno-optimist/parthenon/releases/download/exhibits-v2/exhibits-v2.tar.gz
       - key: PARTHENON_EXHIBITS_SHA256
-        value: 9480b03711d2a600ebc50d04a8d2a577b5eae50f5ec0f6eeb2caca830da11936
+        value: 4fd8f1bdb8873de4e33eed29c5119002fa1ea8d0180d9977f0a0af45fc340a7e
 
       # How much the city takes on (raise them here). A visitor is known by
       # the address Cloudflare reports, so a team behind one office address
