@@ -51,6 +51,11 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_NO_CACHE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PYTHON=/usr/local/bin/python3.11
+# A compiler for the few dependencies with no wheel for this platform (psutil
+# 5.9.8 has none for linux aarch64, e.g. on a DGX). Only this build stage has it.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
 COPY backend/pyproject.toml backend/uv.lock ./
 COPY deploy/cpu_torch.py deploy/torch-cpu.txt /app/deploy/
