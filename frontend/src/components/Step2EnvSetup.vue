@@ -13,10 +13,10 @@
         <span v-if="paintersState === 'working'" class="painters-meter" aria-hidden="true">
           <span class="painters-fill" :style="{ width: `${paintedShare * 100}%` }"></span>
         </span>
-        <button v-if="paintersState === 'failed'" type="button" class="p-button ghost small" @click="paintAgain">
+        <button v-if="paintersState === 'failed' && mayPaint" type="button" class="p-button ghost small" @click="paintAgain">
           {{ $t('parthenon.gathering.painters.again') }}
         </button>
-        <template v-if="paintersState === 'offer'">
+        <template v-if="paintersState === 'offer' && mayPaint">
           <button type="button" class="p-button ghost small" :aria-describedby="`${uid}-paint-cost`" @click="paintAgain">
             {{ $t('parthenon.gathering.painters.paint') }}
           </button>
@@ -34,6 +34,13 @@
       </p>
     </header>
 
+    <!-- A limit of the public steps, or a guest before the citizens are called: one calm line. -->
+    <div v-if="calmMessage" class="calm-line calm-block">
+      <p role="status">{{ calmMessage }}</p>
+      <button v-if="control" type="button" class="p-button secondary small" @click="callAgain">{{ $t('parthenon.gathering.tryAgain') }}</button>
+    </div>
+    <p v-else-if="guestWaiting" class="calm-line" role="status">{{ $t('parthenon.public.guestWaiting') }}</p>
+
     <!-- Trouble, in the city's voice, with the cause behind a disclosure. -->
     <div v-if="troubleMessage" class="trouble" role="alert">
       <p class="trouble-title">{{ $t('parthenon.gathering.trouble') }}</p>
@@ -41,7 +48,7 @@
         <summary>{{ $t('parthenon.gathering.troubleWhy') }}</summary>
         <p>{{ troubleMessage }}</p>
       </details>
-      <button type="button" class="p-button secondary small" @click="callAgain">{{ $t('parthenon.gathering.tryAgain') }}</button>
+      <button v-if="control" type="button" class="p-button secondary small" @click="callAgain">{{ $t('parthenon.gathering.tryAgain') }}</button>
     </div>
 
     <!-- The slope: citizens arrive one by one; the seats still empty are drawn faint. -->
@@ -189,7 +196,7 @@
           class="p-button"
         >{{ $t('parthenon.gathering.argued.toChronicle') }}</router-link>
       </div>
-      <div v-else class="door-main">
+      <div v-else-if="control" class="door-main">
         <span v-if="troubleMessage" class="door-reason">{{ $t('parthenon.gathering.openTrouble') }}</span>
         <span v-else-if="phase < 4" class="door-reason">{{ $t('parthenon.gathering.openWait') }}</span>
         <button type="button" class="p-button" :disabled="phase < 4 || !!troubleMessage" @click="handleStartSimulation">{{ $t('parthenon.gathering.open') }}</button>
@@ -318,6 +325,8 @@ import {
   RUN_LENGTHS
 } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
+import { access, calmLine, canControl, featureOn } from '../parthenon/access.js'
+import { allowedRunLengths } from '../parthenon/limits.js'
 import { nameKey as foldName } from '../parthenon/web.js'
 import CitizenCoin from './CitizenCoin.vue'
 
@@ -382,6 +391,16 @@ const selectedKey = ref(null)
 const pastOpen = ref(false)
 const showAllOpenings = ref(false)
 const chosenLength = ref(carriedLength?.id || 'day')
+// A limit of the public steps, said calmly in place of trouble.
+const calmMessage = ref('')
+// A guest at a gathering whose citizens have not been called yet.
+const guestWaiting = ref(false)
+
+// On the public steps only the one who began a gathering may call, paint or
+// open it; a guest watches. At home, always.
+const control = computed(() => canControl(props.simulationId, props.projectData?.project_id))
+// The painters come only where they can work (a key for them) and for the one who began it.
+const mayPaint = computed(() => control.value && featureOn('portraits'))
 
 let lastLoggedMessage = ''
 let lastLoggedProfileCount = 0
@@ -702,7 +721,7 @@ const markArrivedHere = () => {
   arrivedHere.value = true
   try { sessionStorage.setItem(ARRIVED_KEY(props.simulationId), '1') } catch { /* this visit still knows */ }
 }
-const portraits = useCitizenPortraits(paintedGathering, { autoStart: () => arrivedHere.value })
+const portraits = useCitizenPortraits(paintedGathering, { autoStart: () => arrivedHere.value && mayPaint.value })
 
 const citizens = computed(() =>
   citizenBase.value.map((c) => ({
@@ -741,7 +760,8 @@ const paintersState = computed(() => {
   if (status === 'running') return 'working'
   if (status === 'failed') return 'failed'
   if (status === 'completed' && sawPainters.value) return 'done'
-  if (status === 'none' && portraits.loaded.value && !arrivedHere.value) return 'offer'
+  if (status === 'none' && portraits.loaded.value && !featureOn('portraits')) return 'away'
+  if (status === 'none' && portraits.loaded.value && !arrivedHere.value && mayPaint.value) return 'offer'
   return ''
 })
 
@@ -761,6 +781,9 @@ const paintersLine = computed(() => {
         : t('parthenon.gathering.painters.doneSome', { done, total })
     case 'offer':
       return t('parthenon.gathering.painters.offer')
+    case 'away':
+      // No painters on the public steps: the citizens keep their initials.
+      return t('parthenon.public.features.portraits')
     default:
       return ''
   }
@@ -768,6 +791,7 @@ const paintersLine = computed(() => {
 
 // Asked for: the painters begin now (and this tab remembers it asked).
 const paintAgain = () => {
+  if (!mayPaint.value) return
   sawPainters.value = true
   markArrivedHere()
   portraits.start()
@@ -783,7 +807,7 @@ const painterSummons = new Map() // gathering -> 'early' (call again when ready)
 watch(
   () => [paintedGathering.value, phase.value >= 4],
   async ([gathering, ready]) => {
-    if (!gathering || !arrivedHere.value) return
+    if (!gathering || !arrivedHere.value || !mayPaint.value) return
     if (!painterSummons.has(gathering)) painterSummons.set(gathering, phase.value < 2 ? 'early' : 'done')
     if (!ready || painterSummons.get(gathering) !== 'early') return
     painterSummons.set(gathering, 'done')
@@ -1004,8 +1028,12 @@ const autoGeneratedRounds = computed(() => {
   return Math.floor((tc.total_simulation_hours * 60) / tc.minutes_per_round)
 })
 
+// On the public steps the lengths stop at the longest a visitor may choose.
+const openLengths = computed(() =>
+  access.public && access.limits ? allowedRunLengths(RUN_LENGTHS, access.limits.max_run) : RUN_LENGTHS
+)
 const lengths = computed(() =>
-  RUN_LENGTHS.map((l) => ({
+  openLengths.value.map((l) => ({
     ...l,
     name: t(`parthenon.gathering.length.names.${l.id}`),
     hoursLabel: t('parthenon.gathering.length.hours', { hours: l.hours }),
@@ -1060,7 +1088,7 @@ watch(lengths, (list) => {
 })
 
 const handleStartSimulation = () => {
-  const chosen = RUN_LENGTHS.find((l) => l.id === chosenLength.value) || RUN_LENGTHS[1]
+  const chosen = openLengths.value.find((l) => l.id === chosenLength.value) || RUN_LENGTHS.find((l) => l.id === chosenLength.value) || RUN_LENGTHS[1]
   emit('next-step', { maxRounds: chosen.rounds })
 }
 
@@ -1249,7 +1277,18 @@ const stageFromDetail = (detail, message) => {
   return ''
 }
 
-const handlePrepareFailure = (message) => {
+const handlePrepareFailure = (message, err = null) => {
+  const calm = calmLine(err)
+  if (calm) {
+    // A limit of the public steps: said calmly, never as trouble.
+    stopPolling()
+    stopProfilesPolling()
+    stopConfigPolling()
+    calmMessage.value = calm
+    addLog(calm)
+    emit('update-status', 'error')
+    return
+  }
   stopPolling()
   stopProfilesPolling()
   stopConfigPolling()
@@ -1303,12 +1342,13 @@ const startPrepareSimulation = async () => {
       handlePrepareFailure(res.error)
     }
   } catch (err) {
-    handlePrepareFailure(err.message)
+    handlePrepareFailure(err.message, err)
   }
 }
 
 const callAgain = () => {
   troubleMessage.value = ''
+  calmMessage.value = ''
   lastLoggedMessage = ''
   lastLoggedConfigStage = ''
   startPrepareSimulation()
@@ -1373,6 +1413,12 @@ const pollPrepareStatus = async () => {
         stopPolling()
         stopProfilesPolling()
         await loadPreparedData()
+      } else if (data.status === 'not_started' && !control.value) {
+        // A guest, and the one who began it has not called the citizens yet.
+        stopPolling()
+        stopProfilesPolling()
+        phase.value = 0
+        guestWaiting.value = true
       } else if (data.status === 'failed') {
         handlePrepareFailure(data.error)
       }
@@ -1511,8 +1557,19 @@ const loadPreparedData = async () => {
   }
 }
 
+// A guest never calls the citizens: they watch the preparation as it stands.
+const watchAsGuest = () => {
+  phase.value = 1
+  addLog(t('parthenon.gathering.ledger.summoning'))
+  startPolling()
+  startProfilesPolling()
+  pollPrepareStatus()
+}
+
 onMounted(() => {
-  if (props.simulationId) startPrepareSimulation()
+  if (!props.simulationId) return
+  if (control.value) startPrepareSimulation()
+  else watchAsGuest()
 })
 
 onUnmounted(() => {
@@ -1652,6 +1709,17 @@ onUnmounted(() => {
 }
 
 /* Trouble */
+.calm-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.calm-block p {
+  margin: 0;
+}
+
 .trouble {
   margin: 0 var(--p-gutter) 20px;
   padding: 16px 18px;

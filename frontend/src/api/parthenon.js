@@ -1,4 +1,7 @@
 import service from './index'
+import { asked } from './tickets'
+import { INVITE_HEADER } from '../parthenon/invite.js'
+import { joinApi } from '../parthenon/base.js'
 
 /**
  * Parts the Oracle can draft, in the order it drafts them.
@@ -24,18 +27,36 @@ export const STAGE_PARTS = ['words', 'audience', 'question', 'title', 'happensNe
  *   question: string|null,
  *   happensNext: string|null,
  *   filled: string[]
- * } }>} Rejects with the backend's safe error message on failure.
+ * } }>} Rejects with the backend's safe error message on failure. On the
+ *   public steps the draft may come as a ticket, waited for (api/tickets.js).
+ * @param {{ signal?: AbortSignal }} [options] - abort to stop waiting on a ticket
  */
-export const draftStage = (stage, fill) => {
-  return service.post('/api/parthenon/stage/draft', { stage, fill })
+export const draftStage = (stage, fill, options) => {
+  return asked(service.post('/api/parthenon/stage/draft', { stage, fill }), options)
 }
+
+/**
+ * Whether a word opens the steps to speech, and nothing else (the city counts
+ * a wrong word against the visitor's tries for the hour).
+ *
+ * @param {string} code
+ * @returns {Promise<{ success: true, data: { valid: true, invite_required: boolean } }>}
+ *   Rejects 403 invite_needed for a word the city does not know, 429 slow_down
+ *   after too many wrong ones (error.cityCode).
+ */
+export const checkInvite = (code) =>
+  service.post('/api/parthenon/invite', {}, { headers: { [INVITE_HEADER]: code }, parthenonInvite: code, timeout: 20000 })
 
 /**
  * What this instance can run right now (no secrets).
  *
  * @returns {Promise<{ success: true, data: {
- *   zepConfigured: boolean, llmConfigured: boolean, upstream: string, model: string
- * } }>}
+ *   zepConfigured: boolean, llmConfigured: boolean, upstream: string, model: string,
+ *   public?: boolean, provider?: 'free'|'grok'|'openai'|'claude'|'grok-subscription',
+ *   features?: { portraits: boolean, film: boolean, voice: boolean },
+ *   limits?: { daily_gatherings, per_visitor, max_citizens, max_run, today_left,
+ *     visitor_left, running, concurrent_runs }
+ * } }>} Read it through parthenon/instance.js (loadInstance), which shares it.
  */
 export const getInstanceStatus = () => {
   return service.get('/api/parthenon/status')
@@ -83,17 +104,13 @@ export const getChronicleFilm = (reportId) => {
 
 /**
  * Turn a backend-relative asset path (e.g. /api/parthenon/chronicle/<id>/film/film.mp4)
- * into a URL the page can load, using the same base URL as the API client.
+ * into a URL the page can load, using the same base URL as the API client
+ * (once: a path the backend already wrote under the base stays as it is).
  *
  * @param {string|null|undefined} path
  * @returns {string} '' when there is no path.
  */
-export const filmAssetUrl = (path) => {
-  if (!path || typeof path !== 'string') return ''
-  if (/^https?:\/\//i.test(path)) return path
-  const base = String(service.defaults.baseURL || '').replace(/\/+$/, '')
-  return `${base}${path.startsWith('/') ? '' : '/'}${path}`
-}
+export const filmAssetUrl = (path) => joinApi(service.defaults.baseURL, path)
 
 /**
  * Paint a portrait for every citizen of a gathering. Runs in the background;
@@ -190,5 +207,8 @@ export const getCitizenStances = (simulationId) => {
  * @param {string} simulationId
  * @param {{ question: string, history?: Array<{role:'user'|'assistant', content:string}>, lang?: string, name?: string, file_name?: string, report_id?: string }} body
  * @returns {Promise<{ success: true, data: { answer: string, from_memory: true, lang: string, speaker: { name: string, zh: string, file_name: string, agent_id: number|null, voice: 'speaker', voice_id: string } } }>} Errors carry from_memory: true: 400 bad question, 404 not this gathering's speaker, 502/503 could not answer.
+ *   On the public steps the answer may come as a ticket, waited for (api/tickets.js).
+ * @param {{ signal?: AbortSignal }} [options] - abort to stop waiting on a ticket
  */
-export const askSpeaker = (simulationId, body) => service.post(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/speaker`, body, { timeout: 200000 })
+export const askSpeaker = (simulationId, body, options) =>
+  asked(service.post(`/api/parthenon/gathering/${encodeURIComponent(simulationId)}/speaker`, body, { timeout: 200000 }), options)

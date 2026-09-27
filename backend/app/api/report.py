@@ -10,6 +10,7 @@ from flask import request, jsonify, send_file
 
 from . import report_bp
 from ..config import Config
+from .. import public
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
@@ -495,10 +496,18 @@ def list_reports():
         simulation_id = request.args.get('simulation_id')
         limit = request.args.get('limit', 50, type=int)
         
-        reports = ReportManager.list_reports(
-            simulation_id=simulation_id,
-            limit=limit
-        )
+        visible = public.shelf_ids() if not simulation_id else None
+        if visible is None:
+            reports = ReportManager.list_reports(
+                simulation_id=simulation_id,
+                limit=limit
+            )
+        else:
+            # The public shelf (a crowd's own Chronicles are open to its link).
+            reports = [
+                r for r in ReportManager.list_reports(limit=None)
+                if public.report_on_shelf(visible, r.report_id, r.simulation_id)
+            ][:max(limit, 0)]
         
         return jsonify({
             "success": True,

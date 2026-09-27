@@ -39,7 +39,9 @@ from flask import current_app, jsonify, request, send_file, url_for
 from openai import APIConnectionError, AuthenticationError, PermissionDeniedError
 
 from . import parthenon_bp
+from .. import public
 from ..config import Config
+from ..public.providers import remember_health
 from ..models.project import ProjectManager
 from ..services import chronicle_film, citizen_portraits, symposium_memory
 from ..services.floor import speaker_for_file
@@ -163,10 +165,17 @@ def _zep_key_status():
 def _llm_status():
     """(configured, problem), including what the local LLM bridge reports."""
 
+    configured, problem, _health = _llm_status_and_health()
+    return configured, problem
+
+
+def _llm_status_and_health():
+    """(configured, problem, the bridge's /health or None)."""
+
     configured = not Config.is_placeholder(Config.LLM_API_KEY)
     origin = _loopback_origin(Config.LLM_BASE_URL)
     if origin is None:
-        return configured, None
+        return configured, None, None
 
     try:
         response = httpx.get(
@@ -175,22 +184,24 @@ def _llm_status():
         health = response.json() if response.status_code == 200 else None
     except (httpx.HTTPError, ValueError):
         health = None
+    # The public steps' feature checks reuse this answer for a while.
+    remember_health(origin, health)
 
     if not isinstance(health, dict):
         return configured, (
             f'The LLM bridge at {origin} is not answering. '
             'Check that npm run dev is still running.'
-        )
+        ), None
     if health.get('api_key_set') is False:
         return False, (
             'OPENROUTER_API_KEY is not set for the LLM bridge. Add it to .env and '
             'restart npm run dev, or switch PARTHENON_UPSTREAM to grok.'
-        )
+        ), health
     if health.get('signed_in') is False:
         return False, (
             'The LLM bridge is not signed in to Grok. Run npm run grok:login, then reload.'
-        )
-    return configured, None
+        ), health
+    return configured, None, health
 
 
 def _bridge_error_message(error):
@@ -228,7 +239,7 @@ def instance_status():
 
     backend = _memory_backend()
     zep_key_valid, zep_problem = _zep_key_status()
-    llm_configured, llm_problem = _llm_status()
+    llm_configured, llm_problem, health = _llm_status_and_health()
     return jsonify({
         'success': True,
         'data': {
@@ -237,11 +248,16 @@ def instance_status():
                 backend == 'zep' and not Config.is_placeholder(Config.ZEP_API_KEY)
             ),
             'zepKeyValid': zep_key_valid,
-            'zepProblem': zep_problem,
+            # On the public steps a problem is told in the city's words, never
+            # with settings, files or commands.
+            'zepProblem': public.public_problem(zep_problem),
             'llmConfigured': llm_configured,
-            'llmProblem': llm_problem,
+            'llmProblem': public.public_problem(llm_problem),
             'upstream': (os.environ.get('PARTHENON_UPSTREAM') or 'grok').strip().lower(),
             'model': Config.LLM_MODEL_NAME,
+            # public, provider, features {portraits, film, voice} and limits
+            # (None off the public steps).
+            **public.status_fields(health),
         },
     })
 

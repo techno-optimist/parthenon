@@ -105,7 +105,7 @@
                 <button type="button" class="p-button" @click="goToInteraction">
                   {{ $t('parthenon.chronicle.enterSymposium') }}
                 </button>
-                <button type="button" class="p-button secondary" @click="revealFilm">
+                <button v-if="mayFilm" type="button" class="p-button secondary" @click="revealFilm">
                   {{ $t('parthenon.chronicle.filmIt') }}
                 </button>
               </div>
@@ -302,6 +302,7 @@ import {
 } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
 import ChronicleFilm from './ChronicleFilm.vue'
+import { canControl, featureOn } from '../parthenon/access.js'
 import CitizenCoin from './CitizenCoin.vue'
 
 // Chapters are numbered the Greek way, with the keraia, as the Symposium's
@@ -947,6 +948,9 @@ const stateNote = (state) =>
 const goToInteraction = () => {
   if (props.reportId) router.push({ name: 'Interaction', params: { reportId: props.reportId } })
 }
+
+// Filming comes only where the film makers can work, and for the one who began it (on the public steps).
+const mayFilm = computed(() => featureOn('film') && canControl(props.reportId))
 
 const revealFilm = () => {
   filmPanel.value?.reveal()

@@ -51,6 +51,7 @@
  *     server has loaded, so there is only ever one night playing.
  */
 import { reactive, readonly } from 'vue'
+import { withBase } from './base.js'
 
 export const LISTEN_KEY = 'parthenon.listen'
 const OLD_KEYS = ['parthenon.agora.listen']
@@ -89,7 +90,7 @@ const AC = hasWindow ? window.AudioContext || window.webkitAudioContext || null 
 
 export const voiceUrl = (key, locale = 'en') => {
   const lang = String(locale || 'en').slice(0, 2).toLowerCase()
-  return lang === 'en' ? `/media/voices/${key}.mp3` : `/media/voices/${lang}/${key}.mp3`
+  return lang === 'en' ? withBase(`/media/voices/${key}.mp3`) : withBase(`/media/voices/${lang}/${key}.mp3`)
 }
 
 // ---- Levels ----
@@ -533,7 +534,7 @@ export const buildBed = (name, c, out) => (MAKERS[name] ? MAKERS[name](c, out) :
 // holds through the join). The two voices never turn at the same moment, a
 // short file never plays back the same way twice, and a mono file opens out.
 
-export const RECORDINGS_URL = '/media/sound/beds.json'
+export const RECORDINGS_URL = withBase('/media/sound/beds.json')
 export const CROSSFADE = 2 // seconds
 // Each recording is mastered near -30 dBFS RMS; these lift or lower it to sit
 // with the drawn beds (about -31.5 dBFS at the master, measured offline with
@@ -983,7 +984,8 @@ function createEngine() {
     const list = await listing
     const entry = list && typeof list === 'object' ? list[name] : null
     if (!entry || typeof entry.src !== 'string') return null
-    const res = await window.fetch(entry.src)
+    // The listing names site paths ('/media/sound/...'): under the page's base.
+    const res = await window.fetch(withBase(entry.src))
     if (!res || !res.ok) return null
     const buffer = await decode(await res.arrayBuffer())
     if (!buffer || !(buffer.duration > 3)) return null

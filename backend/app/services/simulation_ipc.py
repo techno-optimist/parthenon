@@ -18,6 +18,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..utils.logger import get_logger
+from ..utils import time_budget
 
 logger = get_logger('mirofish.simulation_ipc')
 
@@ -136,6 +137,16 @@ class SimulationIPCClient:
         Raises:
             TimeoutError: 等待响应超时
         """
+        # Inside a request's time budget (the public steps) the wait is cut to
+        # the time left; a command that could not be waited on is not sent.
+        budget_left = time_budget.remaining()
+        by_budget = budget_left is not None and budget_left < timeout
+        if by_budget:
+            if budget_left < time_budget.MIN_CALL_SECONDS:
+                time_budget.mark_spent()
+                raise time_budget.TimeBudgetSpent("no time left to wait on the simulation")
+            timeout = budget_left
+
         command_id = str(uuid.uuid4())
         command = IPCCommand(
             command_id=command_id,
@@ -177,6 +188,8 @@ class SimulationIPCClient:
         
         # 超时
         logger.error(f"等待IPC响应超时: command_id={command_id}")
+        if by_budget:
+            time_budget.mark_spent()
         
         # 清理命令文件
         try:

@@ -20,6 +20,8 @@ from queue import Queue
 
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.json_files import read_json, write_json_atomic
+from ..utils import pools
 from ..utils.locale import get_locale, set_locale, t
 from ..utils.zep import (
     ZEP_HTTP_REQUEST_TIMEOUT_SECONDS,
@@ -366,9 +368,11 @@ class SimulationRunner:
     """
     
     # 运行状态存储目录
-    RUN_STATE_DIR = os.path.join(
-        os.path.dirname(__file__),
-        '../../uploads/simulations'
+    RUN_STATE_DIR = (
+        Config.OASIS_SIMULATION_DATA_DIR if Config.DATA_DIR else os.path.join(
+            os.path.dirname(__file__),
+            '../../uploads/simulations'
+        )
     )
     
     # 脚本目录
@@ -630,9 +634,8 @@ class SimulationRunner:
             return None
         
         try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
+            data = read_json(state_file)
+
             state = SimulationRunState(
                 simulation_id=simulation_id,
                 runner_status=RunnerStatus(data.get("runner_status", "idle")),
@@ -686,10 +689,9 @@ class SimulationRunner:
         state_file = os.path.join(sim_dir, "run_state.json")
         
         data = state.to_detail_dict()
-        
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
+
+        write_json_atomic(state_file, data)
+
         cls._run_states[state.simulation_id] = state
     
     @classmethod
@@ -2148,6 +2150,9 @@ class SimulationRunner:
                     os.getpid(),
                 )
                 return
+            # The public steps: queued preparations stop now, and exit will
+            # not wait for pool workers (utils/pools.py; a no-op locally).
+            pools.release()
             # 只有在有进程需要清理时才打印日志
             if cls._processes or cls._graph_memory_enabled:
                 logger.info(f"收到信号 {signum}，开始清理...")

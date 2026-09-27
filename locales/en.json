@@ -616,6 +616,35 @@
       "signedOut": "{name} cannot answer until the owner signs in again.",
       "silent": "{name} did not answer this time.",
       "failed": "{name} could not answer; the server log has the details."
+    },
+    "public": {
+      "cityFull": "The square is full: another gathering is arguing there now. Come back in a few minutes.",
+      "cityDoneToday": "Athens has gathered as often as it can today. Come back tomorrow, or sit with a gathering already on the shelf.",
+      "visitorDoneToday": "You have begun as many gatherings as one visitor may today. Come back tomorrow, or sit with a gathering already on the shelf.",
+      "gatheringDoneToday": "This gathering has argued as often as it may today. Come back tomorrow.",
+      "slowDown": "The city needs a moment to catch its breath. Ask again in a little while.",
+      "scrollTooLong": "The scroll is too long for the public steps. Keep it under {max} characters.",
+      "uploadTooLarge": "That is more than the steps can carry. Bring a shorter scroll.",
+      "questionTooLong": "That question is too long. Ask it in fewer words.",
+      "notYours": "Only the one who began this gathering may do that. You may still watch it and put questions to it.",
+      "keepersOnly": "That is kept for the keepers of the steps.",
+      "notOnPublicSteps": "That is not offered on the public steps.",
+      "portraitsOff": "The painters are not on the public steps: new portraits cannot be painted here.",
+      "filmOff": "The film makers are not on the public steps: new films cannot be made here.",
+      "voiceOff": "The voices are not on the public steps; your browser will read the words aloud instead.",
+      "notFound": "Nothing stands at that address.",
+      "stumbled": "The city stumbled. Try again in a moment.",
+      "llmAway": "The city cannot find its voice right now. Try again in a little while.",
+      "stepsNotBuilt": "The steps are still being built. Come back soon.",
+      "cannotDoThat": "The city cannot do that just now.",
+      "tookTooLong": "The city took too long over that and set it down. Ask again in a little while.",
+      "hearingFailed": "The city could not make sense of the scroll just now. Hand it over again in a little while.",
+      "inviteNeeded": "The steps are open to all. To speak, bring the word you were given.",
+      "inviteWrong": "That is not the word the city was given. Look again at the one you were handed.",
+      "inviteTooManyTries": "Too many wrong words at the gate this hour. Rest a while, then try again.",
+      "ticketLost": "The city lost the thread of that question. Ask it again.",
+      "manyQuestions": "Many questions are before the city at once. Ask again in a moment.",
+      "gatheringInterrupted": "The gathering was interrupted before all its citizens arrived. The one who began it can call them again."
     }
   },
   "progress": {
@@ -679,7 +708,9 @@
     "generatingProfiles": "Generating Agent Profiles",
     "generatingSimConfig": "Generating Simulation Config",
     "preparingScripts": "Preparing Scripts",
-    "profileDone": "Done {current}/{total}: {name} ({type})"
+    "profileDone": "Done {current}/{total}: {name} ({type})",
+    "readingScroll": "The city reads the scroll...",
+    "scrollRead": "The scroll is read."
   },
   "log": {
     "preparingGoBack": "Preparing to return to Step 2, closing simulation...",
@@ -1457,7 +1488,8 @@
         "lost": "The court is empty tonight.",
         "knownGathered": "The city knows {names} names and {ties} ties between them. Its citizens have gathered before.",
         "knownGatheredChatter": "The city knows {names} names and {ties} ties between them, with {chatter} threads of chatter from its gathering. Its citizens have gathered before.",
-        "summoningNow": "The court has finished. The citizens are being summoned."
+        "summoningNow": "The court has finished. The citizens are being summoned.",
+        "word": "The scroll is in the court's hands. It is read once you bring the word you were given."
       },
       "scroll": {
         "eyebrow": "The scroll",
@@ -2172,7 +2204,59 @@
       "tab": "No gathering here"
     },
     "beginning": "Athens is listening…",
-    "scrollRolled": "The scroll is still rolled. Choose a stage above, or drop your own scroll here."
+    "scrollRolled": "The scroll is still rolled. Choose a stage above, or drop your own scroll here.",
+    "public": {
+      "codes": {
+        "city_full": "Every seat in the Agora is taken tonight. Wait a little, then try again.",
+        "come_back_tomorrow": "Athens has held all the gatherings it can today. Come back tomorrow.",
+        "slow_down": "The city needs a moment between questions. Ask again shortly.",
+        "too_long": "This scroll is too long for the public steps. Bring a shorter one.",
+        "not_yours": "Only the one who began this gathering can change it.",
+        "not_on_public_steps": "This door is not open on the public steps.",
+        "invite_needed": "The steps are open to all. To speak, bring the word you were given.",
+        "ticket_lost": "The answer was lost on the way, while the city woke again. Your question is kept: ask it again."
+      },
+      "retry": "The wait is about a minute. | The wait is about {n} minutes.",
+      "guest": "You are a guest at this gathering: you can watch, read and ask, but only the one who began it can steer it.",
+      "guestWaiting": "The one who began this gathering has not called its citizens yet.",
+      "features": {
+        "portraits": "The painters are not on the public steps tonight: the citizens keep their initials.",
+        "film": "The film makers are not on the public steps tonight: the Chronicle is read, not filmed.",
+        "voice": "The city's voices are not on the public steps tonight: answers are read in your browser's own voice."
+      },
+      "provider": {
+        "free": "Tonight the city runs on free models: slower and plainer than a private night.",
+        "grok": "Tonight the city runs on Grok.",
+        "grokSubscription": "Tonight the city runs on Grok.",
+        "openai": "Tonight the city runs on OpenAI's models.",
+        "claude": "Tonight the city runs on Claude."
+      },
+      "left": {
+        "today": "Athens can hold one more gathering today. | Athens can hold {n} more gatherings today.",
+        "yours": "You can begin one of them. | You can begin {n} of them.",
+        "cityDone": "Athens has held all the gatherings it can today. Come back tomorrow.",
+        "visitorDone": "You have begun all the gatherings you can today. Come back tomorrow, or sit in on one from the shelf."
+      },
+      "maxRun": "Longer nights are kept for private steps.",
+      "shelf": {
+        "yours": "Your gatherings",
+        "featured": "Kept by the city"
+      },
+      "noFilm": "No film has been made of this Chronicle.",
+      "invite": {
+        "lead": "The steps are open to all. To speak, bring the word you were given.",
+        "hint": "The keeper of these steps gave it to you, with the link.",
+        "label": "The word you were given",
+        "placeholder": "The word",
+        "give": "Give the word",
+        "wrong": "The steps do not know that word. Give it again, just as it was given to you."
+      },
+      "guestInvite": "You are a guest at this gathering: you can watch and read, and ask once you bring the word you were given. Only the one who began it can steer it.",
+      "ticket": {
+        "gaveUp": "The answer is taking longer than the steps can wait. Your question is kept: ask it again in a little while.",
+        "lost": "The answer was lost on the way, while the city woke again. Your question is kept: ask it again."
+      }
+    }
   },
   "agora": {
     "clock": {
@@ -2469,6 +2553,7 @@
     "fallbackChapterOne": "The Question and What the City Found",
     "fallbackChapterTwo": "How the Citizens Moved",
     "fallbackChapterThree": "What Is Still Unsettled",
-    "chapterUnwritten": "(The Scribe could not finish this chapter. Ask her to write the Chronicle again in a little while.)"
+    "chapterUnwritten": "(The Scribe could not finish this chapter. Ask her to write the Chronicle again in a little while.)",
+    "answerLost": "The Scribe lost her thread over that question. Ask her again, perhaps in other words."
   }
 }

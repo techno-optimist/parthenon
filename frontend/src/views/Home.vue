@@ -104,8 +104,8 @@
                 <span class="figure-body">
                   <span class="figure-plate">
                     <img
-                      :src="`/media/figures/${s.id}-560.jpg`"
-                      :srcset="`/media/figures/${s.id}-560.jpg 560w, /media/figures/${s.id}.jpg 832w`"
+                      :src="withBase(`/media/figures/${s.id}-560.jpg`)"
+                      :srcset="withBaseSrcset(`/media/figures/${s.id}-560.jpg 560w, /media/figures/${s.id}.jpg 832w`)"
                       sizes="(max-width: 699px) 70vw, 17vw"
                       alt=""
                       width="560"
@@ -160,7 +160,7 @@
           <div class="omens">
             <img
               class="omens-image"
-              src="/media/scenes/golden-handmaidens.jpg"
+              :src="withBase('/media/scenes/golden-handmaidens.jpg')"
               :alt="$t('parthenon.alts.omens')"
               width="2000"
               height="848"
@@ -198,7 +198,7 @@
                 <!-- Each tile has its own warm dark before the paint arrives; the first row loads at once. -->
                 <span class="scene-frame" :style="{ '--tile': tone(i) }">
                   <img
-                    :src="`/media/scenes/arrival-${a.id}.jpg`"
+                    :src="withBase(`/media/scenes/arrival-${a.id}.jpg`)"
                     alt=""
                     width="1200"
                     height="800"
@@ -220,7 +220,7 @@
           <div class="bema">
             <img
               class="bema-image"
-              src="/media/scenes/pnyx-bema.jpg"
+              :src="withBase('/media/scenes/pnyx-bema.jpg')"
               :alt="$t('parthenon.alts.bema')"
               width="2000"
               height="848"
@@ -272,7 +272,7 @@
       <section id="gathering" class="gathering" aria-labelledby="bema-title">
         <!-- The Pnyx at dusk under the night: the platform the question is cut into. -->
         <div class="pnyx" aria-hidden="true">
-          <img src="/media/scenes/pnyx-bema.jpg" alt="" width="2000" height="848" loading="lazy" decoding="async" />
+          <img :src="withBase('/media/scenes/pnyx-bema.jpg')" alt="" width="2000" height="848" loading="lazy" decoding="async" />
         </div>
         <div class="wrap bema-stage">
           <header class="section-head bema-head">
@@ -348,13 +348,15 @@
             <fieldset class="length" :disabled="loading">
               <legend class="panel-title">{{ $t('parthenon.length.label') }}</legend>
               <div class="length-options">
-                <label v-for="l in RUN_LENGTHS" :key="l.id" class="length-option" :class="{ chosen: runLength === l.id }">
+                <label v-for="l in runLengths" :key="l.id" class="length-option" :class="{ chosen: runLength === l.id }">
                   <input v-model="runLength" type="radio" name="run-length" :value="l.id" class="visually-hidden" />
                   <span class="length-name">{{ $t(`parthenon.length.${l.id}`) }}</span>
                   <span class="length-meta">{{ lengthMeta(l) }}</span>
                 </label>
               </div>
               <p class="length-note">{{ $t('parthenon.length.note') }}</p>
+              <p v-if="lengthCapped" class="length-note">{{ $t('parthenon.public.maxRun') }}</p>
+              <p v-if="providerLine" class="length-note provider-line">{{ providerLine }}</p>
             </fieldset>
 
             <div class="begin-wrap">
@@ -362,11 +364,15 @@
                 {{ $t('parthenon.zepMissing') }}
                 <a href="https://app.getzep.com" target="_blank" rel="noopener">app.getzep.com</a>
               </p>
-              <button type="button" class="p-button begin" :disabled="!canSubmit || loading || zepMissing" @click="startSimulation">
+              <!-- On the public steps: how many gatherings are left today, before the button. -->
+              <p v-if="leftLine" class="left-line" :class="{ closed: closedToday }" role="status">{{ leftLine }}</p>
+              <button type="button" class="p-button begin" :disabled="!canSubmit || loading || zepMissing || closedToday" @click="startSimulation">
                 <span>{{ loading ? $t('parthenon.beginning') : $t('parthenon.begin') }}</span>
                 <span class="begin-arrow" aria-hidden="true">→</span>
               </button>
-              <p v-if="!canSubmit" class="begin-hint">{{ $t('parthenon.beginHint') }}</p>
+              <p v-if="!canSubmit && !closedToday" class="begin-hint">{{ $t('parthenon.beginHint') }}</p>
+              <!-- On steps that ask for the word: asked here, only once the visitor asks Athens to speak. -->
+              <InviteLine v-if="askingInvite" class="begin-invite" @given="onInviteGiven" />
             </div>
           </div>
         </div>
@@ -402,14 +408,18 @@ import ParthenonBrand from '../components/ParthenonBrand.vue'
 import CinematicHero from '../components/CinematicHero.vue'
 import StageBuilder from '../components/StageBuilder.vue'
 import ListenToggle from '../components/ListenToggle.vue'
+import InviteLine from '../components/InviteLine.vue'
 import { speakers, speakerSeedFile } from '../parthenon/speakers.js'
 import { arrivals, arrivalSeedFile } from '../parthenon/arrivals/index.js'
 import { RUN_LENGTHS, spansHours } from '../parthenon/vocabulary.js'
 import { localText } from '../parthenon/localText.js'
 import { sound, setBed, speak, voiceUrl } from '../parthenon/sound.js'
 import { subscribe, passage, sceneSummary, renderScroll, smoothPath } from '../parthenon/descent.js'
-import { getInstanceStatus } from '../api/parthenon.js'
+import { withBase, withBaseSrcset } from '../parthenon/base.js'
 import pendingUpload, { setPendingUpload } from '../store/pendingUpload.js'
+import { loadInstance } from '../parthenon/instance.js'
+import { access, inviteNeeded } from '../parthenon/access.js'
+import { allowedRunLengths, clampRunLength, gatheringsLeft } from '../parthenon/limits.js'
 
 const router = useRouter()
 const { t, tm, locale } = useI18n()
@@ -462,6 +472,35 @@ const eraOverride = ref(null)
 // How long Athens talks, in story sizes (see RUN_LENGTHS).
 const runLength = ref('day')
 const chosenLength = computed(() => RUN_LENGTHS.find((l) => l.id === runLength.value) || RUN_LENGTHS[1])
+
+// ---- The public steps ----
+// On the owner's own machine none of this shows. In public, the lengths stop
+// at the longest a visitor may choose, a line says what the city runs on, and
+// before the button the city says how many gatherings are left today.
+const publicLimits = computed(() => (access.public ? access.limits : null))
+const runLengths = computed(() =>
+  publicLimits.value ? allowedRunLengths(RUN_LENGTHS, publicLimits.value.max_run) : RUN_LENGTHS
+)
+const lengthCapped = computed(() => runLengths.value.length < RUN_LENGTHS.length)
+watch(runLengths, () => {
+  if (publicLimits.value) runLength.value = clampRunLength(runLength.value, RUN_LENGTHS, publicLimits.value.max_run)
+})
+const PROVIDER_KEYS = { free: 'free', grok: 'grok', 'grok-subscription': 'grokSubscription', openai: 'openai', claude: 'claude' }
+const providerLine = computed(() => {
+  const key = access.public ? PROVIDER_KEYS[access.provider] : ''
+  return key ? t(`parthenon.public.provider.${key}`) : ''
+})
+const left = computed(() => gatheringsLeft(publicLimits.value))
+const closedToday = computed(() => !!left.value?.closed)
+const leftLine = computed(() => {
+  const l = left.value
+  if (!l) return ''
+  if (l.closed) return t(l.who === 'city' ? 'parthenon.public.left.cityDone' : 'parthenon.public.left.visitorDone')
+  const city = l.city ?? l.left
+  const lines = [t('parthenon.public.left.today', { n: city }, city)]
+  if (l.visitor !== null && l.visitor < city) lines.push(t('parthenon.public.left.yours', { n: l.visitor }, l.visitor))
+  return lines.join(zh.value ? '' : ' ')
+})
 // Two facts: how long the argument runs, and the whole night around it (the
 // reading and the gathering before, the Chronicle after). A span that names
 // its own hours ("2 to 3 hours", "2 至 3 小时") takes the phrasing without a
@@ -649,9 +688,8 @@ const onFiguresScroll = (m) => {
 
 onMounted(() => {
   followBed(sceneEra.value)
-  getInstanceStatus()
-    .then((res) => { instance.value = res.data })
-    .catch(() => { instance.value = null })
+  // Read afresh (unless just read, as on arrival): the limits change through the day.
+  loadInstance({ maxAge: 5000 }).then((data) => { instance.value = data })
   narrowQuery = window.matchMedia('(max-width: 640px)')
   syncTabsOrientation()
   narrowQuery.addEventListener('change', syncTabsOrientation)
@@ -877,8 +915,19 @@ const scrollHtml = computed(() => (selection.value ? renderScroll(selection.valu
 // record, in this tab's storage and on the route) so the Gathering can hand
 // it to the Agora as maxRounds, the way the app already passes it.
 const RUN_LENGTH_KEY = 'parthenon.runLength'
+// On steps that ask for the word, the visitor brings it first (and only then).
+const askingInvite = ref(false)
+const onInviteGiven = () => {
+  askingInvite.value = false
+  startSimulation()
+}
 const startSimulation = () => {
-  if (!canSubmit.value || loading.value || zepMissing.value) return
+  if (!canSubmit.value || loading.value || zepMissing.value || closedToday.value) return
+  if (inviteNeeded()) {
+    askingInvite.value = true
+    return
+  }
+  askingInvite.value = false
   loading.value = true
   const length = chosenLength.value
   setPendingUpload(files.value, formData.value.simulationRequirement)
@@ -1437,7 +1486,7 @@ const startSimulation = () => {
   height: 150px;
   background:
     linear-gradient(180deg, rgba(11, 14, 19, 0.08) 0%, rgba(11, 14, 19, 0.4) 38%, rgba(11, 14, 19, 0.82) 72%, var(--p-bg) 100%),
-    url('/media/figures/steps-band-1920.jpg') center top / cover no-repeat;
+    var(--p-still-steps-band, none) center top / cover no-repeat;
   -webkit-mask-image:
     linear-gradient(180deg, transparent 0%, #000 30%),
     linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
@@ -2453,6 +2502,24 @@ h3.panel-title:focus {
 /* Held up above the bema, the scroll shows a little at a time. */
 .held-scroll .scroll-sheet {
   max-height: 380px;
+}
+
+.left-line {
+  margin: 0 0 12px;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--p-ink-2);
+}
+
+.left-line.closed {
+  padding: 12px 14px;
+  border-left: 2px solid var(--gold);
+  background: var(--p-terracotta-tint);
+}
+
+.provider-line {
+  font-style: italic;
 }
 
 .begin-hint {

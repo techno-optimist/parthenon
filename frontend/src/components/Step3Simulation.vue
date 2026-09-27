@@ -19,7 +19,7 @@
         <p class="sr-only" aria-live="polite">{{ announcement }}</p>
       </div>
 
-      <div v-if="mode === 'idle' || mode === 'live'" class="controls">
+      <div v-if="control && (mode === 'idle' || mode === 'live')" class="controls">
         <!-- Never run: one explicit act -->
         <template v-if="mode === 'idle'">
           <button type="button" class="p-button" :disabled="isStarting" @click="doStartSimulation(false)">
@@ -112,16 +112,16 @@
       <Teleport v-if="mode === 'done' || mode === 'error'" defer :to="`#${belowId}`" :disabled="!narrowScreen">
         <div class="controls done-controls">
           <button v-if="hasChronicle" type="button" class="p-button" @click="readChronicle">{{ $t('agora.done.read') }}</button>
-          <button v-else type="button" class="p-button" :disabled="isGeneratingReport || !allRounds.length" @click="writeChronicle(true)">
+          <button v-else-if="control" type="button" class="p-button" :disabled="isGeneratingReport || !allRounds.length" @click="writeChronicle(true)">
             {{ isGeneratingReport ? $t('agora.done.writing') : scribeFailed ? $t('agora.done.writeAgain') : $t('agora.done.write') }}
           </button>
-          <button type="button" class="p-button ghost" :aria-expanded="againOpen" :disabled="isStarting" @click="againOpen = !againOpen">
+          <button v-if="control" type="button" class="p-button ghost" :aria-expanded="againOpen" :disabled="isStarting" @click="againOpen = !againOpen">
             {{ isStarting ? $t('agora.idle.opening') : $t('agora.done.again') }}
           </button>
         </div>
 
         <!-- Holding the argument again has a cost, and it is named before anything is cleared. -->
-        <div v-if="againOpen" class="again">
+        <div v-if="againOpen && control" class="again">
           <p class="again-cost">{{ $t('agora.done.againCost') }}</p>
           <div class="again-actions">
             <button type="button" class="p-button small" :disabled="isStarting" @click="doStartSimulation(true)">{{ $t('agora.done.againConfirm') }}</button>
@@ -140,6 +140,9 @@
       </Teleport>
 
     </header>
+
+    <!-- A limit of the public steps (every seat taken, the day's gatherings held): one calm line -->
+    <p v-if="calm" class="calm-line" role="status">{{ calm }}</p>
 
     <!-- Trouble, in voice, with the cause behind a disclosure -->
     <div v-if="trouble" class="trouble" role="alert">
@@ -338,6 +341,7 @@ import {
 } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
 import { sound } from '../parthenon/sound.js'
+import { calmLine, canControl } from '../parthenon/access.js'
 import {
   beatOf,
   indexPosts,
@@ -390,6 +394,15 @@ const isStarting = ref(false)
 const isStopping = ref(false)
 const isGeneratingReport = ref(false)
 const trouble = ref(null)
+// A limit of the public steps, said calmly in place of trouble.
+const calm = ref('')
+// On the public steps only the one who began the gathering opens, stops or
+// writes it; a guest watches and reads. At home, always.
+const control = computed(() => canControl(props.simulationId, props.reportId))
+// The city's calm words for a limit, with how long to wait when it says. '' for anything else.
+// (The API client names a short wait; see api/index.js.)
+const calmFrom = (err) => calmLine(err)
+
 const againOpen = ref(false)
 const tab = ref('agora')
 const scrubRound = ref(0)
@@ -1192,6 +1205,7 @@ const doStartSimulation = async (force = false) => {
   againOpen.value = false
   isStarting.value = true
   trouble.value = null
+  calm.value = ''
   setStatus('working')
   try {
     const params = {
@@ -1219,7 +1233,12 @@ const doStartSimulation = async (force = false) => {
       failToStart(res.error || t('common.unknownError'))
     }
   } catch (err) {
-    failToStart(err.message)
+    const line = calmFrom(err)
+    if (line) {
+      calm.value = line
+      addLog(line)
+      setStatus(mode.value === 'idle' ? 'ready' : mode.value === 'error' ? 'error' : 'done')
+    } else failToStart(err.message)
   } finally {
     isStarting.value = false
   }
@@ -1410,6 +1429,12 @@ const handleStopAndWrite = async () => {
       throw new Error(res.error || t('common.unknownError'))
     }
   } catch (err) {
+    const line = calmFrom(err)
+    if (line) {
+      calm.value = line
+      if (mode.value === 'live') setStatus('live')
+      return
+    }
     // A close that is still pending arrives here too: the polling will catch
     // the square closing on its own.
     const detail = stripIds(err.message)
@@ -1447,6 +1472,13 @@ const writeChronicle = async (force = true) => {
       throw new Error(res.error || t('common.unknownError'))
     }
   } catch (err) {
+    const line = calmFrom(err)
+    if (line) {
+      calm.value = line
+      addLog(line)
+      isGeneratingReport.value = false
+      return
+    }
     const detail = stripIds(err.message)
     trouble.value = { title: t('agora.trouble.chronicle'), body: '', detail }
     addLog(t('agora.log.trouble', { error: detail }))

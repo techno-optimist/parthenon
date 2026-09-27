@@ -73,6 +73,8 @@ export function getProject(projectId) {
 export function listProjects() {
   return service({
     url: '/api/graph/project/list',
-    method: 'get'
+    method: 'get',
+    // On the public steps: the featured scrolls and this browser's own (X-Parthenon-Owned).
+    parthenonShelf: { ids: [] }
   })
 }

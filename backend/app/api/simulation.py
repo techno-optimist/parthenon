@@ -10,9 +10,10 @@ from flask import request, jsonify, send_file
 
 from . import simulation_bp
 from ..config import Config
+from .. import public
 from ..services.zep_entity_reader import ZepEntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
-from ..services.simulation_manager import SimulationManager, SimulationStatus
+from ..services.simulation_manager import SimulationManager, SimulationStatus, live_preparation_task
 from ..services.simulation_runner import (
     SimulationRunner,
     RunnerStatus,
@@ -21,6 +22,7 @@ from ..services.simulation_runner import (
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..services import citizen_portraits, symposium_memory
 from ..utils.logger import get_logger
+from ..utils.json_files import write_json_atomic
 from ..utils.locale import t, get_locale, set_locale
 from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ..models.project import ProjectManager
@@ -357,8 +359,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
                     state_data["status"] = "ready"
                     from datetime import datetime
                     state_data["updated_at"] = datetime.now().isoformat()
-                    with open(state_file, 'w', encoding='utf-8') as f:
-                        json.dump(state_data, f, ensure_ascii=False, indent=2)
+                    write_json_atomic(state_file, state_data)
                     logger.info(f"自动更新模拟状态: {simulation_id} preparing -> ready")
                     status = "ready"
                 except Exception as e:
@@ -475,6 +476,24 @@ def prepare_simulation():
                 })
             else:
                 logger.info(f"模拟 {simulation_id} 未准备完成，将启动准备任务")
+
+            # The public steps: a second summons while the first is still at
+            # work (the owner's page reopened) follows the same task instead
+            # of calling a second crowd.
+            live = live_preparation_task(simulation_id) if public.is_public() else None
+            if live:
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "task_id": live["task_id"],
+                        "status": "preparing",
+                        "message": t('api.prepareStarted'),
+                        "already_prepared": False,
+                        "expected_entities_count": state.entities_count,
+                        "entity_types": state.entity_types
+                    }
+                })
         
         # 从项目获取必要信息
         project = ProjectManager.get_project(state.project_id)
@@ -498,6 +517,8 @@ def prepare_simulation():
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
         parallel_profile_count = data.get('parallel_profile_count', 5)
+        # The public steps cap the crowd (PARTHENON_MAX_CITIZENS); None elsewhere.
+        crowd_cap = public.crowd_cap()
         
         # ========== 同步获取实体数量（在后台任务启动前） ==========
         # 这样前端在调用prepare后立即就能获取到预期Agent总数
@@ -512,6 +533,8 @@ def prepare_simulation():
             )
             # 保存实体数量到状态（供前端立即获取）
             state.entities_count = filtered_preview.filtered_count
+            if crowd_cap is not None:
+                state.entities_count = min(state.entities_count, crowd_cap)
             state.entity_types = list(filtered_preview.entity_types)
             logger.info(f"预期实体数量: {filtered_preview.filtered_count}, 类型: {filtered_preview.entity_types}")
         except Exception as e:
@@ -618,7 +641,8 @@ def prepare_simulation():
                     defined_entity_types=entity_types_list,
                     use_llm_for_profiles=use_llm_for_profiles,
                     progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count
+                    parallel_profile_count=parallel_profile_count,
+                    **({'max_entities': crowd_cap} if crowd_cap is not None else {})
                 )
 
                 if result_state.status == SimulationStatus.FAILED:
@@ -729,6 +753,14 @@ def get_prepare_status():
         
         # 如果没有task_id，返回错误
         if not task_id:
+            # The public steps: a guest knows only the gathering; show them the
+            # preparation at work rather than "not called yet".
+            live = live_preparation_task(simulation_id) if simulation_id and public.is_public() else None
+            if live:
+                return jsonify({
+                    "success": True,
+                    "data": {**live, "simulation_id": simulation_id, "already_prepared": False}
+                })
             if simulation_id:
                 # 有simulation_id但未准备完成
                 return jsonify({
@@ -834,6 +866,13 @@ def list_simulations():
         
         manager = SimulationManager()
         simulations = manager.list_simulations(project_id=project_id)
+        visible = public.shelf_ids() if not project_id else None
+        if visible is not None:
+            # The public shelf (a gathering's own crowds are open to its link).
+            simulations = [
+                s for s in simulations
+                if public.simulation_on_shelf(visible, s.simulation_id, s.project_id)
+            ]
         
         return jsonify({
             "success": True,
@@ -868,7 +907,10 @@ def _get_report_id_for_simulation(simulation_id: str) -> str:
     
     # reports 目录路径：backend/uploads/reports
     # __file__ 是 app/api/simulation.py，需要向上两级到 backend/
-    reports_dir = os.path.join(os.path.dirname(__file__), '../../uploads/reports')
+    reports_dir = (
+        os.path.join(Config.UPLOAD_FOLDER, 'reports') if Config.DATA_DIR
+        else os.path.join(os.path.dirname(__file__), '../../uploads/reports')
+    )
     if not os.path.exists(reports_dir):
         return None
     
@@ -1013,7 +1055,15 @@ def get_simulation_history():
         limit = request.args.get('limit', 20, type=int)
 
         manager = SimulationManager()
-        simulations = manager.list_simulations()[:limit]
+        simulations = manager.list_simulations()
+        visible = public.shelf_ids()
+        if visible is not None:
+            # The public shelf: featured gatherings and the ones this visitor names.
+            simulations = [
+                s for s in simulations
+                if public.simulation_on_shelf(visible, s.simulation_id, s.project_id)
+            ]
+        simulations = simulations[:limit]
         
         # 增强模拟数据，只从 Simulation 文件读取
         enriched_simulations = []
@@ -2306,9 +2356,12 @@ def get_simulation_posts(simulation_id: str):
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
 
-        sim_dir = os.path.join(
-            os.path.dirname(__file__),
-            f'../../uploads/simulations/{simulation_id}'
+        sim_dir = (
+            os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id) if Config.DATA_DIR
+            else os.path.join(
+                os.path.dirname(__file__),
+                f'../../uploads/simulations/{simulation_id}'
+            )
         )
 
         db_file = f"{platform}_simulation.db"
@@ -2384,9 +2437,12 @@ def get_simulation_comments(simulation_id: str):
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
 
-        sim_dir = os.path.join(
-            os.path.dirname(__file__),
-            f'../../uploads/simulations/{simulation_id}'
+        sim_dir = (
+            os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id) if Config.DATA_DIR
+            else os.path.join(
+                os.path.dirname(__file__),
+                f'../../uploads/simulations/{simulation_id}'
+            )
         )
         
         db_path = os.path.join(sim_dir, f"{platform}_simulation.db")

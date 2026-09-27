@@ -1,0 +1,122 @@
+# Parthenon's public container: the Render private service behind
+# projectforty2.ai/parthenon (render.yaml, docs/DEPLOY.md).
+#
+# One process tree, started by deploy/start.py:
+#   the LLM bridge   127.0.0.1:5055 (never public; holds the provider keys)
+#   the site         0.0.0.0:$PORT  (waitress: the Flask API and the built
+#                                    frontend, all under /parthenon)
+# Data (uploads, the memory database, the exhibits, caches) lives on the disk
+# mounted at /data.
+#
+# Size (about 2 GB): the Python environment dominates at about 1.2 GB
+# unpacked, measured for linux x86_64: torch 680 MB (CPU build; the OASIS
+# simulator imports it), scipy 120 MB, numpy 60 MB, PyMuPDF 57 MB,
+# transformers 55 MB, pandas 45 MB, scikit-learn 31 MB, sympy 29 MB. The CUDA
+# build of torch that backend/uv.lock names for Linux would add about 4 GB of
+# torch, nvidia-* and triton that a CPU instance cannot use, so it is swapped
+# for the CPU build of the same version (deploy/torch-cpu.txt).
+# Next, the film tools, about 540 MB installed (from Debian bookworm's package
+# index): ffmpeg with its libraries 450 MB, of which LLVM and Mesa's GL
+# drivers are 160 MB (Debian's libavdevice depends on libgl1; the film never
+# loads them), and the Noto CJK fonts 89 MB for a Chinese title card. They
+# only matter with an xAI key; PARTHENON_FILM_TOOLS=0 leaves them out.
+# Then the python:3.11-slim base (about 130 MB) and the frontend build (about
+# 50 MB: the night's footage, paintings and sound).
+
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.19
+
+FROM ${UV_IMAGE} AS uv
+
+# ---------------------------------------------------------------- 1. frontend
+FROM ${NODE_IMAGE} AS frontend
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund --loglevel=error
+COPY locales/ /app/locales/
+COPY frontend/ ./
+# The page stands at /parthenon/ (vite.config.js reads VITE_BASE).
+ARG VITE_BASE=/parthenon/
+ENV VITE_BASE=${VITE_BASE}
+# The build, then a check that every address the page makes is under the base.
+RUN npx vite build --logLevel warn \
+ && node scripts/check-base.mjs dist "${VITE_BASE}"
+
+# ----------------------------------------------------------- 2. python deps
+FROM ${PYTHON_IMAGE} AS python-deps
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON=/usr/local/bin/python3.11
+WORKDIR /app/backend
+COPY backend/pyproject.toml backend/uv.lock ./
+COPY deploy/cpu_torch.py deploy/torch-cpu.txt /app/deploy/
+# Everything from the lock (frozen, hashes checked) except the GPU stack,
+# then the CPU build of the same torch version (hash-pinned).
+RUN EXCLUDE="$(python /app/deploy/cpu_torch.py uv.lock /app/deploy/torch-cpu.txt)" \
+ && uv sync --frozen --no-dev --no-install-project ${EXCLUDE} \
+ && uv pip install --python /app/backend/.venv/bin/python --no-deps --require-hashes \
+      --index-url https://download.pytorch.org/whl/cpu -r /app/deploy/torch-cpu.txt \
+ && cd /tmp \
+ && /app/backend/.venv/bin/python -c "import torch, oasis, waitress, flask; assert torch.version.cuda is None; print('torch', torch.__version__)" \
+ && rm -rf /tmp/log
+
+# -------------------------------------------------------------- 3. runtime
+FROM ${PYTHON_IMAGE}
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/app/backend/.venv/bin:${PATH} \
+    PARTHENON_PUBLIC=1 \
+    PARTHENON_DATA_DIR=/data \
+    PARTHENON_BASE=/parthenon \
+    PORT=10000
+RUN groupadd --system --gid 10001 parthenon \
+ && useradd --system --uid 10001 --gid parthenon --home-dir /home/parthenon \
+      --create-home --shell /usr/sbin/nologin parthenon
+# The film tools. With an xAI key the city films the Chronicle: ffmpeg and
+# ffprobe cut the footage (features.film asks for both), DejaVu Serif and Noto
+# Serif CJK draw the title card (the files backend/app/services/
+# chronicle_film.py looks for). The build stops if a tool lacks an encoder or
+# filter the film uses. PARTHENON_FILM_TOOLS=0 (Render passes the service's
+# environment to the build) leaves all of it out, when no xAI key will be set.
+ARG PARTHENON_FILM_TOOLS=1
+RUN if [ "${PARTHENON_FILM_TOOLS}" != "0" ]; then \
+      apt-get update \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+           ffmpeg fonts-dejavu-core fonts-noto-cjk \
+      && rm -rf /var/lib/apt/lists/* \
+      && ffprobe -hide_banner -version >/dev/null \
+      && ffmpeg -hide_banner -encoders | grep -q ' libx264 ' \
+      && ffmpeg -hide_banner -encoders | grep -q ' aac ' \
+      && for filter in zoompan xfade acrossfade loudnorm tpad apad amix atempo; do \
+           ffmpeg -hide_banner -filters | grep -qw "${filter}" \
+             || { echo "ffmpeg lacks the ${filter} filter" >&2; exit 1; }; \
+         done \
+      && test -f /usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf \
+      && test -f /usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc; \
+    fi
+WORKDIR /app
+COPY --from=python-deps /app/backend/.venv /app/backend/.venv
+COPY backend/pyproject.toml backend/run.py backend/wsgi.py /app/backend/
+COPY backend/app /app/backend/app
+COPY backend/scripts /app/backend/scripts
+COPY bridge/grok_bridge.py /app/bridge/grok_bridge.py
+COPY locales /app/locales
+COPY deploy /app/deploy
+COPY LICENSE README.md /app/
+COPY --from=frontend /app/frontend/dist /app/frontend/dist
+# The backend writes to backend/uploads and backend/logs by paths relative to
+# its source: both lead onto the data disk (deploy/start.py re-points them if
+# PARTHENON_DATA_DIR is elsewhere).
+RUN python -m compileall -q /app/backend/app /app/backend/scripts /app/bridge /app/deploy \
+ && ln -s /data/uploads /app/backend/uploads \
+ && ln -s /data/logs /app/backend/logs \
+ && mkdir -p /data \
+ && chown parthenon:parthenon /data
+EXPOSE 10000
+# deploy/start.py begins as root only to hand the mounted disk to the
+# parthenon user, then drops to it before the bridge and the site start.
+ENTRYPOINT ["python", "/app/deploy/start.py"]

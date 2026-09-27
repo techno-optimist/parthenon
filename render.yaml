@@ -1,0 +1,133 @@
+# Render Blueprint for projectforty2.ai/parthenon (see docs/DEPLOY.md).
+#
+# One private service: reachable only on Render's private network, where the
+# public edge (the chronos web service, P42_PARTHENON_ORIGIN) proxies
+# /parthenon and /parthenon/* to it. Private services take no health check
+# path; the edge and the owner can ask /parthenon/healthz.
+#
+# The server runs on the owner's Grok subscription through its own sign-in,
+# made once in the running service (render ssh parthenon, then
+# /app/backend/.venv/bin/python /app/deploy/grok_signin.py signin). An invite
+# code gates beginning gatherings and asking questions; anyone with the link
+# may walk the exhibits.
+services:
+  - type: pserv
+    name: parthenon
+    runtime: docker
+    region: oregon
+    plan: standard
+    dockerfilePath: ./Dockerfile.render
+    dockerContext: .
+    # A service with a disk runs one instance, and a deploy stops the old one
+    # (SIGTERM, then SIGKILL after 30 s; maxShutdownDelaySeconds is not
+    # allowed with a disk) before the new one starts.
+    numInstances: 1
+    disk:
+      name: parthenon-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: PARTHENON_PUBLIC
+        value: "1"
+      - key: PARTHENON_BASE
+        value: /parthenon
+      - key: PARTHENON_DATA_DIR
+        value: /data
+      - key: PARTHENON_TRUST_PROXY
+        value: "1"
+      # The pages that may call the API (the backend's default is the first).
+      - key: PARTHENON_PUBLIC_ORIGIN
+        value: https://projectforty2.ai,https://www.projectforty2.ai
+
+      # The models. auto: the Grok subscription when GROK_BRIDGE_TOKEN_FILE
+      # holds a sign-in (portraits, film and voices come with it); else the
+      # first of XAI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY that is set;
+      # else OpenRouter's free models (OPENROUTER_API_KEY, the fallback). The
+      # running bridge decides again when the sign-in appears or goes.
+      - key: PARTHENON_UPSTREAM
+        value: auto
+      # The server's own Grok sign-in, on the disk: owned by the service user
+      # (uid 10001), mode 0600. Never a copy of another machine's sign-in:
+      # xAI rotates the refresh token on every refresh, so two holders of one
+      # grant sign each other out.
+      - key: GROK_BRIDGE_TOKEN_FILE
+        value: /data/grok-oauth.json
+      # The memory's graph building (the Hearing) and the stance reading on
+      # a fast non-reasoning Grok model: grok-4.7 takes about 130 s a window
+      # there. The Symposium, the Oracle and the Scribe keep grok-4.7. A Grok
+      # name passes through on the subscription; an API key or OpenRouter
+      # puts its own model in its place, so the fallback still works.
+      - key: LOCAL_MEMORY_LLM_MODEL
+        value: grok-4.20-0309-non-reasoning
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # The film tools in the image (ffmpeg and the title card's fonts, about
+      # 540 MB; Render passes this to the Docker build). "0" builds without
+      # them: then no film, even with XAI_API_KEY.
+      - key: PARTHENON_FILM_TOOLS
+        value: "1"
+
+      # The invite: beginning a gathering, the Symposium's questions, the
+      # Oracle's draft, portraits, film, stance readings and voices need
+      # X-Parthenon-Invite with one of these codes (comma separated; replace
+      # the generated one with words of your own if you like). Reading needs
+      # none. Hand out projectforty2.ai/parthenon?invite=CODE, with the code
+      # escaped for a URL (grok_signin.py invite-link prints it).
+      - key: PARTHENON_INVITE_CODE
+        generateValue: true
+      # Wrong invite codes a visitor may try in an hour (then slow_down).
+      - key: PARTHENON_INVITE_TRIES_PER_HOUR
+        value: "10"
+
+      # For featuring gatherings (X-Parthenon-Admin) and signing the app.
+      - key: PARTHENON_ADMIN_KEY
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
+
+      # The two finished gatherings, installed on the first boot.
+      - key: PARTHENON_EXHIBITS_URL
+        value: https://github.com/techno-optimist/parthenon/releases/download/exhibits-v1/exhibits-v1.tar.gz
+      - key: PARTHENON_EXHIBITS_SHA256
+        value: 9480b03711d2a600ebc50d04a8d2a577b5eae50f5ec0f6eeb2caca830da11936
+
+      # How much the city takes on (raise them here). A visitor is known by
+      # the address Cloudflare reports, so a team behind one office address
+      # shares the per-visitor limits: they are set for a team (the invite
+      # already decides who may speak), and the site-wide DAILY_GATHERINGS
+      # and CONCURRENT_RUNS stay the backstop.
+      - key: PARTHENON_DAILY_GATHERINGS
+        value: "12"
+      - key: PARTHENON_DAILY_PER_VISITOR
+        value: "8"
+      - key: PARTHENON_MAX_CITIZENS
+        value: "12"
+      - key: PARTHENON_MAX_RUN
+        value: day
+      # A Standard 2 GB instance holds one run or one open environment
+      # (about 1 GB each). Raise this only on Pro (4 GB) or larger.
+      - key: PARTHENON_CONCURRENT_RUNS
+        value: "1"
+      # An environment left open after its night is closed after this long.
+      - key: PARTHENON_IDLE_ENV_MINUTES
+        value: "20"
+      - key: PARTHENON_QUESTIONS_PER_HOUR
+        value: "120"
+      - key: PARTHENON_MAX_SCROLL_CHARS
+        value: "20000"
+
+      # Time. Cloudflare cuts a proxied request at 100 s. The Symposium's
+      # questions, the Scribe's chat and the Oracle's draft answer 202 with a
+      # ticket at once and are worked on for up to QUESTION_SECONDS (grok-4.7
+      # takes 25 to 110 s); anything still answered in the request gives up
+      # after REQUEST_SECONDS.
+      - key: PARTHENON_QUESTION_SECONDS
+        value: "240"
+      - key: PARTHENON_REQUEST_SECONDS
+        value: "85"

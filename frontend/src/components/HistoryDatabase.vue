@@ -76,55 +76,61 @@
       <button type="button" class="p-button secondary small" @click="clearFind">{{ $t('parthenon.chronicles.clear') }}</button>
     </div>
 
-    <ul v-else class="shelf" role="list">
-      <li
-        v-for="g in shown"
-        :key="g.key"
-        class="shelf-cell"
-        :class="{ stacked: g.nights.length > 1, deep: g.nights.length > 2 }"
-      >
-        <component
-          :is="page ? 'button' : 'router-link'"
-          v-bind="page ? { type: 'button' } : { to: gatheringLink(g.lead) }"
-          class="tablet"
-          :class="{ live: g.live, heard: g.heardOnly }"
-          :data-group="g.key"
-          :aria-labelledby="tabletId(g, 'title')"
-          :aria-describedby="`${tabletId(g, 'meta')} ${tabletId(g, 'status')}`"
-          v-on="page ? { click: () => openGroup(g) } : {}"
-        >
-          <span class="tablet-plate" :style="{ '--plate': g.tone }">
-            <img
-              v-if="plateImage(g.lead)"
-              :src="plateImage(g.lead)"
-              alt=""
-              loading="lazy"
-              decoding="async"
-              @error="markBroken(plateImage(g.lead))"
-            />
-            <span v-else class="tablet-letter" aria-hidden="true">{{ g.lead.letter }}</span>
-            <span v-if="g.live" class="tablet-lit"><span class="dot" aria-hidden="true"></span>{{ $t('parthenon.chronicles.word.live') }}</span>
-            <span v-if="g.lead.film" class="tablet-film">{{ $t('parthenon.chronicles.film') }}</span>
-            <span v-if="g.nights.length > 1" class="tablet-nights">
-              {{ $t('parthenon.chronicles.nights', { n: g.nights.length }, g.nights.length) }}
-            </span>
-          </span>
-          <span class="tablet-body">
-            <span :id="tabletId(g, 'meta')" class="tablet-meta">
-              <span v-if="g.lead.era" class="tablet-era">{{ g.lead.era }}</span>
-              <time :datetime="g.lead.iso">{{ g.lead.date }}</time>
-            </span>
-            <span :id="tabletId(g, 'title')" class="tablet-title" :lang="textLang(g.lead.title)">{{ g.lead.title }}</span>
-            <span v-if="g.lead.question" class="tablet-question" :lang="textLang(g.lead.question)" aria-hidden="true">{{ g.lead.question }}</span>
-            <span :id="tabletId(g, 'status')" class="tablet-status" :class="g.lead.state">
-              <span class="dot" aria-hidden="true"></span>
-              <span class="status-word">{{ g.lead.word }}</span>
-              <span class="status-text">{{ g.lead.status }}</span>
-            </span>
-          </span>
-        </component>
-      </li>
-    </ul>
+    <template v-else>
+      <!-- On the public steps: this browser's own gatherings first, then the ones the city keeps. -->
+      <template v-for="sec in sections" :key="sec.key">
+        <h3 v-if="sec.title" class="shelf-section-title">{{ sec.title }}</h3>
+        <ul class="shelf" role="list">
+          <li
+            v-for="g in sec.groups"
+            :key="g.key"
+            class="shelf-cell"
+            :class="{ stacked: g.nights.length > 1, deep: g.nights.length > 2 }"
+          >
+            <component
+              :is="page ? 'button' : 'router-link'"
+              v-bind="page ? { type: 'button' } : { to: gatheringLink(g.lead) }"
+              class="tablet"
+              :class="{ live: g.live, heard: g.heardOnly }"
+              :data-group="g.key"
+              :aria-labelledby="tabletId(g, 'title')"
+              :aria-describedby="`${tabletId(g, 'meta')} ${tabletId(g, 'status')}`"
+              v-on="page ? { click: () => openGroup(g) } : {}"
+            >
+              <span class="tablet-plate" :style="{ '--plate': g.tone }">
+                <img
+                  v-if="plateImage(g.lead)"
+                  :src="plateImage(g.lead)"
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  @error="markBroken(plateImage(g.lead))"
+                />
+                <span v-else class="tablet-letter" aria-hidden="true">{{ g.lead.letter }}</span>
+                <span v-if="g.live" class="tablet-lit"><span class="dot" aria-hidden="true"></span>{{ $t('parthenon.chronicles.word.live') }}</span>
+                <span v-if="g.lead.film" class="tablet-film">{{ $t('parthenon.chronicles.film') }}</span>
+                <span v-if="g.nights.length > 1" class="tablet-nights">
+                  {{ $t('parthenon.chronicles.nights', { n: g.nights.length }, g.nights.length) }}
+                </span>
+              </span>
+              <span class="tablet-body">
+                <span :id="tabletId(g, 'meta')" class="tablet-meta">
+                  <span v-if="g.lead.era" class="tablet-era">{{ g.lead.era }}</span>
+                  <time :datetime="g.lead.iso">{{ g.lead.date }}</time>
+                </span>
+                <span :id="tabletId(g, 'title')" class="tablet-title" :lang="textLang(g.lead.title)">{{ g.lead.title }}</span>
+                <span v-if="g.lead.question" class="tablet-question" :lang="textLang(g.lead.question)" aria-hidden="true">{{ g.lead.question }}</span>
+                <span :id="tabletId(g, 'status')" class="tablet-status" :class="g.lead.state">
+                  <span class="dot" aria-hidden="true"></span>
+                  <span class="status-word">{{ g.lead.word }}</span>
+                  <span class="status-text">{{ g.lead.status }}</span>
+                </span>
+              </span>
+            </component>
+          </li>
+        </ul>
+      </template>
+    </template>
 
     <div v-if="!page && groups.length" class="shelf-foot">
       <router-link :to="{ name: 'Chronicles' }" class="p-button secondary see-all">
@@ -284,6 +290,8 @@ import { arrivals } from '../parthenon/arrivals/index.js'
 import { localText } from '../parthenon/localText.js'
 import { speakerFace } from '../parthenon/portraits.js'
 import { ACTS, citizenName, isPlatformNode, textLang, smartQuotes } from '../parthenon/vocabulary.js'
+import { withBase } from '../parthenon/base.js'
+import { access, ownsGathering } from '../parthenon/access.js'
 
 const props = defineProps({
   mode: { type: String, default: 'shelf' }, // shelf | page
@@ -436,7 +444,7 @@ const nightOf = (p) => {
   const lang = locale.value
   const question = String(p.question || p.simulation_requirement || '').trim()
   const poster = film ? filmAssetUrl(p.film?.poster_url) : ''
-  const stageImage = arrival ? `/media/scenes/arrival-${arrival.id}.jpg` : speaker ? `/media/portraits/${speaker.id}.jpg` : ''
+  const stageImage = arrival ? withBase(`/media/scenes/arrival-${arrival.id}.jpg`) : speaker ? withBase(`/media/portraits/${speaker.id}.jpg`) : ''
   const iso = p.created_at || ''
 
   return {
@@ -500,7 +508,7 @@ const heardOf = (p) => {
   const arrival = arrivals.find((a) => a.fileName === seed)
   const lang = locale.value
   const question = String(p.simulation_requirement || '').trim()
-  const stageImage = arrival ? `/media/scenes/arrival-${arrival.id}.jpg` : speaker ? `/media/portraits/${speaker.id}.jpg` : ''
+  const stageImage = arrival ? withBase(`/media/scenes/arrival-${arrival.id}.jpg`) : speaker ? withBase(`/media/portraits/${speaker.id}.jpg`) : ''
   const iso = p.created_at || ''
   const building = p.status === 'graph_building'
   const status = t(building ? 'parthenon.chronicles.status.hearing' : 'parthenon.chronicles.status.heardOnly')
@@ -613,6 +621,23 @@ const shown = computed(() => {
     if (filter.value === 'filmed' && !g.filmed) return false
     return words.every((w) => g.haystack.includes(w))
   })
+})
+
+// ---- Whose gatherings (the public steps) ----
+// On the public steps the shelf holds the gatherings this browser began
+// ('Your gatherings', first) and the ones the city keeps. At home it is one shelf.
+const ownGroup = (g) => g.nights.some((n) => ownsGathering(n.projectId, n.simulationId, n.reportId))
+const sections = computed(() => {
+  const list = shown.value
+  if (!access.public) return [{ key: 'all', title: '', groups: list }]
+  const cap = page.value ? Infinity : Math.max(1, props.limit)
+  const pool = page.value ? list : groups.value
+  const yours = pool.filter(ownGroup).slice(0, cap)
+  const kept = pool.filter((g) => !ownGroup(g)).slice(0, cap)
+  return [
+    { key: 'yours', title: t('parthenon.public.shelf.yours'), groups: yours },
+    { key: 'featured', title: t('parthenon.public.shelf.featured'), groups: kept }
+  ].filter((sec) => sec.groups.length)
 })
 
 const clearFind = () => {
@@ -761,11 +786,11 @@ watch(
 
 // ---- The filmstrip of one night ----
 const SCENES = {
-  scroll: '/media/acts/hearing.jpg',
-  crowd: '/media/acts/gathering.jpg',
-  argument: '/media/acts/agora.jpg',
-  chronicle: '/media/acts/chronicle.jpg',
-  symposium: '/media/acts/symposium.jpg'
+  scroll: withBase('/media/acts/hearing.jpg'),
+  crowd: withBase('/media/acts/gathering.jpg'),
+  argument: withBase('/media/acts/agora.jpg'),
+  chronicle: withBase('/media/acts/chronicle.jpg'),
+  symposium: withBase('/media/acts/symposium.jpg')
 }
 
 const frames = computed(() => {
@@ -955,6 +980,19 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.shelf-section-title {
+  margin: 28px 0 14px;
+  font-family: var(--p-font-display);
+  font-weight: 500;
+  font-size: var(--t-xl, 1.5rem);
+  line-height: 1.2;
+  color: var(--p-ink);
+}
+
+.shelf-section-title:first-child {
+  margin-top: 0;
+}
+
 .chronicles {
   position: relative;
   width: 100%;

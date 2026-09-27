@@ -7,6 +7,7 @@
 // function that returns visible words takes an optional last `locale`
 // argument that wins over the module's. English and Chinese have words of
 // their own; any other language reads the English ones.
+import { withBase } from './base.js'
 
 let currentLocale = 'en'
 // An optional reader of the app's own (reactive) locale. Reading it inside
@@ -500,11 +501,11 @@ export const stripIds = (text) =>
 
 // The five acts, in order, with their Greek numerals.
 export const ACTS = [
-  { n: 1, numeral: 'Α΄', key: 'hearing', route: 'Process', scene: '/media/acts/hearing.jpg' },
-  { n: 2, numeral: 'Β΄', key: 'gathering', route: 'Simulation', scene: '/media/acts/gathering.jpg' },
-  { n: 3, numeral: 'Γ΄', key: 'agora', route: 'SimulationRun', scene: '/media/acts/agora.jpg' },
-  { n: 4, numeral: 'Δ΄', key: 'chronicle', route: 'Report', scene: '/media/acts/chronicle.jpg' },
-  { n: 5, numeral: 'Ε΄', key: 'symposium', route: 'Interaction', scene: '/media/acts/symposium.jpg' }
+  { n: 1, numeral: 'Α΄', key: 'hearing', route: 'Process', scene: withBase('/media/acts/hearing.jpg') },
+  { n: 2, numeral: 'Β΄', key: 'gathering', route: 'Simulation', scene: withBase('/media/acts/gathering.jpg') },
+  { n: 3, numeral: 'Γ΄', key: 'agora', route: 'SimulationRun', scene: withBase('/media/acts/agora.jpg') },
+  { n: 4, numeral: 'Δ΄', key: 'chronicle', route: 'Report', scene: withBase('/media/acts/chronicle.jpg') },
+  { n: 5, numeral: 'Ε΄', key: 'symposium', route: 'Interaction', scene: withBase('/media/acts/symposium.jpg') }
 ]
 
 // Story-sized run lengths instead of round counts. Minutes are rough and

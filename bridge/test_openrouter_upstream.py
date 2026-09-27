@@ -141,7 +141,9 @@ def test_429_rotates_the_list_and_later_requests_start_with_the_model_that_answe
     assert sent[3][0] == NEMOTRON
 
 
-def test_router_entry_is_remembered_when_it_answers_under_another_models_id():
+def test_router_entry_is_never_remembered_when_it_answers_under_another_models_id():
+    # openrouter/free picks any free model (a safety classifier, a 2.6B model...) under that model's
+    # own id: starting later requests there handed the whole city to random models.
     handler, sent = recording([
         rate_limited(), rate_limited(), rate_limited(),
         httpx.Response(200, json=chat_ok("meta-llama/llama-4-scout:free")),
@@ -150,9 +152,9 @@ def test_router_entry_is_remembered_when_it_answers_under_another_models_id():
     upstream = make_upstream(handler)
     assert upstream.chat_completion(REQUEST)[0] == 200
     assert sent[3] == (ROUTER, [ROUTER, NEMOTRON, GEMMA])
-    assert upstream.health_info()["current_model"] == ROUTER
+    assert upstream.health_info()["current_model"] is None
     upstream.chat_completion(REQUEST)
-    assert sent[4][0] == ROUTER
+    assert sent[4] == (NEMOTRON, [NEMOTRON, GEMMA, QWEN])
 
 
 def test_5xx_and_errors_inside_a_200_body_are_retried_on_the_next_model():
@@ -309,7 +311,10 @@ def test_health_reports_the_upstream(tmp_path):
     store = gb.TokenStore(tmp_path / "t.json", http)
     store.save({"access_token": "a.b.c", "refresh_token": "r"})
     grok = gb.create_app(gb.Upstream(store, http, mode="chat")).test_client().get("/health").get_json()
-    assert grok == {"status": "ok", "upstream": "grok", "signed_in": True, "mode": "chat", "imagine": True}
+    assert grok == {
+        "status": "ok", "upstream": "grok", "signed_in": True, "mode": "chat", "imagine": True,
+        "provider": "grok-subscription", "voice": True,
+    }
 
     openrouter = gb.create_app(make_upstream(lambda r: httpx.Response(500))).test_client().get("/health").get_json()
     assert openrouter["status"] == "ok"
@@ -317,6 +322,7 @@ def test_health_reports_the_upstream(tmp_path):
     assert openrouter["models"] == MODELS
     assert openrouter["api_key_set"] is True
     assert openrouter["imagine"] is False
+    assert openrouter["provider"] == "free" and openrouter["voice"] is False
 
 
 def test_security_guards_apply_in_openrouter_mode():

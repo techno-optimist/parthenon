@@ -290,6 +290,9 @@
           </div>
         </div>
 
+        <!-- On steps that ask for the word: asked before the first question; the question waits in the field. -->
+        <InviteLine v-if="inviteFor === 'chat'" class="ask-invite" @given="onInviteGiven" />
+
         <form class="ask" @submit.prevent="sendMessage">
           <label class="sr-only" for="symposium-ask">{{ askPlaceholder }}</label>
           <textarea
@@ -334,6 +337,8 @@
           <span class="face-name">{{ c.name }}</span>
         </li>
       </ul>
+
+      <InviteLine v-if="inviteFor === 'crowd'" class="ask-invite" @given="onInviteGiven" />
 
       <form class="ask crowd-ask" @submit.prevent="submitSurvey">
         <label class="sr-only" for="symposium-crowd">{{ t('step5.symposium.crowdPlaceholder') }}</label>
@@ -540,6 +545,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import CitizenCoin from './CitizenCoin.vue'
+import InviteLine from './InviteLine.vue'
 import { chatWithReport, getReport, getAgentLog } from '../api/report'
 import {
   interviewAgents,
@@ -553,6 +559,9 @@ import { getProject } from '../api/graph'
 import { citizenName, entityTypeName, roleFamily, roleLabel, roleColorVar, ROLE_COLOR_VAR, voiceOf as voiceForType } from '../parthenon/vocabulary.js'
 import { speakerFace, useCitizenPortraits } from '../parthenon/portraits.js'
 import { speakWords, filmAssetUrl, getCitizenStances, askSpeaker } from '../api/parthenon'
+import { withBase } from '../parthenon/base.js'
+import { calmCode, calmLine, featureOn, inviteNeeded } from '../parthenon/access.js'
+import { TICKET_ENDS } from '../parthenon/tickets.js'
 import { holdDuck, sound, speak, stopSpeaking, voiceUrl } from '../parthenon/sound.js'
 import { speakers } from '../parthenon/speakers.js'
 import { arrivals } from '../parthenon/arrivals/index.js'
@@ -595,6 +604,26 @@ const chatInput = ref('')
 const chatHistory = ref([])
 const chatHistoryCache = ref({}) // { report_agent: [], agent_0: [], ... }
 const isSending = ref(false)
+
+// On steps that ask for the word (parthenon/access.js): which question waits
+// for it, the table's ('chat') or the crowd's ('crowd'). The question itself
+// waits in its field, never lost.
+const inviteFor = ref('')
+// A question on the public steps can be answered as a ticket, waited for in
+// the background (api/tickets.js); leaving the room stops the waiting.
+const leaving = typeof AbortController !== 'undefined' ? new AbortController() : null
+const waitOpts = () => (leaving ? { signal: leaving.signal } : undefined)
+onBeforeUnmount(() => leaving?.abort())
+const abandoned = (err) => err?.ticketEnd === TICKET_ENDS.abandoned
+// A question put as a ticket that came back without an answer (the budget
+// passed, the city lost it, or it was refused while thinking): the question is kept.
+const unanswered = (err) => err?.ticketEnd === TICKET_ENDS.gaveUp || err?.ticketEnd === TICKET_ENDS.lost || err?.fromTicket === true
+const onInviteGiven = () => {
+  const which = inviteFor.value
+  inviteFor.value = ''
+  if (which === 'crowd') submitSurvey()
+  else sendMessage()
+}
 const chatInputRef = ref(null)
 
 // Crowd state
@@ -658,7 +687,7 @@ const faceSize = computed(() => (isNarrow.value ? 'lg' : 'xl'))
 const tableRef = ref(null)
 
 // The Scribe's own face, painted once by the same painters as the citizens.
-const SCRIBE_PORTRAIT = '/media/symposium/scribe.jpg'
+const SCRIBE_PORTRAIT = withBase('/media/symposium/scribe.jpg')
 
 // ---- The seat of honour ----
 // The philosopher (or the Arrival) who took the floor on the steps sits
@@ -1249,6 +1278,11 @@ const canHear = canSpeak || canPlay
 const speakingKey = ref(null)
 const hearPhase = ref('idle') // idle | gathering | speaking
 const hearNote = ref({ key: null, text: '' })
+
+// A limit of the public steps, in the city's calm words, with how long to wait when it says; '' otherwise.
+// (The API client names a short wait; see api/index.js.)
+const calmFrom = (err) => calmLine(err)
+
 const hearAnnouncement = ref('')
 const voiceRef = ref(null)
 let spareAudio = null
@@ -1257,7 +1291,9 @@ let hearToken = 0
 const RESTING_MS = 60000
 let restingUntil = 0
 // A breath of silence, played inside the click so the phone lets the voice sound when it arrives.
-const SILENCE = 'data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YRAAAACAgICAgICAgICAgICAgICA'
+// Served from this site: the public site's CSP allows media from its own
+// origin only, not data: URLs.
+const SILENCE = withBase('/media/sound/silence.wav')
 
 const voiceElement = () => {
   if (voiceRef.value) return voiceRef.value
@@ -1351,13 +1387,13 @@ watch(hearPhase, (phase) => {
 }, { flush: 'sync' })
 
 // The browser's own voice, as before the city had voices of its own.
-const readInBrowser = (key, words, token) => {
+const readInBrowser = (key, words, token, note = '') => {
   if (!canSpeak) {
-    hearNote.value = { key, text: t('step5.symposium.hearing.restingQuiet') }
+    hearNote.value = { key, text: note || t('step5.symposium.hearing.restingQuiet') }
     finishHearing(token)
     return
   }
-  hearNote.value = { key, text: t('step5.symposium.hearing.resting') }
+  hearNote.value = { key, text: note || t('step5.symposium.hearing.resting') }
   try {
     const u = new window.SpeechSynthesisUtterance(words)
     const zh = String(locale.value || '').startsWith('zh')
@@ -1451,7 +1487,13 @@ const hear = (key, content, speaker = { voice: 'scribe' }) => {
   const token = ++hearToken
   speakingKey.value = key
   hearPhase.value = 'gathering'
-  if (!canPlay || Date.now() < restingUntil) {
+  // On the public steps without the city's voices: the browser's own, said so.
+  if (!featureOn('voice')) {
+    readInBrowser(key, words, token, t('parthenon.public.features.voice'))
+    return
+  }
+  // Without the word the city's voices are not asked (the voice route needs it): the browser reads.
+  if (!canPlay || Date.now() < restingUntil || inviteNeeded()) {
     readInBrowser(key, words, token)
     return
   }
@@ -1504,6 +1546,12 @@ const deliver = (key, entry) => {
 
 const sendMessage = async () => {
   if (chronicleMissing.value || !chatInput.value.trim() || isChatInputDisabled.value) return
+  // The steps ask for the word first: the question waits in the field until it is brought.
+  if (inviteNeeded()) {
+    inviteFor.value = 'chat'
+    return
+  }
+  inviteFor.value = ''
 
   const message = chatInput.value.trim()
   chatInput.value = ''
@@ -1527,6 +1575,30 @@ const sendMessage = async () => {
     isSending.value = false
     setIdle()
   } catch (err) {
+    // The visitor left the room while the answer was on its way: nothing to say.
+    if (abandoned(err)) return
+    // The word was not brought, or not known: the question was never put. It
+    // goes back into the field, and the word is asked for.
+    if (calmCode(err) === 'invite_needed') {
+      unask(key, message)
+      inviteFor.value = 'chat'
+      setIdle()
+      return
+    }
+    // A limit of the public steps (too many questions this hour): the city's
+    // calm words alone, kept out of the conversation the citizens are reminded of.
+    const calm = calmFrom(err)
+    if (calm) {
+      addLog(calm)
+      deliver(key, { role: 'assistant', content: calm, failed: true, calm: true, timestamp: new Date().toISOString() })
+      // The answer did not come in time: the question is back in the field, to ask again.
+      if (unanswered(err) && currentSeatKey.value === key && !chatInput.value.trim()) {
+        chatInput.value = message
+        nextTick(growInput)
+      }
+      setIdle()
+      return
+    }
     // Only the city's own words reach the room; anything else asks for a moment.
     const text = troubleFrom(err, t('step5.symposium.tryAgain'))
     addLog(t('step5.symposium.ledger.failed', { error: text }))
@@ -1546,6 +1618,20 @@ const sendMessage = async () => {
   }
 }
 
+// A question the city would not take (no word, or a word it does not know):
+// taken back out of the conversation it was asked in, and put back in the field.
+const unask = (key, message) => {
+  const list = currentSeatKey.value === key ? chatHistory.value : chatHistoryCache.value[key]
+  if (Array.isArray(list)) {
+    const at = list.map((m) => m.role === 'user' && m.content === message).lastIndexOf(true)
+    if (at >= 0) list.splice(at, 1)
+  }
+  if (currentSeatKey.value === key && !chatInput.value.trim()) {
+    chatInput.value = message
+    nextTick(growInput)
+  }
+}
+
 // Each asker reads what it needs before its first wait, and hands back the answer.
 const sendToScribe = async (message) => {
   addLog(t('step5.symposium.ledger.asked', { name: t('step5.symposium.scribe'), q: message.substring(0, 60) }))
@@ -1559,7 +1645,7 @@ const sendToScribe = async (message) => {
     simulation_id: props.simulationId,
     message,
     chat_history: historyForApi
-  })
+  }, waitOpts())
 
   if (!res.success || !res.data) throw new Error(res.error || t('step5.requestFailed'))
   const content = res.data.response || res.data.answer
@@ -1584,7 +1670,7 @@ const sendToCitizen = async (message) => {
     lang: String(locale.value || 'en'),
     report_id: props.reportId || undefined,
     interviews: [{ agent_id: idx, prompt: convo.prompt, question: convo.question, history: convo.history }]
-  })
+  }, waitOpts())
 
   if (!res.success || !res.data) throw new Error(res.error || t('step5.requestFailed'))
   // Results come keyed by square and seat: { reddit_0: {...}, twitter_0: {...} }
@@ -1609,7 +1695,7 @@ const sendToSpeaker = async (message) => {
     name: current.name,
     file_name: current.fileName,
     report_id: props.reportId || undefined
-  })
+  }, waitOpts())
 
   const answer = res?.data?.answer
   if (!answer) throw cityError(t('step5.noResponse'))
@@ -1658,6 +1744,12 @@ const leanOf = (answer) => {
 
 const submitSurvey = async () => {
   if (!canAskCrowd.value) return
+  // The steps ask for the word first: the question waits in its field until it is brought.
+  if (inviteNeeded()) {
+    inviteFor.value = 'crowd'
+    return
+  }
+  inviteFor.value = ''
 
   crowdTrouble.value = ''
   isSurveying.value = true
@@ -1673,7 +1765,7 @@ const submitSurvey = async () => {
       lang: String(locale.value || 'en'),
       report_id: props.reportId || undefined,
       interviews
-    })
+    }, waitOpts())
 
     if (res.success && res.data) {
       const list = []
@@ -1712,7 +1804,21 @@ const submitSurvey = async () => {
       throw new Error(res.error || t('step5.requestFailed'))
     }
   } catch (err) {
-    // Said under the Ask button, in the city's words only.
+    if (abandoned(err)) return
+    // The word was not brought, or not known: asked for above the question, which stays.
+    if (calmCode(err) === 'invite_needed') {
+      inviteFor.value = 'crowd'
+      setIdle()
+      return
+    }
+    // Said under the Ask button, in the city's words only; a limit, calmly.
+    const calm = calmFrom(err)
+    if (calm) {
+      crowdTrouble.value = calm
+      addLog(calm)
+      setIdle()
+      return
+    }
     const text = troubleFrom(err, t('step5.symposium.tryAgain'))
     crowdTrouble.value = t('step5.symposium.crowdTrouble', { error: text })
     addLog(t('step5.symposium.ledger.failed', { error: text }))
@@ -1873,7 +1979,7 @@ const readTheCrowd = async (questionText, list) => {
     'In one sentence of no more than eighteen words, tell me where most of them came down. Begin with a word such as "most", "many", "nearly all", "half" or "few". Answer from these answers alone; no lists, no names, no quotation marks.'
   ].join('\n')
   try {
-    const res = await chatWithReport({ simulation_id: props.simulationId, message, chat_history: [] })
+    const res = await chatWithReport({ simulation_id: props.simulationId, message, chat_history: [] }, waitOpts())
     if (token !== readingToken) return
     const text = res && res.success && res.data ? oneSentence(res.data.response || res.data.answer || '') : ''
     if (text) {
@@ -2315,7 +2421,7 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   background:
     radial-gradient(ellipse 30% 34% at 50% 16%, rgba(240, 182, 96, 0.18), transparent 72%),
     radial-gradient(ellipse 78% 70% at 50% 46%, rgba(11, 14, 19, 0.5), rgba(11, 14, 19, 0.86) 76%, rgba(11, 14, 19, 0.97) 100%),
-    url('/media/acts/symposium.jpg') center 74% / cover no-repeat;
+    var(--p-still-symposium, none) center 74% / cover no-repeat;
   /* Faded into the night on every side: a room seen by lamplight, not a picture in a frame. */
   -webkit-mask-image:
     linear-gradient(180deg, transparent 0, #000 11%, #000 84%, transparent 100%),
@@ -3705,7 +3811,7 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   .room-scene {
     background:
       linear-gradient(180deg, rgba(11, 14, 19, 0.8), rgba(11, 14, 19, 0.62) 45%, rgba(11, 14, 19, 0.92)),
-      url('/media/acts/symposium.jpg') center 78% / cover no-repeat;
+      var(--p-still-symposium, none) center 78% / cover no-repeat;
     -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%);
     -webkit-mask-composite: source-over;
     mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%);

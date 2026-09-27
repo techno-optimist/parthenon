@@ -616,6 +616,35 @@
       "signedOut": "需要主人重新登录后，{name}才能作答。",
       "silent": "{name} 这次没有作答。",
       "failed": "{name}无法作答，详情见服务器日志。"
+    },
+    "public": {
+      "cityFull": "广场已满：另一场集会正在那里辩论。请过几分钟再来。",
+      "cityDoneToday": "雅典今天已尽其所能地集会。明天再来，或去书架上旁听已有的集会。",
+      "visitorDoneToday": "你今天已开启了一位来客可开启的全部集会。明天再来，或去书架上旁听已有的集会。",
+      "gatheringDoneToday": "这场集会今天的辩论次数已满。明天再来。",
+      "slowDown": "城邦需要稍作喘息。请过一会儿再问。",
+      "scrollTooLong": "这卷文字对公共台阶来说太长了。请控制在 {max} 字以内。",
+      "uploadTooLarge": "这超出了台阶所能承载的分量。请带一卷更短的文字来。",
+      "questionTooLong": "这个问题太长了。请说得简短些。",
+      "notYours": "只有开启这场集会的人才能这样做。你仍可旁观，也可以向它提问。",
+      "keepersOnly": "此事只留给台阶的看守者。",
+      "notOnPublicSteps": "公共台阶上不提供此项。",
+      "portraitsOff": "画师不在公共台阶上：这里无法绘制新的肖像。",
+      "filmOff": "摄制者不在公共台阶上：这里无法拍摄新的影片。",
+      "voiceOff": "声音不在公共台阶上；将由你的浏览器朗读这些话。",
+      "notFound": "此处空无一物。",
+      "stumbled": "城邦绊了一下。请稍后再试。",
+      "llmAway": "城邦此刻发不出声音。请过一会儿再试。",
+      "stepsNotBuilt": "台阶仍在修建中。请稍后再来。",
+      "cannotDoThat": "城邦此刻做不到这件事。",
+      "tookTooLong": "城邦为此想得太久，只好先放下。请过一会儿再问。",
+      "hearingFailed": "城邦此刻读不懂这卷文字。请过一会儿再交上来。",
+      "inviteNeeded": "台阶向所有人敞开。若要发言，请带上交给你的那句口令。",
+      "inviteWrong": "这不是城邦所知的那句口令。请再看看交到你手中的那一句。",
+      "inviteTooManyTries": "这一小时里在门前说错的口令太多了。请歇一会儿再试。",
+      "ticketLost": "城邦忘了这个问题说到哪里了。请再问一次。",
+      "manyQuestions": "此刻有许多问题同时摆在城邦面前。请稍后再问。",
+      "gatheringInterrupted": "市民们还没有到齐，集会就被打断了。发起集会的人可以再次召集他们。"
     }
   },
   "progress": {
@@ -679,7 +708,9 @@
     "generatingProfiles": "生成Agent人设",
     "generatingSimConfig": "生成模拟配置",
     "preparingScripts": "准备剧本",
-    "profileDone": "已完成 {current}/{total}: {name}（{type}）"
+    "profileDone": "已完成 {current}/{total}: {name}（{type}）",
+    "readingScroll": "城邦正在阅读这卷文字……",
+    "scrollRead": "这卷文字已读完。"
   },
   "log": {
     "preparingGoBack": "准备返回 Step 2，正在关闭模拟...",
@@ -946,7 +977,8 @@
         "lost": "今夜法庭空无一人。",
         "knownGathered": "城邦已知 {names} 个名字与其间的 {ties} 条纽带。这卷轴的市民已经集会过。",
         "knownGatheredChatter": "城邦已知 {names} 个名字与其间的 {ties} 条纽带，另有其集会留下的 {chatter} 条广场议论。这卷轴的市民已经集会过。",
-        "summoningNow": "法庭已读完。正在召集市民。"
+        "summoningNow": "法庭已读完。正在召集市民。",
+        "word": "书卷已交到法庭手中。带来交给你的口令，它便会被宣读。"
       },
       "scroll": {
         "eyebrow": "卷轴",
@@ -2172,7 +2204,59 @@
       "tab": "此处没有集会"
     },
     "beginning": "雅典正在聆听……",
-    "scrollRolled": "卷轴尚未展开。在上方选择一个舞台，或把你自己的卷轴放到这里。"
+    "scrollRolled": "卷轴尚未展开。在上方选择一个舞台，或把你自己的卷轴放到这里。",
+    "public": {
+      "codes": {
+        "city_full": "今晚阿哥拉的座位都坐满了。稍等片刻，再试一次。",
+        "come_back_tomorrow": "雅典今天能举行的集会都已举行。明天再来吧。",
+        "slow_down": "城邦在两个问题之间需要喘口气。稍后再问。",
+        "too_long": "这卷书对公共台阶来说太长了。请带一卷短一些的来。",
+        "not_yours": "只有发起这场集会的人才能改动它。",
+        "not_on_public_steps": "这扇门在公共台阶上不开。",
+        "invite_needed": "台阶向所有人敞开。若要开口，请带上交给你的口令。",
+        "ticket_lost": "城邦重新醒来时，这个回答在路上遗失了。你的问题还留着：再问一次。"
+      },
+      "retry": "大约要等一分钟。 | 大约要等 {n} 分钟。",
+      "guest": "你是这场集会的客人：可以观看、阅读和提问，但只有发起它的人才能掌控它。",
+      "guestWaiting": "发起这场集会的人还没有召集市民。",
+      "features": {
+        "portraits": "今晚画师不在公共台阶上：市民们仍以姓名首字示人。",
+        "film": "今晚拍电影的人不在公共台阶上：编年史只供阅读，不拍成影片。",
+        "voice": "今晚城邦的嗓音不在公共台阶上：回答由你的浏览器自己的声音朗读。"
+      },
+      "provider": {
+        "free": "今晚城邦用的是免费模型：比私人之夜更慢，也更朴素。",
+        "grok": "今晚城邦由 Grok 驱动。",
+        "grokSubscription": "今晚城邦由 Grok 驱动。",
+        "openai": "今晚城邦由 OpenAI 的模型驱动。",
+        "claude": "今晚城邦由 Claude 驱动。"
+      },
+      "left": {
+        "today": "雅典今天还能再举行一场集会。 | 雅典今天还能再举行 {n} 场集会。",
+        "yours": "你可以发起其中一场。 | 你可以发起其中 {n} 场。",
+        "cityDone": "雅典今天能举行的集会都已举行。明天再来吧。",
+        "visitorDone": "你今天能发起的集会都已发起。明天再来，或从书架上旁听一场。"
+      },
+      "maxRun": "更长的夜晚留给私人的台阶。",
+      "shelf": {
+        "yours": "你的集会",
+        "featured": "城邦珍藏"
+      },
+      "noFilm": "这部编年史还没有拍成影片。",
+      "invite": {
+        "lead": "台阶向所有人敞开。若要开口，请带上交给你的口令。",
+        "hint": "口令是这片台阶的看守者随链接交给你的。",
+        "label": "交给你的口令",
+        "placeholder": "口令",
+        "give": "说出口令",
+        "wrong": "台阶不认得这句口令。请照交给你的样子再说一次。"
+      },
+      "guestInvite": "你是这场集会的客人：可以观看和阅读，带上交给你的口令便可提问。只有发起它的人才能掌控它。",
+      "ticket": {
+        "gaveUp": "这个回答比台阶能等的时间更久。你的问题还留着：稍后再问一次。",
+        "lost": "城邦重新醒来时，这个回答在路上遗失了。你的问题还留着：再问一次。"
+      }
+    }
   },
   "agora": {
     "clock": {
@@ -2469,6 +2553,7 @@
     "fallbackChapterOne": "问题与城邦的发现",
     "fallbackChapterTwo": "市民们如何转变",
     "fallbackChapterThree": "仍悬而未决的事",
-    "chapterUnwritten": "（书记官未能写完这一章。请稍后再请她重写编年史。）"
+    "chapterUnwritten": "（书记官未能写完这一章。请稍后再请她重写编年史。）",
+    "answerLost": "书记官被这个问题绕住了。请再问她一次，或换个说法。"
   }
 }

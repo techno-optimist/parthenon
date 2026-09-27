@@ -137,7 +137,7 @@ const ask = async (call) => {
 }
 
 const fromShelf = async (id) => {
-  const shelf = await ask(() => getSimulationHistory(500))
+  const shelf = await ask(() => getSimulationHistory(500, { ids: [id] }))
   const list = Array.isArray(shelf?.data) ? shelf.data : []
   const matches = list.filter((p) => p.simulation_id === id || p.report_id === id || p.project_id === id)
   if (matches.length) {

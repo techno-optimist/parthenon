@@ -6,8 +6,20 @@
       <span>{{ statusSentence }}</span>
     </p>
 
+    <!-- A limit of the public steps: one calm line, and the way back. -->
+    <section v-if="calm" class="empty calm" aria-labelledby="hearing-calm">
+      <p id="hearing-calm" class="empty-body" role="status">{{ calm }}</p>
+      <router-link to="/" class="p-button secondary">{{ $t('parthenon.hearing.empty.back') }}</router-link>
+    </section>
+
+    <!-- On steps that ask for the word: the scroll waits until the visitor brings it. -->
+    <section v-if="invite && !calm" class="invite-ask" :aria-label="$t('parthenon.public.invite.label')">
+      <InviteLine @given="$emit('invite-given')" />
+      <router-link to="/" class="p-button secondary">{{ $t('parthenon.hearing.empty.back') }}</router-link>
+    </section>
+
     <!-- Trouble, in voice, with the cause folded away. -->
-    <section v-if="error" class="trouble" aria-labelledby="hearing-trouble">
+    <section v-if="error && !calm" class="trouble" aria-labelledby="hearing-trouble">
       <h2 id="hearing-trouble" class="trouble-title">{{ $t('parthenon.hearing.trouble.title') }}</h2>
       <p class="trouble-body">{{ $t('parthenon.hearing.trouble.body') }}</p>
       <details class="cause">
@@ -217,6 +229,7 @@
           <div class="door-row">
             <router-link :to="returnTo" class="p-button summon">{{ $t('parthenon.hearing.revisit.return') }}</router-link>
             <button
+              v-if="control"
               type="button"
               class="p-button ghost new-crowd"
               :aria-expanded="confirming ? 'true' : 'false'"
@@ -225,7 +238,7 @@
               @click="confirming = !confirming"
             >{{ $t('parthenon.hearing.revisit.newCrowd') }}</button>
           </div>
-          <div v-if="confirming" id="summon-confirm" class="confirm" role="group" aria-labelledby="summon-confirm-title">
+          <div v-if="confirming && control" id="summon-confirm" class="confirm" role="group" aria-labelledby="summon-confirm-title">
             <p id="summon-confirm-title" class="confirm-title">{{ $t('parthenon.hearing.revisit.confirmTitle') }}</p>
             <p class="confirm-body">{{ $t('parthenon.hearing.revisit.confirmBody', { n: crowdSize }) }}</p>
             <div class="door-row">
@@ -237,7 +250,7 @@
             </div>
           </div>
         </template>
-        <template v-else>
+        <template v-else-if="control">
           <button
             type="button"
             class="p-button summon"
@@ -250,6 +263,7 @@
           </button>
           <p v-if="currentPhase < 2 && !summoning" id="summon-when" class="summon-when">{{ $t('parthenon.hearing.summon.when') }}</p>
         </template>
+        <p v-if="summonCalm" class="summon-when" role="status">{{ summonCalm }}</p>
         <div v-if="summonError" class="summon-trouble" role="alert">
           <p>{{ $t('parthenon.hearing.summon.failed') }}</p>
           <details class="cause">
@@ -283,6 +297,8 @@ import {
   standingRoute
 } from '../parthenon/vocabulary.js'
 import { sound, speak, voiceUrl } from '../parthenon/sound.js'
+import { calmLine } from '../parthenon/access.js'
+import InviteLine from './InviteLine.vue'
 
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -311,10 +327,16 @@ const props = defineProps({
   gatherings: { type: Array, default: () => [] },
   gatheringsRead: { type: Boolean, default: true },
   // Begun from the steps in this tab: summon the citizens once the court is done
-  autoSummon: { type: Boolean, default: false }
+  autoSummon: { type: Boolean, default: false },
+  // A limit of the public steps, in the city's calm words (in place of trouble)
+  calm: { type: String, default: '' },
+  // May this visitor summon the citizens? (On the public steps, only the one who began it.)
+  control: { type: Boolean, default: true },
+  // On steps that ask for the word: the scroll waits for it (asked here, in place)
+  invite: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['log', 'rehand', 'summoned', 'hold'])
+const emit = defineEmits(['log', 'rehand', 'summoned', 'hold', 'invite-given'])
 
 // ---------------------------------------------------------------------------
 // Status
@@ -327,6 +349,7 @@ const webCounts = computed(() => ({
 
 const phaseKey = computed(() => {
   if (props.notFound) return 'lost'
+  if (props.calm || props.invite) return 'waiting'
   if (props.error) return 'trouble'
   if (props.noScroll) return 'waiting'
   if (props.currentPhase >= 2) return 'known'
@@ -335,6 +358,7 @@ const phaseKey = computed(() => {
 })
 
 const statusSentence = computed(() => {
+  if (props.invite && !props.calm && !props.notFound) return t('parthenon.hearing.status.word')
   if (phaseKey.value === 'known') {
     if (summoning.value && !props.gatherings.length) return t('parthenon.hearing.status.summoningNow')
     const c = webCounts.value
@@ -547,14 +571,16 @@ watch(confirming, async (open) => {
 
 const summoning = ref(false)
 const summonError = ref('')
+const summonCalm = ref('')
 const canSummon = computed(
-  () => props.currentPhase >= 2 && props.gatheringsRead && !!props.projectData?.project_id && !!props.projectData?.graph_id && !summoning.value
+  () => props.control && props.currentPhase >= 2 && props.gatheringsRead && !!props.projectData?.project_id && !!props.projectData?.graph_id && !summoning.value
 )
 
 const summonCitizens = async () => {
   if (!canSummon.value) return
   summoning.value = true
   summonError.value = ''
+  summonCalm.value = ''
   emit('log', t('parthenon.hearing.ledger.summoning'))
   try {
     const res = await createSimulation({
@@ -571,8 +597,12 @@ const summonCitizens = async () => {
       emit('log', t('parthenon.hearing.ledger.trouble', { error: summonError.value }))
     }
   } catch (err) {
-    summonError.value = err.message || t('common.unknownError')
-    emit('log', t('parthenon.hearing.ledger.trouble', { error: summonError.value }))
+    // A limit of the public steps is said calmly, in place; anything else is trouble.
+    summonCalm.value = calmLine(err)
+    if (!summonCalm.value) {
+      summonError.value = err.message || t('common.unknownError')
+      emit('log', t('parthenon.hearing.ledger.trouble', { error: summonError.value }))
+    }
   } finally {
     summoning.value = false
   }
@@ -1181,6 +1211,18 @@ watch(() => props.seedText, () => { unrolled.value = false })
 }
 
 .empty .door-row { margin-top: 4px; }
+
+/* The word asked for in place: the slip of parchment, then the way back. */
+.invite-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.invite-ask :deep(.invite-line) {
+  margin: 0;
+}
 .empty .bema { margin: 0 0 18px; }
 
 .revisit-line {

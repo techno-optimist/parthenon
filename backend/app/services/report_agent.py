@@ -20,8 +20,11 @@ from datetime import datetime
 from enum import Enum
 
 from ..config import Config
+from ..utils import time_budget
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from ..utils.json_files import read_json, write_json_atomic
+from . import model_output
 from ..utils.locale import get_language_instruction, get_locale, t
 from .zep_tools import (
     ZepToolsService, 
@@ -1313,6 +1316,13 @@ REACT_UNUSED_TOOLS_HINT = "\nNot yet used: {unused_list}. A different search may
 
 REACT_FORCE_FINAL_MSG = 'The searches are done. Begin with "Final Answer:" and write the whole chapter now.'
 
+# A chapter that came back as notes, markup or a soup of fragments is asked for once more.
+REACT_CHAPTER_AGAIN_MSG = (
+    'That was not the chapter: it held notes, plans or markup. Write the chapter itself now, '
+    'in plain prose, as the Scribe: begin with "Final Answer:" and then only the chapter. '
+    'No plans, no searches, no tags.'
+)
+
 # Models often dress the marker in Markdown ("**Final Answer:**", "**Final Answer**:").
 # Splitting on the bare "Final Answer:" left the closing "**" as a stray first line.
 _FINAL_ANSWER_MARKER = re.compile(r'(?:([*_]{1,3})\s*Final Answer\s*(?:\1\s*:|:\s*\1)|Final Answer\s*:)')
@@ -1361,6 +1371,11 @@ CHAT_NO_CHRONICLE = "(The Chronicle is not yet written.)"
 CHAT_CHRONICLE_CUT = "\n\n... [the rest of the Chronicle is on the shelf] ..."
 CHAT_OBSERVATION_TEMPLATE = "[{tool} answered]\n{result}"
 CHAT_OBSERVATION_SUFFIX = "\n\nAnswer the visitor briefly, as the Scribe."
+# An answer that came back as markup, notes or fragments is asked for once more.
+CHAT_ANSWER_AGAIN_MSG = (
+    "Answer the visitor's question now, in a few plain sentences, as the Scribe: "
+    "no searches, no tags, no notes about what you will do."
+)
 
 # The city's words as the Chinese pages already say them, so a Chronicle
 # written in Chinese names things the way the rest of the city does.
@@ -1707,6 +1722,17 @@ class ReportAgent:
             except json.JSONDecodeError:
                 pass
 
+        if tool_calls:
+            return tool_calls
+
+        # 格式3: a small model's own call markup:
+        # <|tool_call_start|>[name(key='value')]<|tool_call_end|> or <function=name><parameter=...>
+        for call_data in (
+            model_output.pythonic_tool_calls(response) + model_output.function_tag_calls(response)
+        ):
+            if self._is_valid_tool_call(call_data):
+                tool_calls.append(call_data)
+
         return tool_calls
 
     def _is_valid_tool_call(self, data: dict) -> bool:
@@ -1773,6 +1799,42 @@ class ReportAgent:
         cleaned = re.sub(r'<tool_result\b.*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         return cleaned.strip()
+
+    def _checked_chapter(self, text: str, messages: List[Dict[str, str]], section: ReportSection,
+                         section_index: int) -> str:
+        """The chapter as the visitor will read it, when it reads as one.
+
+        Markup is stripped. A chapter that is still notes, markup or a soup of
+        fragments is asked for once more (without the bad reply in view), and
+        after that the Scribe says she could not finish it rather than saving
+        what came back.
+        """
+        where = f"chapter {section_index}"
+        chapter = model_output.strip_markup(text or "")
+        reason = model_output.problem(chapter)
+        if reason is None:
+            return self._in_scribe_voice(chapter, where)
+        logger.warning("Section %r came back unusable (%s); asking once more", section.title, reason)
+        retry = list(messages)
+        if retry and retry[-1].get("role") == "assistant":
+            retry[-1] = {"role": "assistant", "content": REACT_EMPTY_REPLY}
+        else:
+            retry.append({"role": "assistant", "content": REACT_EMPTY_REPLY})
+        retry.append({"role": "user", "content": REACT_CHAPTER_AGAIN_MSG})
+        try:
+            again = self.llm.chat(messages=retry, temperature=0.4, max_tokens=4096)
+        except Exception as error:  # the chapter is set down unfinished, not lost with the rest
+            logger.warning("Section %r: the second asking failed: %s", section.title, type(error).__name__)
+            again = None
+        if again:
+            chapter = model_output.strip_markup(
+                _final_answer_text(ReportAgent._strip_fake_tool_results(again))
+            )
+            reason = model_output.problem(chapter)
+            if reason is None:
+                return self._in_scribe_voice(chapter, where)
+        logger.warning("Section %r is set down unfinished (%s)", section.title, reason)
+        return t('scribe.chapterUnwritten')
 
     def plan_outline(
         self, 
@@ -2026,7 +2088,9 @@ class ReportAgent:
                     continue
 
                 # 正常结束
-                final_answer = self._in_scribe_voice(_final_answer_text(cleaned_response), f"chapter {section_index}")
+                final_answer = self._checked_chapter(
+                    _final_answer_text(cleaned_response), messages, section, section_index
+                )
                 logger.info(t('report.sectionGenDone', title=section.title, count=tool_calls_count))
 
                 if self.report_logger:
@@ -2185,7 +2249,7 @@ class ReportAgent:
                 messages.append({"role": "user", "content": REACT_WRITE_NOW_MSG})
                 continue
             logger.info(t('report.sectionNoPrefix', title=section.title, count=tool_calls_count))
-            final_answer = self._in_scribe_voice(cleaned_response, f"chapter {section_index}")
+            final_answer = self._checked_chapter(cleaned_response, messages, section, section_index)
 
             if self.report_logger:
                 self.report_logger.log_section_content(
@@ -2210,10 +2274,11 @@ class ReportAgent:
         if response is None:
             logger.error(t('report.sectionForceFailed', title=section.title))
             final_answer = t('scribe.chapterUnwritten')
-        elif "Final Answer:" in response:
-            final_answer = self._in_scribe_voice(_final_answer_text(response), f"chapter {section_index}")
         else:
-            final_answer = self._in_scribe_voice(response, f"chapter {section_index}")
+            cleaned = ReportAgent._strip_fake_tool_results(response)
+            if "Final Answer:" in cleaned:
+                cleaned = _final_answer_text(cleaned)
+            final_answer = self._checked_chapter(cleaned, messages, section, section_index)
         
         # 记录章节内容生成完成日志
         if self.report_logger:
@@ -2460,6 +2525,35 @@ class ReportAgent:
             
             return report
     
+    def _checked_answer(self, text: str, messages: List[Dict[str, str]]) -> str:
+        """The Scribe's answer as the visitor will read it: markup stripped, asked once more
+        when it is still markup, notes or fragments, and the fallback line after that."""
+        answer = model_output.strip_markup(_final_answer_text(text or ""))
+        reason = model_output.problem(answer)
+        if reason is None:
+            return self._in_scribe_voice(answer, "symposium")
+        logger.warning("The Scribe's answer came back unusable (%s); asking once more", reason)
+        retry = list(messages) + [
+            {"role": "assistant", "content": REACT_EMPTY_REPLY},
+            {"role": "user", "content": CHAT_ANSWER_AGAIN_MSG},
+        ]
+        try:
+            again = self.llm.chat(messages=retry, temperature=0.4)
+        except time_budget.TimeBudgetSpent:
+            raise
+        except Exception as error:  # the fallback line answers instead
+            logger.warning("The Scribe's second answer failed: %s", type(error).__name__)
+            again = None
+        if again:
+            answer = model_output.strip_markup(
+                _final_answer_text(ReportAgent._strip_fake_tool_results(again))
+            )
+            reason = model_output.problem(answer)
+            if reason is None:
+                return self._in_scribe_voice(answer, "symposium")
+        logger.warning("The Scribe's answer is set aside (%s)", reason)
+        return t('scribe.answerLost')
+
     def chat(
         self, 
         message: str,
@@ -2546,12 +2640,12 @@ class ReportAgent:
             
             if not tool_calls:
                 # 没有工具调用，直接返回响应
-                clean_response = re.sub(r'<tool_call>.*?</tool_call>', '', response, flags=re.DOTALL)
+                clean_response = re.sub(r'<tool_call>.*?</tool_call>', '', response or '', flags=re.DOTALL)
                 clean_response = re.sub(r'\[TOOL_CALL\].*?\)', '', clean_response)
                 clean_response = ReportAgent._strip_fake_tool_results(clean_response)
                 
                 return {
-                    "response": self._in_scribe_voice(clean_response.strip(), "symposium"),
+                    "response": self._checked_answer(clean_response, messages),
                     "tool_calls": tool_calls_made,
                     "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
                 }
@@ -2587,12 +2681,12 @@ class ReportAgent:
         )
         
         # 清理响应
-        clean_response = re.sub(r'<tool_call>.*?</tool_call>', '', final_response, flags=re.DOTALL)
+        clean_response = re.sub(r'<tool_call>.*?</tool_call>', '', final_response or '', flags=re.DOTALL)
         clean_response = re.sub(r'\[TOOL_CALL\].*?\)', '', clean_response)
         clean_response = ReportAgent._strip_fake_tool_results(clean_response)
         
         return {
-            "response": self._in_scribe_voice(clean_response.strip(), "symposium"),
+            "response": self._checked_answer(clean_response, messages),
             "tool_calls": tool_calls_made,
             "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
         }
@@ -2803,8 +2897,7 @@ class ReportManager:
         """
         cls._ensure_report_folder(report_id)
         
-        with open(cls._get_outline_path(report_id), 'w', encoding='utf-8') as f:
-            json.dump(outline.to_dict(), f, ensure_ascii=False, indent=2)
+        write_json_atomic(cls._get_outline_path(report_id), outline.to_dict())
         
         logger.info(t('report.outlineSaved', reportId=report_id))
     
@@ -2939,8 +3032,7 @@ class ReportManager:
             "updated_at": datetime.now().isoformat()
         }
         
-        with open(cls._get_progress_path(report_id), 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False, indent=2)
+        write_json_atomic(cls._get_progress_path(report_id), progress_data)
     
     @classmethod
     def get_progress(cls, report_id: str) -> Optional[Dict[str, Any]]:
@@ -2950,8 +3042,7 @@ class ReportManager:
         if not os.path.exists(path):
             return None
         
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        return read_json(path)
     
     @classmethod
     def get_generated_sections(cls, report_id: str) -> List[Dict[str, Any]]:
@@ -3146,8 +3237,7 @@ class ReportManager:
         cls._ensure_report_folder(report.report_id)
         
         # 保存元信息JSON
-        with open(cls._get_report_path(report.report_id), 'w', encoding='utf-8') as f:
-            json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
+        write_json_atomic(cls._get_report_path(report.report_id), report.to_dict())
         
         # 保存大纲
         if report.outline:
@@ -3173,8 +3263,7 @@ class ReportManager:
             else:
                 return None
         
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = read_json(path)
         
         # 重建Report对象
         outline = None

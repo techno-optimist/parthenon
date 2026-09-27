@@ -29,6 +29,7 @@ import Step4Report from '../components/Step4Report.vue'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'
 import { getProject } from '../api/graph'
+import { withBase } from '../parthenon/base.js'
 import { ACTS } from '../parthenon/vocabulary.js'
 import { speakers } from '../parthenon/speakers.js'
 import { arrivals } from '../parthenon/arrivals/index.js'
@@ -123,7 +124,7 @@ const plate = computed(() => {
   if (arrival) {
     return {
       kind: 'scene',
-      src: `/media/scenes/arrival-${arrival.id}.jpg`,
+      src: withBase(`/media/scenes/arrival-${arrival.id}.jpg`),
       name: localText(arrival, 'title', lang) || localText(arrival, 'name', lang),
       greek: arrival.greek,
       caption: place(arrival)

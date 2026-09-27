@@ -11,7 +11,7 @@
             <div class="walk-pythia-plate" aria-hidden="true">
               <img
                 class="walk-pythia-img"
-                src="/media/scenes/pnyx-bema.jpg"
+                :src="withBase('/media/scenes/pnyx-bema.jpg')"
                 alt=""
                 width="2000"
                 height="848"
@@ -1103,6 +1103,10 @@
             <p v-if="oracleDrafted" class="oracle-sub">{{ $t('parthenon.builder.oracleReview') }}</p>
           </template>
         </div>
+        <!-- On steps that ask for the word: asked before the Oracle drafts. -->
+        <InviteLine v-if="oracle.invite && !oracle.pending" class="oracle-invite" @given="onOracleInvite" />
+        <!-- A limit of the public steps (too many questions this hour): the city's calm words alone. -->
+        <p v-if="oracle.calm && !oracle.pending" class="calm-line inline" role="status">{{ oracle.calm }}</p>
         <div v-if="oracle.error && !oracle.pending" class="oracle-error" role="alert">
           <p>{{ $t('parthenon.builder.oracleError', { message: oracle.error }) }}</p>
           <p class="oracle-sub">{{ $t('parthenon.builder.oracleErrorSafe') }}</p>
@@ -1171,6 +1175,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { draftStage } from '../api/parthenon.js'
+import InviteLine from './InviteLine.vue'
+import { withBase } from '../parthenon/base.js'
+import { calmCode, calmLine, inviteNeeded } from '../parthenon/access.js'
+import { TICKET_ENDS } from '../parthenon/tickets.js'
 import { audiencePresets } from '../parthenon/audiences.js'
 import {
   ERAS,
@@ -1905,9 +1913,16 @@ function takeStage() {
 // ---------------------------------------------------------------------------
 // The Oracle
 
-const oracle = reactive({ pending: false, slow: false, error: '', result: null })
+const oracle = reactive({ pending: false, slow: false, error: '', calm: '', result: null, invite: false })
 let oracleToken = 0
 let slowTimer = null
+// On the public steps her draft can come as a ticket, waited for in the
+// background (api/tickets.js); to stop waiting is to stop that too.
+let oracleWait = null
+const endOracleWait = () => {
+  if (oracleWait) oracleWait.abort()
+  oracleWait = null
+}
 let alive = true
 
 // Drafts that land after the stage is taken would miss the scroll, so Take waits for the Oracle.
@@ -2031,10 +2046,22 @@ function mergeDraft(data, sent) {
 
 async function consultOracle() {
   if (oracle.pending || oracleBlocker.value || props.disabled) return
+  // The steps ask for the word before she drafts: asked here, and she waits for it.
+  if (inviteNeeded()) {
+    oracle.invite = true
+    oracle.calm = ''
+    oracle.error = ''
+    return
+  }
+  oracle.invite = false
+  endOracleWait()
+  const wait = typeof AbortController !== 'undefined' ? new AbortController() : null
+  oracleWait = wait
   const token = ++oracleToken
   oracle.pending = true
   oracle.slow = false
   oracle.error = ''
+  oracle.calm = ''
   oracle.result = null
   clearTimeout(slowTimer)
   slowTimer = setTimeout(() => {
@@ -2050,23 +2077,37 @@ async function consultOracle() {
     })),
   }
   try {
-    const res = await draftStage(oraclePayload())
+    const res = await draftStage(oraclePayload(), undefined, wait ? { signal: wait.signal } : undefined)
     if (token !== oracleToken || !alive) return
     oracle.result = mergeDraft(res && res.data, sent)
   } catch (err) {
-    if (token !== oracleToken || !alive) return
-    oracle.error = str(err && err.message).trim() || t('parthenon.builder.oracleUnknownError')
+    if (token !== oracleToken || !alive || err?.ticketEnd === TICKET_ENDS.abandoned) return
+    // The word was not brought, or not known: asked for in place; the stage is as it was.
+    if (calmCode(err) === 'invite_needed') {
+      oracle.invite = true
+      return
+    }
+    oracle.calm = calmLine(err)
+    if (!oracle.calm) oracle.error = str(err && err.message).trim() || t('parthenon.builder.oracleUnknownError')
   } finally {
     if (token === oracleToken) {
       oracle.pending = false
       oracle.slow = false
       clearTimeout(slowTimer)
     }
+    if (oracleWait === wait) oracleWait = null
   }
+}
+
+// The word given: she is consulted as she was asked to be.
+function onOracleInvite() {
+  oracle.invite = false
+  consultOracle()
 }
 
 function stopWaiting() {
   oracleToken += 1
+  endOracleWait()
   clearTimeout(slowTimer)
   oracle.pending = false
   oracle.slow = false
@@ -2653,10 +2694,13 @@ function resetWalk() {
 
 function clearTransient() {
   oracleToken += 1
+  endOracleWait()
   clearTimeout(slowTimer)
   oracle.pending = false
   oracle.slow = false
   oracle.error = ''
+  oracle.calm = ''
+  oracle.invite = false
   oracle.result = null
   undo.value = null
   taken.value = ''
@@ -2729,6 +2773,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   alive = false
+  endOracleWait()
   window.removeEventListener('pagehide', onPageHide)
   clearTimeout(slowTimer)
   flushSave()

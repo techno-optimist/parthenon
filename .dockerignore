@@ -1,23 +1,42 @@
-.git
-.github
-.gitignore
-.cursor
-.DS_Store
-.env
+# Allow-list: only what the images build from reaches the Docker context.
+# Everything else stays out, above all .env, parthenon.env*, backend/uploads
+# (the owner's gatherings and memory) and any local virtualenv.
+*
 
-node_modules
-frontend/node_modules
-backend/.venv
-.venv
-.python-version
+!Dockerfile
+!Dockerfile.render
+!LICENSE
+!README.md
+!package.json
+!package-lock.json
 
-__pycache__
-*.pyc
-.pytest_cache
-.mypy_cache
-.ruff_cache
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/run.py
+!backend/wsgi.py
+!backend/app
+!backend/scripts
 
-frontend/dist
-frontend/.vite
+!bridge/grok_bridge.py
+!deploy
+!locales
 
-backend/uploads
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.js
+!frontend/public
+!frontend/scripts
+!frontend/src
+
+# Never, even inside the folders above.
+**/.env
+**/.env.*
+**/*.env.rtf
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/node_modules
+**/.pytest_cache
+deploy/tests
+locales/.merge.lock

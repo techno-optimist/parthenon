@@ -89,6 +89,9 @@
           </div>
         </div>
 
+        <!-- On the public steps, at someone else's gathering: one line on why the controls are not here. -->
+        <p v-if="guest" class="calm-line guest-line" role="note">{{ $t(guestAsks ? 'parthenon.public.guest' : 'parthenon.public.guestInvite') }}</p>
+
         <slot></slot>
 
         <!-- The scribe's ledger: what the engine did, in a drawer, in words. -->
@@ -160,6 +163,9 @@ let shellsStanding = 0
 // be revisited, a title for the tab) and put their own work in the default slot.
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, useSlots, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { access, canControl, inviteNeeded } from '../parthenon/access.js'
+import { isGatheringId } from '../parthenon/owned.js'
 import ParthenonBrand from './ParthenonBrand.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import ListenToggle from './ListenToggle.vue'
@@ -189,6 +195,16 @@ const props = defineProps({
 
 const { t, tm } = useI18n()
 const slots = useSlots()
+
+// A guest: on the public steps, at a gathering this browser did not begin.
+// The act hides what only its owner may do; the shell says why, once.
+const route = useRoute()
+const gatheringIds = computed(() =>
+  [route.params.projectId, route.params.simulationId, route.params.reportId].filter(isGatheringId)
+)
+const guest = computed(() => access.public && gatheringIds.value.length > 0 && !canControl(...gatheringIds.value))
+// A guest may ask, unless the steps ask for a word this browser has not brought.
+const guestAsks = computed(() => !inviteNeeded())
 
 const actInfo = computed(() => ACTS[props.act - 1] || ACTS[0])
 const stepName = (n) => {
@@ -779,6 +795,12 @@ watch(() => props.act, () => { ledgerOpen.value = false })
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* A guest's one line, under the threshold */
+.guest-line {
+  margin-top: 16px;
+  margin-bottom: 4px;
 }
 
 /* Ledger */

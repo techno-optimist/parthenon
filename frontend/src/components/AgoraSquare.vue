@@ -188,7 +188,7 @@
           <p v-if="readingNow" class="stood-reading">{{ $t('agora.square.after.reading') }}</p>
           <div v-else-if="readFailed" class="stood-failed">
             <p class="stood-note">{{ $t('agora.square.after.failed') }}</p>
-            <button type="button" class="p-button secondary small" @click="emit('reread')">{{ $t('agora.square.after.again') }}</button>
+            <button v-if="control" type="button" class="p-button secondary small" @click="emit('reread')">{{ $t('agora.square.after.again') }}</button>
           </div>
           <template v-else>
             <ul v-if="after.moved.length" class="moved" role="list">
@@ -332,6 +332,7 @@ import {
   murmurLevel
 } from '../parthenon/square.js'
 import { sound, murmurInput } from '../parthenon/sound.js'
+import { canControl } from '../parthenon/access.js'
 
 const props = defineProps({
   simulationId: { type: String, default: '' },
@@ -356,6 +357,8 @@ const props = defineProps({
 
 const emit = defineEmits(['settle', 'pin', 'reread'])
 const { t, locale } = useI18n()
+// Only the one who began the gathering asks the Scribe to read again (on the public steps).
+const control = computed(() => canControl(props.simulationId))
 
 const ARC_PATH = arcPath()
 const SIDES = ['for', 'against', 'undecided']

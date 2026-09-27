@@ -260,6 +260,7 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } 
 import { useI18n } from 'vue-i18n'
 import SwarmCanvas from './SwarmCanvas.vue'
 import { ACTS } from '../parthenon/vocabulary.js'
+import { withBase } from '../parthenon/base.js'
 import {
   subscribe,
   trackProgress,
@@ -293,28 +294,28 @@ const zh = computed(() => String(locale.value).startsWith('zh'))
 // Same camera, 2,425 years apart: the Propylaea at dawn in 399 BC, and today.
 const scenes = {
   ancient: {
-    still1280: '/media/hero/acropolis-399bc-1280.jpg',
-    still2560: '/media/hero/acropolis-399bc-2560.jpg',
-    portrait1280: '/media/hero/acropolis-399bc-portrait-1280.jpg',
-    video1280: '/media/hero/acropolis-399bc-1280.mp4',
+    still1280: withBase('/media/hero/acropolis-399bc-1280.jpg'),
+    still2560: withBase('/media/hero/acropolis-399bc-2560.jpg'),
+    portrait1280: withBase('/media/hero/acropolis-399bc-portrait-1280.jpg'),
+    video1280: withBase('/media/hero/acropolis-399bc-1280.mp4'),
     // The 1920 climb cut with a keyframe every 8 frames: it plays on arrival and
     // is then scrubbed by the scroll, one file and one element on a wide screen.
-    climb1920: '/media/hero/acropolis-399bc-climb-1920.mp4',
-    scrub: '/media/hero/acropolis-399bc-scrub-1280.mp4',
-    scrubPortrait: '/media/hero/acropolis-399bc-scrub-portrait-960.mp4',
-    end2560: '/media/hero/acropolis-399bc-end-2560.jpg',
-    endPortrait: '/media/hero/acropolis-399bc-end-portrait-1280.jpg'
+    climb1920: withBase('/media/hero/acropolis-399bc-climb-1920.mp4'),
+    scrub: withBase('/media/hero/acropolis-399bc-scrub-1280.mp4'),
+    scrubPortrait: withBase('/media/hero/acropolis-399bc-scrub-portrait-960.mp4'),
+    end2560: withBase('/media/hero/acropolis-399bc-end-2560.jpg'),
+    endPortrait: withBase('/media/hero/acropolis-399bc-end-portrait-1280.jpg')
   },
   now: {
-    still1280: '/media/hero/acropolis-2026-1280.jpg',
-    still2560: '/media/hero/acropolis-2026-2560.jpg',
-    portrait1280: '/media/hero/acropolis-2026-portrait-1280.jpg',
-    video1280: '/media/hero/acropolis-2026-1280.mp4',
-    climb1920: '/media/hero/acropolis-2026-climb-1920.mp4',
-    scrub: '/media/hero/acropolis-2026-scrub-1280.mp4',
-    scrubPortrait: '/media/hero/acropolis-2026-scrub-portrait-960.mp4',
-    end2560: '/media/hero/acropolis-2026-end-2560.jpg',
-    endPortrait: '/media/hero/acropolis-2026-end-portrait-1280.jpg'
+    still1280: withBase('/media/hero/acropolis-2026-1280.jpg'),
+    still2560: withBase('/media/hero/acropolis-2026-2560.jpg'),
+    portrait1280: withBase('/media/hero/acropolis-2026-portrait-1280.jpg'),
+    video1280: withBase('/media/hero/acropolis-2026-1280.mp4'),
+    climb1920: withBase('/media/hero/acropolis-2026-climb-1920.mp4'),
+    scrub: withBase('/media/hero/acropolis-2026-scrub-1280.mp4'),
+    scrubPortrait: withBase('/media/hero/acropolis-2026-scrub-portrait-960.mp4'),
+    end2560: withBase('/media/hero/acropolis-2026-end-2560.jpg'),
+    endPortrait: withBase('/media/hero/acropolis-2026-end-portrait-1280.jpg')
   }
 }
 
@@ -328,14 +329,14 @@ const heroLine1 = computed(() => `${t('parthenon.heroLine1')}${zh.value ? '' : '
 // The time-lapse toward each era: forward to 2026, reversed back to 399 BC.
 const LAPSES = {
   now: {
-    w1280: '/media/hero/era-timelapse-1280.mp4',
-    w1920: '/media/hero/era-timelapse-1920.mp4',
-    portrait: '/media/hero/era-timelapse-portrait-960.mp4'
+    w1280: withBase('/media/hero/era-timelapse-1280.mp4'),
+    w1920: withBase('/media/hero/era-timelapse-1920.mp4'),
+    portrait: withBase('/media/hero/era-timelapse-portrait-960.mp4')
   },
   ancient: {
-    w1280: '/media/hero/era-timelapse-rev-1280.mp4',
-    w1920: '/media/hero/era-timelapse-rev-1920.mp4',
-    portrait: '/media/hero/era-timelapse-portrait-rev-960.mp4'
+    w1280: withBase('/media/hero/era-timelapse-rev-1280.mp4'),
+    w1920: withBase('/media/hero/era-timelapse-rev-1920.mp4'),
+    portrait: withBase('/media/hero/era-timelapse-portrait-rev-960.mp4')
   }
 }
 const LAPSE_RATE = 2

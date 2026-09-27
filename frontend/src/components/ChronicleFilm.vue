@@ -252,11 +252,14 @@
         <a class="p-button" :href="videoSrc" :download="fileName" @click="onDownload">
           {{ downloading ? $t('parthenon.film.downloading') : $t('parthenon.film.download') }}
         </a>
-        <button ref="againButton" type="button" class="p-button ghost" @click="composeAgain">
+        <button v-if="mayFilm" ref="againButton" type="button" class="p-button ghost" @click="composeAgain">
           {{ $t('parthenon.film.filmAgain') }}
         </button>
       </div>
     </template>
+
+    <!-- On the public steps with no film makers, or a guest: what there is, in one calm line. -->
+    <p v-if="setupAway" class="calm-line inline">{{ awayLine }}</p>
 
     <!-- Choose a narrator and roll -->
     <div v-if="showSetup" class="cf-setup">
@@ -332,6 +335,7 @@ import { useI18n } from 'vue-i18n'
 import i18n, { availableLocales } from '../i18n'
 import { FILM_VOICES, filmAssetUrl, getChronicleFilm, startChronicleFilm } from '../api/parthenon'
 import { sound, speak, stopSpeaking, voiceUrl, holdDuck } from '../parthenon/sound.js'
+import { canControl, featureOn } from '../parthenon/access.js'
 
 const props = defineProps({
   reportId: String,
@@ -458,9 +462,15 @@ const view = computed(() => {
   return 'setup'
 })
 
-const showSetup = computed(() =>
+// Filming comes only where the film makers can work (a key for them) and for
+// the one who began the gathering (on the public steps). At home, always.
+const mayFilm = computed(() => featureOn('film') && canControl(props.reportId))
+const wantsSetup = computed(() =>
   view.value === 'setup' || view.value === 'failed' || (view.value === 'completed' && composing.value)
 )
+const showSetup = computed(() => mayFilm.value && wantsSetup.value)
+const setupAway = computed(() => !mayFilm.value && (view.value === 'setup' || view.value === 'failed'))
+const awayLine = computed(() => (featureOn('film') ? t('parthenon.public.noFilm') : t('parthenon.public.features.film')))
 
 const canStart = computed(() =>
   props.ready && !!props.reportId && !starting.value &&

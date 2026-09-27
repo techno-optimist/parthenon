@@ -8,7 +8,7 @@ import re
 import traceback
 import threading
 from contextlib import ExitStack, nullcontext
-from flask import request, jsonify
+from flask import current_app, request, jsonify
 from zep_cloud import NotFoundError
 
 from . import graph_bp
@@ -27,11 +27,15 @@ from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..utils.llm_client import LLMResponseError
+from .. import public
 
 # 获取日志器
 logger = get_logger('mirofish.api')
 _build_locks: dict[str, threading.Lock] = {}
 _build_locks_guard = threading.Lock()
+# The public steps: scrolls being read in the background, project_id -> task_id
+# (guarded by that project's build lock).
+_hearings: dict[str, str] = {}
 
 
 class GraphInUseError(RuntimeError):
@@ -215,9 +219,14 @@ def get_project(project_id: str):
             "error": t('api.projectNotFound', id=project_id)
         }), 404
 
+    data = project.to_dict()
+    hearing = _hearings.get(project_id) if project.status == ProjectStatus.CREATED else None
+    if hearing:
+        # The public steps: the scroll is being read; the page can watch this task.
+        data["hearing_task_id"] = hearing
     return jsonify({
         "success": True,
-        "data": project.to_dict()
+        "data": data
     })
 
 
@@ -227,7 +236,15 @@ def list_projects():
     列出所有项目
     """
     limit = request.args.get('limit', 50, type=int)
-    projects = ProjectManager.list_projects(limit=limit)
+    visible = public.shelf_ids()
+    if visible is None:
+        projects = ProjectManager.list_projects(limit=limit)
+    else:
+        # The public shelf: featured gatherings and the ones this visitor names.
+        projects = [
+            project for project in ProjectManager.list_projects(limit=None)
+            if project.project_id in visible
+        ][:max(limit, 0)]
     
     return jsonify({
         "success": True,
@@ -389,8 +406,10 @@ def generate_ontology():
                 "error": t('api.requireFileUpload')
             }), 400
         
-        # 创建项目
-        project = ProjectManager.create_project(name=project_name)
+        # 创建项目 (in public mode with the hash of the key handed back below)
+        project = ProjectManager.create_project(
+            name=project_name, owner_token_hash=public.new_owner_hash()
+        )
         project.simulation_requirement = simulation_requirement
         logger.info(f"创建项目: {project.project_id}")
         
@@ -423,11 +442,25 @@ def generate_ontology():
                 "success": False,
                 "error": t('api.noDocProcessed')
             }), 400
+
+        # The public steps take scrolls up to PARTHENON_MAX_SCROLL_CHARS.
+        too_long = public.scroll_refusal(document_texts)
+        if too_long is not None:
+            ProjectManager.delete_project(project.project_id)
+            return too_long
         
         # 保存提取的文本
         project.total_text_length = len(all_text)
         ProjectManager.save_extracted_text(project.project_id, all_text)
         logger.info(f"文本提取完成，共 {len(all_text)} 字符")
+
+        # The public steps read the scroll in the background: the answer, and
+        # the owner's key with it, comes back at once (the edge gives up on a
+        # request after 100 s, and a free model can take longer than that).
+        if public.is_public():
+            return _hear_in_background(
+                project, document_texts, simulation_requirement, additional_context
+            )
         
         # 生成本体
         logger.info("调用 LLM 生成本体定义...")
@@ -516,6 +549,144 @@ def generate_ontology():
         return jsonify(payload), response_status
 
 
+def _hear_in_background(project, document_texts, simulation_requirement, additional_context):
+    """Read the scroll in a task and then build its Web in the same task (the public steps).
+
+    The answer is the project as it stands (status created, no ontology yet)
+    with task_id; the page's own call to /build answers with the same task,
+    which it polls: the reading, then the Web, then completed. A reading that
+    fails marks the project failed and gives the visitor's gathering back.
+    """
+
+    project_id = project.project_id
+    task_manager = TaskManager()
+    task_id = task_manager.create_task(
+        "ontology_generate", metadata={"project_id": project_id}
+    )
+    ProjectManager.save_project(project)
+    with _project_build_lock(project_id):
+        _hearings[project_id] = task_id
+    give_back = public.give_back_later()
+    current_locale = get_locale()
+    app = current_app._get_current_object()
+
+    def hear():
+        set_locale(current_locale)
+        try:
+            task_manager.update_task(
+                task_id, status=TaskStatus.PROCESSING, progress=2, message=t('progress.readingScroll')
+            )
+            ontology = OntologyGenerator().generate(
+                document_texts=document_texts,
+                simulation_requirement=simulation_requirement,
+                additional_context=additional_context if additional_context else None,
+            )
+        except Exception as error:  # noqa: BLE001 - the visitor is told in the city's words
+            logger.error(
+                "Reading the scroll of %s failed: type=%s status=%s",
+                project_id, type(error).__name__, getattr(error, "status_code", None) or "none",
+            )
+            _hearing_failed(project_id, task_id, give_back)
+            return
+        try:
+            _keep_the_reading(app, project_id, task_id, ontology)
+        except Exception as error:  # noqa: BLE001
+            logger.error("Keeping the reading of %s failed: type=%s", project_id, type(error).__name__)
+            _hearing_failed(project_id, task_id, give_back)
+
+    try:
+        _in_background(hear, f"hearing-{project_id}")
+    except Exception:
+        with _project_build_lock(project_id):
+            _hearings.pop(project_id, None)
+        raise
+    return jsonify({
+        "success": True,
+        "data": {
+            "project_id": project_id,
+            "project_name": project.name,
+            "status": ProjectStatus.CREATED.value,
+            "task_id": task_id,
+            "ontology": None,
+            "analysis_summary": "",
+            "files": project.files,
+            "total_text_length": project.total_text_length,
+        }
+    })
+
+
+def _keep_the_reading(app, project_id, task_id, ontology):
+    """Set the reading on the project and begin its Web in the same task."""
+
+    task_manager = TaskManager()
+    with _project_build_lock(project_id):
+        _hearings.pop(project_id, None)
+        heard = ProjectManager.get_project(project_id)
+        if heard is None or heard.status != ProjectStatus.CREATED:
+            # Deleted or reset while it was read: the reading is not needed.
+            task_manager.update_task(
+                task_id, status=TaskStatus.FAILED, message=t('progress.taskFailed'),
+                error=t('api.public.hearingFailed'),
+            )
+            return
+        heard.ontology = {
+            "entity_types": ontology.get("entity_types", []),
+            "edge_types": ontology.get("edge_types", []),
+        }
+        heard.analysis_summary = ontology.get("analysis_summary", "")
+        heard.status = ProjectStatus.ONTOLOGY_GENERATED
+        ProjectManager.save_project(heard)
+        logger.info(
+            "Scroll of %s read: %d entity types, %d edge types", project_id,
+            len(heard.ontology["entity_types"]), len(heard.ontology["edge_types"]),
+        )
+        task_manager.update_task(task_id, progress=5, message=t('progress.scrollRead'))
+        # Then the Web, in the same task the page is already watching.
+        _build_after_hearing(app, project_id, task_id)
+
+
+def _in_background(target, name):
+    threading.Thread(target=target, daemon=True, name=name).start()
+
+
+def _build_after_hearing(app, project_id, task_id):
+    """Begin the Web of a scroll just read, continuing its task (called under the project's build lock)."""
+
+    try:
+        with app.app_context():
+            result = _build_graph_impl(data={"project_id": project_id}, task_id=task_id)
+        response, status = result if isinstance(result, tuple) else (result, 200)
+        payload = response.get_json(silent=True) or {}
+    except Exception as error:  # noqa: BLE001
+        logger.error("The Web of %s could not begin: type=%s", project_id, type(error).__name__)
+        payload, status = {}, 500
+    if status >= 400 or not payload.get("success"):
+        TaskManager().update_task(
+            task_id, status=TaskStatus.FAILED, message=t('progress.taskFailed'),
+            error=payload.get("error") or t('api.public.hearingFailed'),
+        )
+
+
+def _hearing_failed(project_id, task_id, give_back):
+    """The scroll could not be read: the project fails, the task says so, the day's count comes back."""
+
+    error = t('api.public.hearingFailed')
+    with _project_build_lock(project_id):
+        _hearings.pop(project_id, None)
+        project = ProjectManager.get_project(project_id)
+        if project is not None and project.status == ProjectStatus.CREATED:
+            project.status = ProjectStatus.FAILED
+            project.error = error
+            try:
+                ProjectManager.save_project(project)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to persist the failed reading of %s", project_id)
+    TaskManager().update_task(
+        task_id, status=TaskStatus.FAILED, message=t('progress.taskFailed'), error=error
+    )
+    give_back()
+
+
 # ============== 接口2：构建图谱 ==============
 
 @graph_bp.route('/build', methods=['POST'])
@@ -530,7 +701,7 @@ def build_graph():
         return _build_graph_impl()
 
 
-def _build_graph_impl():
+def _build_graph_impl(data=None, task_id=None):
     """
     接口2：根据project_id构建图谱
     
@@ -565,8 +736,9 @@ def _build_graph_impl():
                 "error": ZEP_KEY_UNUSABLE_ERROR
             }), 503
         
-        # 解析请求
-        data = request.get_json() or {}
+        # 解析请求 (or the Hearing's own call, with data and the task it continues)
+        if data is None:
+            data = request.get_json() or {}
         project_id = data.get('project_id')
         logger.debug(f"请求参数: project_id={project_id}")
         
@@ -593,6 +765,19 @@ def _build_graph_impl():
             }), 400
         
         if project.status == ProjectStatus.CREATED:
+            hearing = _hearings.get(project_id)
+            if hearing:
+                # The public steps: the scroll is still being read, and its Web
+                # follows in the same task.
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "project_id": project_id,
+                        "task_id": hearing,
+                        "resumed": False,
+                        "message": t('progress.readingScroll')
+                    }
+                })
             return jsonify({
                 "success": False,
                 "error": t('api.ontologyNotGenerated')
@@ -711,9 +896,10 @@ def _build_graph_impl():
                 _clear_project_graph_reference(project)
                 ProjectManager.save_project(project)
         
-        # 创建异步任务
+        # 创建异步任务 (the Hearing's own task goes on, when it called)
         task_manager = TaskManager()
-        task_id = task_manager.create_task(f"构建图谱: {graph_name}")
+        if task_id is None:
+            task_id = task_manager.create_task(f"构建图谱: {graph_name}")
         logger.info(f"创建图谱构建任务: task_id={task_id}, project_id={project_id}")
         
         # 更新项目状态

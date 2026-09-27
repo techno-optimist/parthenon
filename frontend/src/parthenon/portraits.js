@@ -3,6 +3,8 @@
 import { computed, getCurrentInstance, onBeforeUnmount, reactive, ref, unref, watch } from 'vue'
 import { filmAssetUrl, getCitizenPortraits, startCitizenPortraits } from '../api/parthenon.js'
 import { speakers } from './speakers.js'
+import { withBase } from './base.js'
+import { canControl, featureOn } from './access.js'
 
 const POLL_MS = 4000
 const galleries = new Map() // simulationId -> gallery
@@ -14,7 +16,7 @@ const nameKey = (name) => String(name || '').normalize('NFKD').replace(/\p{M}+/g
 // the figure standing on the steps of the home page (cut square from the full
 // figure), in the Hearing, the Web, the Agora, the Chronicle's margin and the
 // Symposium alike. Everyone else keeps the face painted for them.
-export const speakerFaceUrl = (id) => (id ? `/media/figures/faces/${id}.jpg` : null)
+export const speakerFaceUrl = (id) => (id ? withBase(`/media/figures/faces/${id}.jpg`) : null)
 const SPEAKER_FACES = (() => {
   const out = {}
   for (const s of speakers) {
@@ -68,8 +70,11 @@ const makeGallery = (simulationId) => {
     timer = setTimeout(async () => { await refresh(); schedule() }, POLL_MS)
   }
 
-  // Returns 'started', 'not-ready' (the citizens are still being written) or 'failed'.
+  // Returns 'started', 'not-ready' (the citizens are still being written),
+  // 'failed', or 'unavailable' (on the public steps: no painters here, or not
+  // the one who began the gathering; nothing is asked).
   const start = async ({ force = false } = {}) => {
+    if (!featureOn('portraits') || !canControl(simulationId)) return 'unavailable'
     let outcome = 'started'
     try {
       const res = await startCitizenPortraits(simulationId, { force })

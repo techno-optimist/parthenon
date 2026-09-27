@@ -44,6 +44,10 @@ Choose the model in `.env`:
 
 Memory is kept locally in SQLite (`MEMORY_BACKEND=auto`); a Zep Cloud key is optional. Runs, reports and portraits live in `backend/uploads/`, which is never committed.
 
+## Deploy it
+
+The public city at [projectforty2.ai/parthenon](https://projectforty2.ai/parthenon) is one Render private service built from this repository (`render.yaml`, `Dockerfile.render`): the bridge on loopback and the backend with the built frontend under `/parthenon`, behind the site's edge. It opens with two finished gatherings as exhibits, which anyone with the link may walk. It runs on the owner's Grok subscription through the server's own sign-in (made once in the running service with `deploy/grok_signin.py`, never copied from another machine), so it paints, films and speaks; without a sign-in it falls back to OpenRouter's free models. Beginning a gathering and asking questions need the invite code the owner hands out (`projectforty2.ai/parthenon?invite=...`), within daily limits. The steps, from the Blueprint to the Grok sign-in and the invite link, are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## What is here
 
 - `frontend/`: Vue 3 + Vite. `src/parthenon/` holds the pure modules (the Web as a night sky, the square, the swarm, sound, the descent, the Oracle, vocabulary), and `src/components/ActShell.vue` is the shell every act stands in.

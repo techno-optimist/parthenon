@@ -49,9 +49,9 @@ import GraphPanel from '../components/GraphPanel.vue'
 import Step3Simulation from '../components/Step3Simulation.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, getSimulationConfig, getSimulationHistory } from '../api/simulation'
-import { getReport } from '../api/report'
+import { getReport, getReportBySimulation } from '../api/report'
 import { getCitizenStances, startCitizenStances } from '../api/parthenon'
-import service from '../api/index'
+import { canControl } from '../parthenon/access.js'
 import { stripIds } from '../parthenon/vocabulary.js'
 import { gatheringEra } from '../parthenon/square.js'
 import { speakers } from '../parthenon/speakers.js'
@@ -137,7 +137,7 @@ const lookedUpReport = ref(false)
 const findChronicle = async () => {
   const id = currentSimulationId.value
   try {
-    const res = await getSimulationHistory(50)
+    const res = await getSimulationHistory(50, { ids: [id] })
     const items = Array.isArray(res?.data) ? res.data : []
     const mine = items.find((s) => s.simulation_id === id)
     if (mine) {
@@ -154,7 +154,7 @@ const findChronicle = async () => {
     addLog(t('agora.log.shelfTrouble', { error: stripIds(err.message) }))
   }
   try {
-    const res = await service.get(`/api/report/by-simulation/${id}`)
+    const res = await getReportBySimulation(id)
     if (res?.success && res.data?.report_id) return { id: res.data.report_id, status: res.data.status || '', trouble: res.data.error || '' }
   } catch (err) {
     // No Chronicle of this run anywhere: the stage offers to write one.
@@ -258,7 +258,10 @@ const readStances = () => {
       return
     }
     if (!asked && (s === 'none' || s === 'failed' || data.stale)) {
-      ask()
+      // Only the one who began the gathering asks the Scribe to read (on the
+      // public steps); a guest sees the reading there is, or the square's own view.
+      if (canControl(id, projectData.value?.project_id)) ask()
+      else reading.value = s === 'completed' ? { status: 'completed', data } : null
       return
     }
     if (s === 'failed' || looks >= STANCE_LOOKS) {

@@ -7,9 +7,11 @@ import json
 import logging
 import re
 from typing import Optional, Dict, Any, List
+import openai
 from openai import OpenAI
 
 from ..config import Config
+from . import time_budget
 from .openai_chat_compat import create_chat_completion, extract_chat_completion_text
 
 
@@ -117,16 +119,39 @@ class LLMClient:
         max_tokens: Optional[int],
         response_format: Optional[Dict[str, Any]],
     ) -> Any:
-        """Send one raw Chat Completions request through the compatibility layer."""
+        """Send one raw Chat Completions request through the compatibility layer.
 
-        return create_chat_completion(
-            self.client,
-            model=self.model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format=response_format,
-        )
+        Inside a request's time budget (the public steps: see
+        utils/time_budget) the call gets the time left, without retries, and
+        gives up with TimeBudgetSpent when that runs out.
+        """
+
+        client = self.client
+        seconds = time_budget.call_seconds()
+        by_budget = False
+        if seconds is not None and hasattr(client, "with_options"):
+            own = getattr(client, "timeout", None)
+            if isinstance(own, (int, float)) and not isinstance(own, bool) and own < seconds:
+                seconds = float(own)  # a caller's shorter timeout stands
+            else:
+                by_budget = True
+            client = client.with_options(timeout=seconds, max_retries=0)
+        try:
+            return create_chat_completion(
+                client,
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+            )
+        except openai.APITimeoutError:
+            if not by_budget:
+                raise
+            time_budget.mark_spent()
+            raise time_budget.TimeBudgetSpent(
+                "the model did not answer within the request's time"
+            ) from None
     
     def chat(
         self,

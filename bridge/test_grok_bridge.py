@@ -329,7 +329,7 @@ def test_a_caller_with_a_deadline_is_not_queued_past_it(tmp_path):
     """A busy bridge answers a timed caller with its own 429 instead of calling xAI after the caller left."""
     calls = []
 
-    def fake_request(self, method, path, body=None):
+    def fake_request(self, method, path, body=None, **_options):  # _options: the deadline
         calls.append(path)
         return 200, chat_ok("late")
 

@@ -26,6 +26,10 @@
       :gatherings="gatherings"
       :gatheringsRead="gatheringsRead"
       :autoSummon="autoSummon"
+      :calm="calm"
+      :control="control"
+      :invite="inviteAsk"
+      @invite-given="onInviteGiven"
       @log="addLog"
       @rehand="rehand"
       @summoned="onSummoned"
@@ -53,6 +57,7 @@ import { localText } from '../parthenon/localText.js'
 import { speakerFaceUrl } from '../parthenon/portraits.js'
 import { stripIds, bestGathering, wayLinks } from '../parthenon/vocabulary.js'
 import { buildWebModel } from '../parthenon/web.js'
+import { calmCode, calmLine, canControl, inviteNeeded } from '../parthenon/access.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,6 +67,10 @@ const { t, locale } = useI18n()
 const currentProjectId = ref(route.params.projectId)
 const graphLoading = ref(false)
 const error = ref('')
+// A limit of the public steps (the day's gatherings, a scroll too long), said calmly in place of trouble.
+const calm = ref('')
+// On steps that ask for the word: the scroll is held until the visitor brings it.
+const inviteAsk = ref(false)
 const noScroll = ref(false)
 // An address with no scroll behind it (a mistyped or forgotten link).
 const notFound = ref(false)
@@ -78,8 +87,12 @@ const seedName = ref('')
 let pollTimer = null
 let graphPollTimer = null
 
+// Only the one who began a gathering may steer it on the public steps (always, at home).
+const control = computed(() => canControl(currentProjectId.value))
+
 const shellStatus = computed(() => {
   if (notFound.value) return 'ready'
+  if (calm.value || inviteAsk.value) return 'ready'
   if (error.value) return 'error'
   if (noScroll.value) return 'ready'
   if (currentPhase.value >= 2) return 'done'
@@ -339,6 +352,12 @@ const handleNewProject = async () => {
     offerRecovery()
     return
   }
+  // The steps ask for the word before a scroll is heard: ask here, and hold the scroll.
+  if (inviteNeeded()) {
+    inviteAsk.value = true
+    return
+  }
+  inviteAsk.value = false
 
   try {
     currentPhase.value = 0
@@ -362,16 +381,46 @@ const handleNewProject = async () => {
       gatheringsRead.value = true // a scroll heard for the first time has called no one yet
 
       router.replace({ name: 'Process', params: { projectId: res.data.project_id }, query: route.query })
-      addLog(t('parthenon.hearing.ledger.read'))
-      await startBuildGraph()
+      if (res.data.status === 'created' && res.data.task_id) {
+        // On the public steps the court reads the scroll in a task of its own
+        // and then weaves the Web in the same task: the page follows it.
+        currentPhase.value = 0
+        startPollingTask(res.data.task_id)
+        startGraphPolling()
+      } else {
+        addLog(t('parthenon.hearing.ledger.read'))
+        await startBuildGraph()
+      }
     } else {
       error.value = res.error || t('common.unknownError')
       addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
+    // The word was not brought, or not known: the scroll is held, and the word asked for in place.
+    if (calmCode(err) === 'invite_needed') {
+      currentPhase.value = -1
+      inviteAsk.value = true
+      return
+    }
+    if (sayCalmly(err)) return
     error.value = err.message
     addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
+}
+
+// The word given: the held scroll is handed to the court again.
+const onInviteGiven = () => {
+  inviteAsk.value = false
+  handleNewProject()
+}
+
+// A limit of the public steps: one calm line in place, never a raw error.
+const sayCalmly = (err) => {
+  const line = calmLine(err)
+  if (!line) return false
+  calm.value = line
+  addLog(line)
+  return true
 }
 
 const loadProject = async () => {
@@ -384,9 +433,21 @@ const loadProject = async () => {
       updatePhaseByStatus(res.data.status)
       recoverScroll()
 
-      if (res.data.status === 'ontology_generated' && !res.data.graph_id) {
+      if (res.data.status === 'created' && res.data.hearing_task_id) {
+        // On the public steps the scroll is read in a task of its own, which
+        // then weaves the Web: a page reloaded meanwhile follows that task again.
+        currentPhase.value = 0
+        startPollingTask(res.data.hearing_task_id)
+        startGraphPolling()
+      } else if (res.data.status === 'ontology_generated' && !res.data.graph_id) {
         addLog(t('parthenon.hearing.ledger.read'))
-        await startBuildGraph()
+        // Only the one who began it carries the reading on; a guest sees where it stands
+        // (and, on the public steps, follows the task that reads and weaves it).
+        if (control.value) await startBuildGraph()
+        else if (res.data.hearing_task_id) {
+          startPollingTask(res.data.hearing_task_id)
+          startGraphPolling()
+        }
       } else if (res.data.status === 'graph_building' && res.data.graph_build_task_id) {
         currentPhase.value = 1
         addLog(t('parthenon.hearing.ledger.memoryBegins'))
@@ -449,6 +510,7 @@ const startBuildGraph = async () => {
       addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
+    if (sayCalmly(err)) return
     error.value = err.message
     addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
@@ -517,6 +579,8 @@ const pollTaskStatus = async (taskId) => {
       }
 
       buildProgress.value = { progress: task.progress || 0, message: task.message }
+      // A scroll read in its own task (the public steps): past the reading, the memory takes it in.
+      if (currentPhase.value === 0 && Number(task.progress) > 5 && task.status !== 'failed') currentPhase.value = 1
 
       if (task.status === 'completed') {
         addLog(t('parthenon.hearing.ledger.memoryDone'))

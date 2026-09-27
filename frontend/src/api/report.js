@@ -1,4 +1,5 @@
 import service from './index'
+import { asked } from './tickets'
 
 /**
  * 开始报告生成
@@ -35,6 +36,15 @@ export const getConsoleLog = (reportId, fromLine = 0) => {
 }
 
 /**
+ * The newest Chronicle of one run, however it stands.
+ * @param {string} simulationId
+ * @returns {Promise<{ success: true, data: { report_id: string, status: string, error?: string } }>}
+ */
+export const getReportBySimulation = (simulationId) => {
+  return service.get(`/api/report/by-simulation/${simulationId}`)
+}
+
+/**
  * 获取报告详情
  * @param {string} reportId
  */
@@ -45,7 +55,9 @@ export const getReport = (reportId) => {
 /**
  * 与 Report Agent 对话
  * @param {Object} data - { simulation_id, message, chat_history? }
+ * @param {{ signal?: AbortSignal }} [options] - on the public steps the answer
+ *   may come as a ticket, waited for (api/tickets.js); abort to stop waiting
  */
-export const chatWithReport = (data) => {
-  return service.post('/api/report/chat', data)
+export const chatWithReport = (data, options) => {
+  return asked(service.post('/api/report/chat', data), options)
 }

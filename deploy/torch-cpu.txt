@@ -1,0 +1,10 @@
+# The CPU build of torch for the public container (Linux, CPython 3.11).
+# backend/uv.lock pins torch from PyPI, whose Linux x86_64 wheel is the CUDA
+# build (900 MB plus about 3 GB of nvidia-* libraries) that a CPU-only Render
+# instance cannot use. Dockerfile.render installs everything else from the
+# lock and this in its place, from https://download.pytorch.org/whl/cpu.
+# deploy/cpu_torch.py stops the build if the lock's torch version changes:
+# then update the version and both hashes from that index.
+torch==2.9.1+cpu \
+    --hash=sha256:3de2adb9b4443dc9210ef1f1b16da3647ace53553166d6360bbbd7edd6f16e4d \
+    --hash=sha256:0e611cfb16724e62252b67d31073bc5c490cb83e92ecdc1192762535e0e44487

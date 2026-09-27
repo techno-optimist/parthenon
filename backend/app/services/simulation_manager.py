@@ -7,19 +7,42 @@ OASIS模拟管理器
 import os
 import json
 import shutil
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.json_files import read_json, write_json_atomic
+from ..utils import pools
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
-from ..utils.locale import t
+from ..utils.locale import get_locale, t
 
 logger = get_logger('mirofish.simulation')
+
+
+def interrupted_preparation_note(lang: Optional[str] = None) -> str:
+    """The city's words for a preparation that a stop of the process cut short (en or zh)."""
+
+    from ..public.words import words
+
+    return words('gatheringInterrupted', lang=lang if lang in ('en', 'zh') else 'en')
+
+
+def live_preparation_task(simulation_id: str) -> Optional[Dict[str, Any]]:
+    """The preparation task still at work on this simulation in this process (its dict), or None."""
+
+    from ..models.task import TaskManager, TaskStatus
+
+    live = (TaskStatus.PENDING.value, TaskStatus.PROCESSING.value)
+    for task in TaskManager().list_tasks('simulation_prepare'):  # newest first
+        metadata = task.get('metadata') or {}
+        if metadata.get('simulation_id') == simulation_id and task.get('status') in live:
+            return task
+    return None
 
 
 class SimulationStatus(str, Enum):
@@ -137,9 +160,11 @@ class SimulationManager:
     """
     
     # 模拟数据存储目录
-    SIMULATION_DATA_DIR = os.path.join(
-        os.path.dirname(__file__), 
-        '../../uploads/simulations'
+    SIMULATION_DATA_DIR = (
+        Config.OASIS_SIMULATION_DATA_DIR if Config.DATA_DIR else os.path.join(
+            os.path.dirname(__file__), 
+            '../../uploads/simulations'
+        )
     )
     
     def __init__(self):
@@ -162,9 +187,8 @@ class SimulationManager:
         
         state.updated_at = datetime.now().isoformat()
         
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
-        
+        write_json_atomic(state_file, state.to_dict())
+
         self._simulations[state.simulation_id] = state
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
@@ -177,10 +201,12 @@ class SimulationManager:
         
         if not os.path.exists(state_file):
             return None
-        
-        with open(state_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
+
+        try:
+            data = read_json(state_file)
+        except FileNotFoundError:
+            return None
+
         state = SimulationState(
             simulation_id=simulation_id,
             project_id=data.get("project_id", ""),
@@ -249,7 +275,8 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
+        parallel_profile_count: int = 3,
+        max_entities: Optional[int] = None
     ) -> SimulationState:
         """
         准备模拟环境（全程自动化）
@@ -301,6 +328,10 @@ class SimulationManager:
                 defined_entity_types=defined_entity_types,
                 enrich_with_edges=True
             )
+            if max_entities:
+                # The public steps' crowd cap (PARTHENON_MAX_CITIZENS).
+                from ..public import cap_entities
+                filtered = cap_entities(filtered, max_entities)
             
             state.entities_count = filtered.filtered_count
             state.entity_types = list(filtered.entity_types)
@@ -466,7 +497,17 @@ class SimulationManager:
                        f"entities={state.entities_count}, profiles={state.profiles_count}")
             
             return state
-            
+
+        except pools.Interrupted:
+            # The public steps are stopping (utils/pools.py): said calmly, and
+            # the owner's page prepares again when it is next opened.
+            note = interrupted_preparation_note(get_locale())
+            logger.warning(f"模拟准备被中断（进程正在停止）: {simulation_id}")
+            state.status = SimulationStatus.FAILED
+            state.error = note
+            self._save_simulation_state(state)
+            raise pools.Interrupted(note) from None
+
         except Exception as e:
             logger.error(f"模拟准备失败: {simulation_id}, error={str(e)}")
             import traceback
@@ -479,6 +520,54 @@ class SimulationManager:
     def get_simulation(self, simulation_id: str) -> Optional[SimulationState]:
         """获取模拟状态"""
         return self._load_simulation_state(simulation_id)
+
+    def reconcile_interrupted_preparations(
+        self,
+        is_live: Callable[[str], bool] = lambda _simulation_id: False,
+        note: Optional[str] = None,
+    ) -> List[str]:
+        """Mark every preparation a previous process left 'preparing' as failed. Run at startup.
+
+        A preparation lives in a thread of the process that began it, so after
+        a stop, a deploy or a kill nothing will ever finish one, and its
+        gathering would read 'preparing' forever. Those whose settings were
+        already written are left for _check_simulation_prepared to call ready;
+        one with a live preparation task (is_live) is left alone. The note in
+        ``error`` says what happened in the city's words; the owner's page
+        prepares again when it is opened. Returns the IDs marked failed; a
+        failure on one simulation is logged and does not stop the scan.
+        """
+
+        root = self.SIMULATION_DATA_DIR
+        if not os.path.isdir(root):
+            return []
+        note = note or interrupted_preparation_note()
+        marked = []
+        for simulation_id in sorted(os.listdir(root)):
+            state_file = os.path.join(root, simulation_id, "state.json")
+            if simulation_id.startswith('.') or not os.path.isfile(state_file):
+                continue
+            try:
+                # Peek at the file before loading (and caching) the state.
+                data = read_json(state_file)
+                if not isinstance(data, dict) or data.get("status") != SimulationStatus.PREPARING.value:
+                    continue
+                if data.get("config_generated") or is_live(simulation_id):
+                    continue
+                state = self._load_simulation_state(simulation_id)
+                if state is None or state.status != SimulationStatus.PREPARING:
+                    continue
+                state.status = SimulationStatus.FAILED
+                state.error = note
+                self._save_simulation_state(state)
+                marked.append(simulation_id)
+            except Exception as error:
+                logger.error(
+                    "Could not reconcile an interrupted preparation: simulation_id=%s, error=%s",
+                    simulation_id,
+                    error,
+                )
+        return marked
     
     def list_simulations(self, project_id: Optional[str] = None) -> List[SimulationState]:
         """列出所有模拟"""

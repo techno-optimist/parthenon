@@ -45,10 +45,12 @@ import openai
 from ..config import Config
 from ..memory import existing_local_memory_client
 from ..models.project import ProjectManager
+from ..utils import time_budget
 from ..utils.llm_client import LLMClient, LLMResponseError
 from ..utils.locale import known_language, language_instruction_for, t
 from ..utils.logger import get_logger
 from . import citizen_portraits
+from . import model_output
 from .citizen_portraits import (
     CJK_PATTERN,
     MAX_ACTION_LOG_BYTES,
@@ -1776,6 +1778,8 @@ def tidy_answer(text: Any, g: Gathering, names=(), lang: Optional[str] = None) -
     """The answer as the page shows it: no tags, labels, headings, dashes or engine words; capped."""
 
     text = text if isinstance(text, str) else ''
+    # A small model's own call markup (<|tool_call_start|>[...], <function=...>) is not an answer.
+    text = model_output.strip_markup(text)
     text = _TOOL_CALL.sub('', text)
     text = _TAG.sub('', text)
     labels = [re.escape(name) for name in names if isinstance(name, str) and name.strip()]
@@ -1835,7 +1839,9 @@ def deadline(timeout_value: Any, kind: str) -> float:
         seconds = float(timeout_value)
     else:
         seconds = float(DEFAULT_DEADLINES[kind])
-    return max(float(MIN_DEADLINE_SECONDS), min(float(MAX_DEADLINE_SECONDS), seconds))
+    seconds = max(float(MIN_DEADLINE_SECONDS), min(float(MAX_DEADLINE_SECONDS), seconds))
+    # Within the request's own time (the public steps answer before the edge gives up).
+    return time_budget.cap(seconds)
 
 
 def _answer_one(g: Gathering, llm: Any, agent_id: int, question: str, history: List[Dict[str, str]],

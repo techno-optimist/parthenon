@@ -169,7 +169,7 @@ import ParthenonBrand from '../components/ParthenonBrand.vue'
   position: absolute;
   inset: 0;
   z-index: -2;
-  background-image: url('/media/acts/chronicle.jpg');
+  background-image: var(--p-still-chronicle, none);
   background-size: cover;
   background-position: center 58%;
   animation: settle 2.4s cubic-bezier(0.22, 1, 0.36, 1) both;

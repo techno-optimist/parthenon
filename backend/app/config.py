@@ -81,7 +81,15 @@ class Config:
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
-    UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
+    # PARTHENON_DATA_DIR (the public deployment's persistent disk, e.g. /data)
+    # moves everything the city keeps to <data dir>/uploads: projects,
+    # simulations, reports, voices and the local memory database. Unset, the
+    # paths are the ones the owner's machine has always used.
+    DATA_DIR = _env_str('PARTHENON_DATA_DIR', '')
+    UPLOAD_FOLDER = (
+        os.path.join(os.path.abspath(DATA_DIR), 'uploads') if DATA_DIR
+        else os.path.join(os.path.dirname(__file__), '../uploads')
+    )
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
     
     # 文本处理配置
@@ -90,7 +98,10 @@ class Config:
     
     # OASIS模拟配置
     OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
-    OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+    OASIS_SIMULATION_DATA_DIR = (
+        os.path.join(UPLOAD_FOLDER, 'simulations') if DATA_DIR
+        else os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+    )
     
     # OASIS平台可用动作配置
     OASIS_TWITTER_ACTIONS = [

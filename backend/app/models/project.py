@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from ..config import Config
+from ..utils.json_files import read_json, write_json_atomic
 
 
 class ProjectStatus(str, Enum):
@@ -53,6 +54,11 @@ class Project:
     
     # 错误信息
     error: Optional[str] = None
+
+    # Public mode: the sha256 (hex) of the key handed to whoever began the
+    # gathering (app/public). Kept on disk, never in to_dict() (the API's view),
+    # and never the key itself. None on the owner's own machine.
+    owner_token_hash: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -100,7 +106,8 @@ class Project:
             simulation_requirement=data.get('simulation_requirement'),
             chunk_size=data.get('chunk_size', 500),
             chunk_overlap=data.get('chunk_overlap', 50),
-            error=data.get('error')
+            error=data.get('error'),
+            owner_token_hash=data.get('owner_token_hash') if isinstance(data.get('owner_token_hash'), str) else None,
         )
 
 
@@ -136,12 +143,13 @@ class ProjectManager:
         return os.path.join(cls._get_project_dir(project_id), 'extracted_text.txt')
     
     @classmethod
-    def create_project(cls, name: str = "Unnamed Project") -> Project:
+    def create_project(cls, name: str = "Unnamed Project", owner_token_hash: Optional[str] = None) -> Project:
         """
         创建新项目
         
         Args:
             name: 项目名称
+            owner_token_hash: public mode only, the sha256 of the owner's key
             
         Returns:
             新创建的Project对象
@@ -156,7 +164,8 @@ class ProjectManager:
             name=name,
             status=ProjectStatus.CREATED,
             created_at=now,
-            updated_at=now
+            updated_at=now,
+            owner_token_hash=owner_token_hash or None,
         )
         
         # 创建项目目录结构
@@ -175,9 +184,12 @@ class ProjectManager:
         """保存项目元数据"""
         project.updated_at = datetime.now().isoformat()
         meta_path = cls._get_project_meta_path(project.project_id)
+        record = project.to_dict()
+        if project.owner_token_hash:
+            record['owner_token_hash'] = project.owner_token_hash
         
-        with open(meta_path, 'w', encoding='utf-8') as f:
-            json.dump(project.to_dict(), f, ensure_ascii=False, indent=2)
+        # All at once: the page reads this record while it is saved.
+        write_json_atomic(meta_path, record)
     
     @classmethod
     def get_project(cls, project_id: str) -> Optional[Project]:
@@ -195,9 +207,11 @@ class ProjectManager:
         if not os.path.exists(meta_path):
             return None
         
-        with open(meta_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
+        try:
+            data = read_json(meta_path)
+        except FileNotFoundError:
+            return None
+
         return Project.from_dict(data)
     
     @classmethod

@@ -5,6 +5,7 @@ import SimulationView from '../views/SimulationView.vue'
 import SimulationRunView from '../views/SimulationRunView.vue'
 import ReportView from '../views/ReportView.vue'
 import InteractionView from '../views/InteractionView.vue'
+import { BASE } from '../parthenon/base.js'
 
 const routes = [
   {
@@ -108,7 +109,8 @@ const waitForHashTarget = (hash, timeout = 8000) =>
   })
 
 const router = createRouter({
-  history: createWebHistory(),
+  // Under the page's base: '/' at home, '/parthenon/' on the public site.
+  history: createWebHistory(BASE),
   routes,
   scrollBehavior(to, from, savedPosition) {
     // Back and forward return to where the visitor was.

@@ -364,3 +364,22 @@ a:focus-visible,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* The public steps: a limit of the day, a feature not on hand here, or a
+   guest's note. One calm line in place, never trouble. */
+.calm-line {
+  margin: 0 var(--p-gutter) 20px;
+  padding: 12px 16px;
+  max-width: 68ch;
+  border-left: 2px solid var(--gold);
+  background: var(--p-terracotta-tint);
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.55;
+  color: var(--p-ink-2);
+  text-wrap: pretty;
+}
+
+.calm-line.inline {
+  margin: 10px 0 0;
+}

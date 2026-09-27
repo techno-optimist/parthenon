@@ -16,6 +16,7 @@ from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from .config import Config
+from .public import configure as configure_public, load_settings as load_public_settings
 from .utils.logger import setup_logger, get_logger
 
 
@@ -75,6 +76,27 @@ def _reconcile_interrupted_runs(logger, runner):
         )
 
 
+def _reconcile_interrupted_preparations(logger):
+    # The public steps only: a preparation lives in a thread of the process
+    # that began it, so one a stop or a deploy cut short would read
+    # 'preparing' forever (the owner's own machine keeps its old behaviour).
+    from .services.simulation_manager import SimulationManager, live_preparation_task
+
+    try:
+        marked = SimulationManager().reconcile_interrupted_preparations(
+            is_live=lambda simulation_id: live_preparation_task(simulation_id) is not None,
+        )
+    except Exception as error:
+        logger.error("Could not reconcile interrupted preparations: %s", error)
+        return
+    if marked:
+        logger.warning(
+            "Marked %d interrupted preparation(s) as failed: %s",
+            len(marked),
+            ", ".join(marked),
+        )
+
+
 def create_app(config_class=Config):
     """Flask应用工厂函数"""
     app = Flask(__name__)
@@ -104,6 +126,14 @@ def create_app(config_class=Config):
         for origin in os.environ.get('PARTHENON_CORS_ORIGINS', '').split(',')
         if origin.strip()
     ]
+    # The public steps (PARTHENON_PUBLIC=1, see app/public) sit behind the
+    # site's edge on a private network: pages from the public origin may call
+    # the API, and the Host is whatever the edge asked for.
+    public_settings = load_public_settings()
+    if public_settings.public:
+        extra_origins.extend(
+            origin for origin in public_settings.public_origins if origin not in extra_origins
+        )
     allow_any_origin = '*' in extra_origins
     allowed_origins = {origin.casefold() for origin in extra_origins}
     allowed_hosts = LOOPBACK_HOSTS | {
@@ -111,6 +141,7 @@ def create_app(config_class=Config):
             _hostname(origin.split('://', 1)[-1]) for origin in extra_origins
         ) if host
     }
+    check_host = not public_settings.public
     CORS(app, resources={r"/api/*": {
         "origins": "*" if allow_any_origin else [LOOPBACK_ORIGIN, *extra_origins],
     }})
@@ -124,6 +155,8 @@ def create_app(config_class=Config):
         # active with nothing left to finish them; they would block restarts,
         # reports and graph deletion. Same reloader-safe condition as above.
         _reconcile_interrupted_runs(logger, SimulationRunner)
+        if public_settings.public:
+            _reconcile_interrupted_preparations(logger)
 
     # 请求日志中间件
     @app.before_request
@@ -147,7 +180,7 @@ def create_app(config_class=Config):
                 or origin.rstrip('/').casefold() in allowed_origins
             ):
                 return _json_error('Requests from this web page are not accepted.', 403)
-            if _hostname(request.host) not in allowed_hosts:
+            if check_host and _hostname(request.host) not in allowed_hosts:
                 return _json_error('This backend only serves localhost.', 403)
 
         limit, too_large = BODY_LIMITS.get(
@@ -185,6 +218,10 @@ def create_app(config_class=Config):
     @app.route('/health')
     def health():
         return {'status': 'ok', 'service': 'MiroFish Backend'}
+
+    # Public mode: limits, owner keys and the keepers' routes (app/public).
+    if configure_public(app, public_settings) is not None and should_log_startup:
+        logger.info("Public mode: the steps are open (PARTHENON_PUBLIC=1)")
 
     # Local memory backend: open the store now so work interrupted by a
     # restart (queued or leased extraction, unfinished batches) resumes

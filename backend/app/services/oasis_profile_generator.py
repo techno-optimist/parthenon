@@ -18,6 +18,8 @@ from datetime import datetime
 from openai import OpenAI
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.json_files import write_json_atomic
+from ..utils import pools
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
 from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
 from ..utils.zep import (
@@ -30,6 +32,10 @@ from ..utils.zep import (
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.oasis_profile')
+
+# Where a citizen is from when neither the model nor the rest of the crowd says:
+# every gathering is held in Athens. (MiroFish's default was China.)
+DEFAULT_COUNTRY = "Greece"
 
 
 def _coerce_to_str(value: Any) -> str:
@@ -756,7 +762,7 @@ class OasisProfileGenerator:
 3. age: 年龄数字（必须是整数）
 4. gender: 性别，必须是英文: "male" 或 "female"
 5. mbti: MBTI类型（如INTJ、ENFP等）
-6. country: 国家（使用中文，如"中国"）
+6. country: 此人所属的国家或城邦，从实体信息与上下文推断（例如雅典的公民写"希腊"）；上下文没有说明时写"希腊"
 7. profession: 职业
 8. interested_topics: 感兴趣话题数组
 
@@ -806,7 +812,7 @@ class OasisProfileGenerator:
 3. age: 固定填30（机构账号的虚拟年龄）
 4. gender: 固定填"other"（机构账号使用other表示非个人）
 5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
-6. country: 国家（使用中文，如"中国"）
+6. country: 此机构所在的国家或城邦，从实体信息与上下文推断（例如雅典的机构写"希腊"）；上下文没有说明时写"希腊"
 7. profession: 机构职能描述
 8. interested_topics: 关注领域数组
 
@@ -837,7 +843,7 @@ class OasisProfileGenerator:
                 "age": random.randint(18, 30),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(self.MBTI_TYPES),
-                "country": random.choice(self.COUNTRIES),
+                "country": None,  # the crowd's own country is given when the profiles are saved
                 "profession": "Student",
                 "interested_topics": ["Education", "Social Issues", "Technology"],
             }
@@ -849,7 +855,7 @@ class OasisProfileGenerator:
                 "age": random.randint(35, 60),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(["ENTJ", "INTJ", "ENTP", "INTP"]),
-                "country": random.choice(self.COUNTRIES),
+                "country": None,  # the crowd's own country is given when the profiles are saved
                 "profession": entity_attributes.get("occupation", "Expert"),
                 "interested_topics": ["Politics", "Economics", "Culture & Society"],
             }
@@ -861,7 +867,7 @@ class OasisProfileGenerator:
                 "age": 30,  # 机构虚拟年龄
                 "gender": "other",  # 机构使用other
                 "mbti": "ISTJ",  # 机构风格：严谨保守
-                "country": "中国",
+                "country": None,
                 "profession": "Media",
                 "interested_topics": ["General News", "Current Events", "Public Affairs"],
             }
@@ -873,7 +879,7 @@ class OasisProfileGenerator:
                 "age": 30,  # 机构虚拟年龄
                 "gender": "other",  # 机构使用other
                 "mbti": "ISTJ",  # 机构风格：严谨保守
-                "country": "中国",
+                "country": None,
                 "profession": entity_type,
                 "interested_topics": ["Public Policy", "Community", "Official Announcements"],
             }
@@ -886,7 +892,7 @@ class OasisProfileGenerator:
                 "age": random.randint(25, 50),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(self.MBTI_TYPES),
-                "country": random.choice(self.COUNTRIES),
+                "country": None,  # the crowd's own country is given when the profiles are saved
                 "profession": entity_type,
                 "interested_topics": ["General", "Social Issues"],
             }
@@ -948,8 +954,8 @@ class OasisProfileGenerator:
                     if output_platform == "reddit":
                         # Reddit JSON 格式
                         profiles_data = [p.to_reddit_format() for p in existing_profiles]
-                        with open(realtime_output_path, 'w', encoding='utf-8') as f:
-                            json.dump(profiles_data, f, ensure_ascii=False, indent=2)
+                        # All at once: the Gathering reads this file while it grows.
+                        write_json_atomic(realtime_output_path, profiles_data)
                     else:
                         # Twitter CSV 格式
                         import csv
@@ -1003,7 +1009,10 @@ class OasisProfileGenerator:
         print(f"{'='*60}\n")
         
         # 使用线程池并行执行
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
+        # On the public steps a stop cancels what is still queued (utils/pools.py).
+        with pools.cancel_on_exit(
+            concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count)
+        ) as executor:
             # 提交所有任务
             future_to_entity = {
                 executor.submit(generate_single_profile, idx, entity): (idx, entity)
@@ -1011,9 +1020,12 @@ class OasisProfileGenerator:
             }
             
             # 收集结果
-            for future in concurrent.futures.as_completed(future_to_entity):
+            for future in pools.as_completed(future_to_entity):
                 idx, entity = future_to_entity[future]
                 entity_type = entity.get_entity_type() or "Entity"
+                if future.cancelled():
+                    # Only a stop cancels these: no stand-in pasts for the rest of the crowd.
+                    raise pools.Interrupted('The process is stopping.')
                 
                 try:
                     result_idx, profile, error = future.result()
@@ -1165,6 +1177,19 @@ class OasisProfileGenerator:
         
         logger.info(f"已保存 {len(profiles)} 个Twitter Profile到 {file_path} (OASIS CSV格式)")
     
+    @staticmethod
+    def crowd_country(profiles: List[OasisAgentProfile]) -> str:
+        """The country most of the crowd gave, or Greece (the city is Athens)."""
+
+        counts: Dict[str, int] = {}
+        for profile in profiles:
+            country = (profile.country or '').strip() if isinstance(profile.country, str) else ''
+            if country:
+                counts[country] = counts.get(country, 0) + 1
+        if not counts:
+            return DEFAULT_COUNTRY
+        return max(counts.items(), key=lambda item: item[1])[0]
+
     def _normalize_gender(self, gender: Optional[str]) -> str:
         """
         标准化gender字段为OASIS要求的英文格式
@@ -1209,6 +1234,9 @@ class OasisProfileGenerator:
         - country: 国家
         """
         data = []
+        # OASIS tells each citizen where they are from; one the model left
+        # without a country is from where the rest of the crowd is.
+        crowd_country = self.crowd_country(profiles)
         for idx, profile in enumerate(profiles):
             # 使用与 to_reddit_format() 一致的格式
             item = {
@@ -1223,7 +1251,7 @@ class OasisProfileGenerator:
                 "age": profile.age if profile.age else 30,
                 "gender": self._normalize_gender(profile.gender),
                 "mbti": profile.mbti if profile.mbti else "ISTJ",
-                "country": profile.country if profile.country else "中国",
+                "country": profile.country if profile.country else crowd_country,
             }
             
             # 可选字段

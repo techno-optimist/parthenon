@@ -4,6 +4,7 @@
 // (0..1 across the 16:9 painting) unless a function says otherwise.
 
 import { citizenName, stanceKey, STANCE_SIDES } from './vocabulary.js'
+import { withBase } from './base.js'
 
 // The paintings are 16:9.
 export const IMAGE_RATIO = 16 / 9
@@ -24,7 +25,7 @@ export const PLATE_WIDTHS = [1280, 1920, 2560]
 export const PLATES = {
   now: {
     key: 'now',
-    base: '/media/acts/square/agora-now',
+    base: withBase('/media/acts/square/agora-now'),
     ground: [
       [0.35, 0.345],
       [0.7, 0.35],
@@ -44,7 +45,7 @@ export const PLATES = {
   },
   ancient: {
     key: 'ancient',
-    base: '/media/acts/square/agora-ancient',
+    base: withBase('/media/acts/square/agora-ancient'),
     ground: [
       [0.28, 0.45],
       [0.79, 0.45],

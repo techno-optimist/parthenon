@@ -1,4 +1,5 @@
 import service from './index'
+import { asked } from './tickets'
 
 /**
  * 创建模拟
@@ -200,18 +201,25 @@ export const getEnvStatus = (data) => {
  *   Results are keyed '<platform>_<agent_id>'. When the square has closed, entries carry
  *   from_memory: true, may have response null with an error in city words, and result.unanswered
  *   lists who did not answer; error bodies carry from_memory: true.
+ *   On the public steps the route may answer with a ticket; the answer is
+ *   waited for (api/tickets.js) and resolves exactly as above.
+ * @param {{ signal?: AbortSignal }} [options] - abort to stop waiting on a ticket
  */
-export const interviewAgents = (data) => {
-  return service.post('/api/simulation/interview/batch', data)
+export const interviewAgents = (data, options) => {
+  return asked(service.post('/api/simulation/interview/batch', data), options)
 }
 
 /**
  * 获取历史模拟列表（带项目详情）
  * 用于首页历史项目展示
  * @param {number} limit - 返回数量限制
+ * @param {{ ids?: string[] }} [options] - gathering ids this page knows by link,
+ *   named to the shelf on the public steps beside the ones this browser began
  */
-export const getSimulationHistory = (limit = 20) => {
-  return service.get('/api/simulation/history', { params: { limit } })
+export const getSimulationHistory = (limit = 20, { ids = [] } = {}) => {
+  // On the public steps the shelf holds the featured gatherings and the ones
+  // this browser names (X-Parthenon-Owned): its own, and any a link gave it.
+  return service.get('/api/simulation/history', { params: { limit }, parthenonShelf: { ids } })
 }
 
 /**
@@ -222,7 +230,7 @@ export const getSimulationHistory = (limit = 20) => {
  *   current_round, total_rounds, runner_status, report_id, report_status, ...)
  */
 export const findGatherings = async ({ projectId, simulationId } = {}) => {
-  const res = await getSimulationHistory(500)
+  const res = await getSimulationHistory(500, { ids: [projectId, simulationId].filter(Boolean) })
   const rows = Array.isArray(res?.data) ? res.data : []
   return rows.filter((r) =>
     r && (!projectId || r.project_id === projectId) && (!simulationId || r.simulation_id === simulationId)

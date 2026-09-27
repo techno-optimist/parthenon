@@ -199,7 +199,7 @@ button {
   position: absolute;
   inset: 0;
   z-index: -2;
-  background: url('/media/acts/square/agora-ancient-night-1920.jpg') center 38% / cover no-repeat;
+  background: var(--p-still-agora-night, none) center 38% / cover no-repeat;
 }
 
 .nw-shade {

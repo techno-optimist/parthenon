@@ -23,7 +23,7 @@
       <p v-else class="live-text">{{ $t('parthenon.gathering.live.text', { round: liveRun.current_round || 0, total: liveRun.total_rounds || '?' }) }}</p>
       <div v-if="!closingLive" class="live-actions">
         <button type="button" class="p-button small" @click="watchLiveRun">{{ $t('parthenon.gathering.live.watch') }}</button>
-        <button type="button" class="p-button secondary small" :disabled="stoppingLive" @click="stopLiveRun">
+        <button v-if="control" type="button" class="p-button secondary small" :disabled="stoppingLive" @click="stopLiveRun">
           {{ stoppingLive ? $t('parthenon.gathering.live.stopping') : $t('parthenon.gathering.live.stop') }}
         </button>
       </div>
@@ -56,6 +56,7 @@ import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, stopSimulation, getRunStatus, findGatherings } from '../api/simulation'
 import { RUN_LENGTHS, stripIds, wayLinks, gatheringStanding } from '../parthenon/vocabulary.js'
 import { buildWebModel } from '../parthenon/web.js'
+import { canControl } from '../parthenon/access.js'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -67,6 +68,8 @@ defineProps({
 
 const currentSimulationId = ref(route.params.simulationId)
 const projectId = ref(null)
+// Only the one who began a gathering may stop it on the public steps (always, at home).
+const control = computed(() => canControl(currentSimulationId.value, projectId.value))
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
