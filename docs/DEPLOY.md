@@ -1,9 +1,12 @@
 # Deploying Parthenon at projectforty2.ai/parthenon
 
-The public city runs as one Render **private service** from this repository.
-It is never reached directly: the site's edge (the `chronos` web service,
-which serves projectforty2.ai) proxies `/parthenon` and `/parthenon/*` to it
-over Render's private network.
+The public city runs today as one Docker container on the Project Forty2 DGX,
+behind the gateway the site already uses for `/api` (see
+[On the DGX](#on-the-dgx-how-it-runs-today)). The same image can instead run
+as a Render **private service** from `render.yaml`, which the rest of this
+document describes. Either way it is never reached directly: the site's edge
+(the `chronos` web service, which serves projectforty2.ai) proxies
+`/parthenon` and `/parthenon/*` to it.
 
 It is a demo for the xAI team, so:
 
@@ -44,6 +47,61 @@ What each file does:
 | `deploy/serve.py` | Runs `backend/wsgi.py` with waitress (one process, 24 threads). |
 | `deploy/seed_exhibits.py` | Installs the exhibits archive on the first boot. |
 | `deploy/export_exhibits.py` | Makes that archive from the owner's own finished gatherings. |
+
+## On the DGX (how it runs today)
+
+```
+visitor ── Cloudflare ── chronos (projectforty2.ai, observatory repo)
+                             │  /parthenon/*  with the edge key (x-p42-edge-key),
+                             │  to DGX_PUBLIC_GATEWAY_URL like /api
+                             ▼
+              DGX gateway (project42-public-gateway.service, 127.0.0.1:8812,
+                           Tailscale Funnel :10000; 404 without the edge key)
+                             │  /parthenon/* forwarded whole to PARTHENON_URL
+                             ▼
+              parthenon container  127.0.0.1:8830 → 10000  (this image)
+                             │
+                          ~/parthenon-data → /data
+```
+
+No new secret and no new public door: chronos already holds the edge key
+and the gateway URL, and the gateway already refuses anything without the key.
+The two changes that open `/parthenon` are in the observatory repo:
+`backend/edge/app.py` (the route; `P42_PARTHENON_ORIGIN=off` turns it into a
+404, a URL sends it to another origin instead) and
+`deploy/dgx/public_gateway.py` (the forward; `PARTHENON_URL`, default
+`http://127.0.0.1:8830`).
+
+On the DGX (`ssh chronos@dgx-spark`):
+
+| What | Where |
+| --- | --- |
+| Source | `~/parthenon` (a clone of this repository) |
+| Image | `parthenon:demo`, built there (arm64) |
+| Container | `parthenon`: `--restart unless-stopped --memory 12g --cpus 8`, loopback only |
+| Data | `~/parthenon-data` (gatherings, memory, exhibits, `grok-oauth.json`) |
+| Settings | `~/.config/parthenon/demo.env` (the admin key and the invite code; never committed) |
+| Logs | `docker logs parthenon`; the sign-in and build logs in `~/parthenon-logs` |
+
+To bring it up to date with `main`:
+
+```bash
+cd ~/parthenon && git pull --ff-only
+docker build -f Dockerfile.render -t parthenon:demo . > ~/parthenon-logs/build.log 2>&1
+docker rm -f parthenon
+docker run -d --name parthenon --restart unless-stopped \
+  -p 127.0.0.1:8830:10000 -v ~/parthenon-data:/data \
+  --env-file ~/.config/parthenon/demo.env --memory 12g --cpus 8 parthenon:demo
+```
+
+The sign-in, the exhibits and the gatherings stay in `~/parthenon-data`, so a
+new container carries on where the old one stopped (a night that was arguing
+at that moment is stopped, as on Render). The commands in the owner's steps
+below work here with `docker exec parthenon` in place of Render's Shell, for
+example `docker exec -it parthenon python /app/deploy/grok_signin.py status`.
+If the gateway's DGX checkout is ever reset, `public_gateway.py` must again be
+the observatory version with the `/parthenon` forward, and the gateway
+restarted (`systemctl --user restart project42-public-gateway.service`).
 
 ## Before the first deploy: the exhibits
 
