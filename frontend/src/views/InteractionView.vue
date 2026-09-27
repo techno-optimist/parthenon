@@ -1,8 +1,9 @@
 <template>
   <ActShell
     :act="5"
-    :status="currentStatus"
-    :status-text="statusText"
+    :reached="missing ? 0 : null"
+    :status="shellStatus"
+    :status-text="shellStatusText"
     :logs="systemLogs"
     :links="links"
   >
@@ -40,10 +41,18 @@ const projectId = ref(null)
 const systemLogs = ref([])
 const currentStatus = ref('ready') // ready | working | error
 const statusText = ref('')
+// No Chronicle at this address: the header says so plainly, and the Way
+// leads nowhere a missing Chronicle would claim.
+const missing = ref(false)
+const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.message || err || ''))
+
+const shellStatus = computed(() => (missing.value ? 'ready' : currentStatus.value))
+const shellStatusText = computed(() => (missing.value ? t('parthenon.chronicle.notFoundStatus') : statusText.value))
 
 // Where the Way can lead back to.
 const links = computed(() => {
   const out = {}
+  if (missing.value) return out
   if (projectId.value) out[1] = { name: 'Process', params: { projectId: projectId.value } }
   if (simulationId.value) {
     out[2] = { name: 'Simulation', params: { simulationId: simulationId.value } }
@@ -54,6 +63,9 @@ const links = computed(() => {
 })
 
 const addLog = (msg) => {
+  if (!msg) return
+  // The Symposium and this view may both say the Chronicle is missing: once is enough.
+  if (msg === t('parthenon.chronicle.notFound') && systemLogs.value.some((l) => l.message === msg)) return
   const now = new Date()
   const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
   systemLogs.value.push({ time, message: msg })
@@ -66,20 +78,36 @@ const updateStatus = (status, text = '') => {
 }
 
 const loadReportData = async () => {
+  missing.value = false
+  const asked = currentReportId.value
   try {
-    const reportRes = await getReport(currentReportId.value)
+    const reportRes = await getReport(asked)
+    if (asked !== currentReportId.value) return
     if (reportRes.success && reportRes.data) {
       simulationId.value = reportRes.data.simulation_id || null
       if (simulationId.value) {
-        const simRes = await getSimulation(simulationId.value)
-        if (simRes.success && simRes.data) {
-          projectId.value = simRes.data.project_id || null
+        try {
+          const simRes = await getSimulation(simulationId.value)
+          if (simRes.success && simRes.data) {
+            projectId.value = simRes.data.project_id || null
+          }
+        } catch {
+          // Without the gathering the Way leads back only to the Chronicle.
         }
       }
+    } else if (isMissing(reportRes.error)) {
+      missing.value = true
+      addLog(t('parthenon.chronicle.notFound'))
     } else {
       addLog(t('step5.symposium.ledger.chronicleMissing', { error: reportRes.error || t('common.unknownError') }))
     }
   } catch (err) {
+    if (asked !== currentReportId.value) return
+    if (isMissing(err)) {
+      missing.value = true
+      addLog(t('parthenon.chronicle.notFound'))
+      return
+    }
     addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
   }
 }
@@ -87,6 +115,8 @@ const loadReportData = async () => {
 watch(() => route.params.reportId, (newId) => {
   if (newId && newId !== currentReportId.value) {
     currentReportId.value = newId
+    simulationId.value = null
+    projectId.value = null
     loadReportData()
   }
 })
@@ -96,3 +126,4 @@ onMounted(() => {
   loadReportData()
 })
 </script>
+

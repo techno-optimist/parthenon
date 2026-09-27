@@ -16,14 +16,57 @@
       </details>
     </section>
 
+    <!-- An address with no scroll behind it. -->
+    <section v-if="notFound" class="empty" aria-labelledby="hearing-empty">
+      <h2 id="hearing-empty" class="empty-title">{{ $t('parthenon.hearing.notFound') }}</h2>
+      <p class="empty-body">{{ $t('parthenon.hearing.notFoundBody') }}</p>
+      <div class="door-row">
+        <router-link :to="{ name: 'Chronicles' }" class="p-button">{{ $t('parthenon.hearing.toChronicles') }}</router-link>
+        <router-link to="/" class="p-button secondary">{{ $t('parthenon.hearing.empty.back') }}</router-link>
+      </div>
+    </section>
+
+    <!-- A scroll handed over, then lost to a reload: it can be handed over again. -->
+    <section v-else-if="noScroll && recovery" class="empty" aria-labelledby="hearing-empty">
+      <h2 id="hearing-empty" class="empty-title">{{ $t('parthenon.hearing.recovery.title') }}</h2>
+      <p class="empty-body">{{ recovery.ready ? $t('parthenon.hearing.recovery.body') : $t('parthenon.hearing.recovery.chooseAgain') }}</p>
+      <div v-if="recovery.question" class="bema">
+        <span class="p-eyebrow">{{ $t('parthenon.hearing.scroll.question') }}</span>
+        <p class="bema-question" :lang="textLang(recovery.question)">{{ recovery.question }}</p>
+      </div>
+      <div class="door-row">
+        <button v-if="recovery.ready" type="button" class="p-button" @click="$emit('rehand')">{{ $t('parthenon.hearing.recovery.rehand') }}</button>
+        <router-link to="/" class="p-button secondary">{{ $t('parthenon.hearing.empty.back') }}</router-link>
+      </div>
+    </section>
+
     <!-- No scroll: the visitor came to the court with empty hands. -->
-    <section v-if="noScroll" class="empty" aria-labelledby="hearing-empty">
+    <section v-else-if="noScroll" class="empty" aria-labelledby="hearing-empty">
       <h2 id="hearing-empty" class="empty-title">{{ $t('parthenon.hearing.empty.title') }}</h2>
       <p class="empty-body">{{ $t('parthenon.hearing.empty.body') }}</p>
       <router-link to="/" class="p-button secondary">{{ $t('parthenon.hearing.empty.back') }}</router-link>
     </section>
 
     <template v-else>
+      <!-- The philosopher who took the steps keeps the floor at the Hearing. -->
+      <section v-if="host" class="host" :aria-label="$t('parthenon.hearing.host.label')">
+        <span class="host-coin" aria-hidden="true">
+          <img :src="host.portrait" alt="" decoding="async" @error="hostFace = false" v-if="hostFace" />
+          <span v-else class="host-letter">{{ host.greek ? host.greek.charAt(0) : host.name.charAt(0) }}</span>
+        </span>
+        <div class="host-copy">
+          <p class="p-eyebrow host-floor">{{ $t('parthenon.hasTheFloor', { name: host.name }) }}</p>
+          <blockquote class="host-line" :lang="textLang(host.line)">{{ quoted(host.line) }}</blockquote>
+          <button type="button" class="host-hear" @click="hearHost(true)">
+            <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M3.5 8v4h3l4 3.5v-11L6.5 8z" stroke-linejoin="round" />
+              <path d="M13.5 7.2a4 4 0 0 1 0 5.6M15.6 5a7 7 0 0 1 0 10" stroke-linecap="round" />
+            </svg>
+            <span>{{ $t('parthenon.hearing.host.hear') }}</span>
+          </button>
+        </div>
+      </section>
+
       <!-- The scroll, held up in the dark. -->
       <section class="scroll-section" aria-labelledby="hearing-scroll">
         <div class="section-head">
@@ -31,7 +74,7 @@
           <span v-if="sourceLine" class="section-note">{{ sourceLine }}</span>
         </div>
 
-        <article class="p-paper parchment" :class="{ folded: isFolded }">
+        <article class="p-paper parchment" :class="{ folded: isFolded }" :lang="scrollLang">
           <h2 class="parchment-title">{{ scrollTitle }}</h2>
           <p v-if="scrollLede" class="parchment-lede">{{ scrollLede }}</p>
 
@@ -60,7 +103,7 @@
 
         <div v-if="question" class="bema">
           <span class="p-eyebrow">{{ $t('parthenon.hearing.scroll.question') }}</span>
-          <p class="bema-question">{{ question }}</p>
+          <p class="bema-question" :lang="textLang(question)">{{ question }}</p>
         </div>
       </section>
 
@@ -97,7 +140,7 @@
                 <span class="kind">{{ n.kind || $t('parthenon.hearing.names.spokenOf') }}</span>
               </span>
             </button>
-            <p v-if="openName === n.uuid && n.summary" class="name-about">{{ n.summary }}</p>
+            <p v-if="openName === n.uuid && n.summary" class="name-about" :lang="textLang(n.summary)">{{ n.summary }}</p>
           </li>
         </ul>
       </section>
@@ -165,19 +208,48 @@
         </div>
       </section>
 
-      <!-- One door out of the court. -->
-      <section class="summon-section">
-        <button
-          type="button"
-          class="p-button summon"
-          :disabled="!canSummon"
-          :aria-describedby="canSummon ? undefined : 'summon-when'"
-          @click="summonCitizens"
-        >
-          <span v-if="summoning" class="summon-ember" aria-hidden="true"></span>
-          {{ summoning ? $t('parthenon.hearing.summon.working') : $t('parthenon.hearing.summon.button') }}
-        </button>
-        <p v-if="!canSummon && !summoning" id="summon-when" class="summon-when">{{ $t('parthenon.hearing.summon.when') }}</p>
+      <!-- The door out of the court: back to the gathering this scroll already
+           called, or (the first time) summoning the citizens. -->
+      <section class="summon-section" :aria-labelledby="returnTo ? 'hearing-revisit' : undefined">
+        <template v-if="returnTo">
+          <span id="hearing-revisit" class="p-eyebrow">{{ $t('parthenon.hearing.revisit.eyebrow') }}</span>
+          <p class="revisit-line">{{ revisitLine }}</p>
+          <div class="door-row">
+            <router-link :to="returnTo" class="p-button summon">{{ $t('parthenon.hearing.revisit.return') }}</router-link>
+            <button
+              type="button"
+              class="p-button ghost new-crowd"
+              :aria-expanded="confirming ? 'true' : 'false'"
+              aria-controls="summon-confirm"
+              :disabled="!canSummon"
+              @click="confirming = !confirming"
+            >{{ $t('parthenon.hearing.revisit.newCrowd') }}</button>
+          </div>
+          <div v-if="confirming" id="summon-confirm" class="confirm" role="group" aria-labelledby="summon-confirm-title">
+            <p id="summon-confirm-title" class="confirm-title">{{ $t('parthenon.hearing.revisit.confirmTitle') }}</p>
+            <p class="confirm-body">{{ $t('parthenon.hearing.revisit.confirmBody', { n: crowdSize }) }}</p>
+            <div class="door-row">
+              <button ref="confirmEl" type="button" class="p-button" :disabled="!canSummon" @click="summonCitizens()">
+                <span v-if="summoning" class="summon-ember" aria-hidden="true"></span>
+                {{ summoning ? $t('parthenon.hearing.summon.working') : $t('parthenon.hearing.revisit.confirm') }}
+              </button>
+              <button type="button" class="p-button ghost" @click="confirming = false">{{ $t('parthenon.hearing.revisit.cancel') }}</button>
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <button
+            type="button"
+            class="p-button summon"
+            :disabled="!canSummon"
+            :aria-describedby="canSummon || currentPhase >= 2 ? undefined : 'summon-when'"
+            @click="summonCitizens()"
+          >
+            <span v-if="summoning" class="summon-ember" aria-hidden="true"></span>
+            {{ summoning ? $t('parthenon.hearing.summon.working') : $t('parthenon.hearing.summon.button') }}
+          </button>
+          <p v-if="currentPhase < 2 && !summoning" id="summon-when" class="summon-when">{{ $t('parthenon.hearing.summon.when') }}</p>
+        </template>
         <div v-if="summonError" class="summon-trouble" role="alert">
           <p>{{ $t('parthenon.hearing.summon.failed') }}</p>
           <details class="cause">
@@ -194,14 +266,26 @@
 // Act Α΄, the stage: the scroll being read, the names lighting up as the
 // city's memory takes them in, the inscription of who may be named and how
 // they are bound, and the one door out: summoning the citizens.
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { createSimulation } from '../api/simulation'
-import { entityTypeName, roleColorVar, tieName, isPlatformNode, stripIds } from '../parthenon/vocabulary.js'
+import {
+  entityTypeName,
+  roleColorVar,
+  tieName,
+  isPlatformNode,
+  stripIds,
+  undash,
+  textLang,
+  bestGathering,
+  gatheringStanding,
+  standingRoute
+} from '../parthenon/vocabulary.js'
+import { sound, speak, voiceUrl } from '../parthenon/sound.js'
 
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps({
   currentPhase: { type: Number, default: 0 }, // -1 upload, 0 reading, 1 taking in, 2 known
@@ -215,11 +299,22 @@ const props = defineProps({
   seedName: { type: String, default: '' },
   // Where the scroll came from: { kind: 'speaker'|'arrival'|'stage'|'own', name, work, title }
   source: { type: Object, default: null },
+  // The philosopher who took the steps: { id, name, greek, line, portrait }
+  host: { type: Object, default: null },
   error: { type: String, default: '' },
-  noScroll: { type: Boolean, default: false }
+  noScroll: { type: Boolean, default: false },
+  // An address with no scroll behind it
+  notFound: { type: Boolean, default: false },
+  // A scroll handed over and lost to a reload: { question, files, ready }
+  recovery: { type: Object, default: null },
+  // The gatherings this scroll has already called (history rows), once read
+  gatherings: { type: Array, default: () => [] },
+  gatheringsRead: { type: Boolean, default: true },
+  // Begun from the steps in this tab: summon the citizens once the court is done
+  autoSummon: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['log'])
+const emit = defineEmits(['log', 'rehand', 'summoned', 'hold'])
 
 // ---------------------------------------------------------------------------
 // Status
@@ -231,6 +326,7 @@ const webCounts = computed(() => ({
 }))
 
 const phaseKey = computed(() => {
+  if (props.notFound) return 'lost'
   if (props.error) return 'trouble'
   if (props.noScroll) return 'waiting'
   if (props.currentPhase >= 2) return 'known'
@@ -240,8 +336,10 @@ const phaseKey = computed(() => {
 
 const statusSentence = computed(() => {
   if (phaseKey.value === 'known') {
+    if (summoning.value && !props.gatherings.length) return t('parthenon.hearing.status.summoningNow')
     const c = webCounts.value
-    return t(c.chatter ? 'parthenon.hearing.status.knownChatter' : 'parthenon.hearing.status.known', c)
+    const gathered = props.gatherings.length ? 'Gathered' : ''
+    return t(`parthenon.hearing.status.known${gathered}${c.chatter ? 'Chatter' : ''}`, c)
   }
   return t(`parthenon.hearing.status.${phaseKey.value}`)
 })
@@ -286,7 +384,8 @@ const parsedScroll = computed(() => {
   if (blocks[0] && /^\*[^*]+\*$/.test(blocks[0].trim()) && !blocks[0].includes('\n')) lede = blocks.shift().trim().slice(1, -1)
   const html = []
   for (const block of blocks) {
-    const lines = block.split('\n')
+    // The prepared cast lists run on dashes; on the page they read as clauses.
+    const lines = block.split('\n').map(undash)
     if (lines.every((l) => l.startsWith('- '))) {
       html.push(`<ul>${lines.map((l) => `<li>${inline(l.slice(2))}</li>`).join('')}</ul>`)
       continue
@@ -310,6 +409,8 @@ const fileTitle = (name) =>
     .replace(/\b\w/g, (c) => c.toUpperCase())
 
 const scrollTitle = computed(() => parsedScroll.value.title || fileTitle(props.seedName) || t('parthenon.hearing.scroll.untitled'))
+// The scroll is read in its own language, whatever the city's.
+const scrollLang = computed(() => textLang(`${parsedScroll.value.title} ${props.seedText || heard.value}`.slice(0, 4000)))
 const scrollLede = computed(() => parsedScroll.value.lede)
 const scrollHtml = computed(() => parsedScroll.value.html)
 const heard = computed(() => stripIds(props.projectData?.analysis_summary || ''))
@@ -348,10 +449,13 @@ const names = computed(() => {
   })
 })
 
+// A name opened here is held in the Web beside it: its star lights, with its ties.
 const openName = ref(null)
 const toggleName = (n) => {
   openName.value = openName.value === n.uuid ? null : n.uuid
+  emit('hold', openName.value ? n.name : '')
 }
+onBeforeUnmount(() => emit('hold', ''))
 
 // ---------------------------------------------------------------------------
 // The inscription
@@ -389,12 +493,62 @@ const openKind = ref(null)
 const openTie = ref(null)
 
 // ---------------------------------------------------------------------------
-// Summoning the citizens
+// The host: the philosopher who took the steps, heard once per gathering
+
+const hostFace = ref(true)
+const quoted = (line) => (locale.value === 'zh' ? `「${line}」` : `\u201c${line}\u201d`)
+const HOST_HEARD = (id) => `parthenon.hearing.heard.${id}`
+const hearHost = (asked = false) => {
+  const h = props.host
+  if (!h) return
+  if (!asked) {
+    const id = props.projectData?.project_id
+    if (!id || !sound.enabled) return
+    try {
+      if (sessionStorage.getItem(HOST_HEARD(id))) return
+      sessionStorage.setItem(HOST_HEARD(id), '1')
+    } catch (e) { /* heard once in this visit, at least */ }
+  }
+  speak(voiceUrl(`speaker-${h.id}`, locale.value), asked ? { always: true } : undefined)
+}
+// With Listen on, the line is heard once the page may sound (after the first touch).
+let hostTimer = 0
+watch(
+  () => [props.host?.id, props.projectData?.project_id, sound.enabled, sound.waiting],
+  ([hostId, projectId, on, waiting]) => {
+    clearTimeout(hostTimer)
+    if (!hostId || !projectId || !on || waiting) return
+    hostTimer = setTimeout(() => hearHost(false), 900)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => clearTimeout(hostTimer))
+
+// ---------------------------------------------------------------------------
+// The door out: back to the gathering already called, or summoning the citizens
+
+const best = computed(() => bestGathering(props.gatherings))
+const returnTo = computed(() => (best.value ? standingRoute(best.value) : null))
+const revisitLine = computed(() => {
+  const s = gatheringStanding(best.value)
+  const where = s.written ? 'written' : s.argued ? 'argued' : 'gathered'
+  const line = t(`parthenon.hearing.revisit.${where}`)
+  const n = props.gatherings.length
+  return n > 1 ? `${line} ${t('parthenon.hearing.revisit.more', { n })}` : line
+})
+const crowdSize = computed(() => gatheringStanding(best.value).citizens || webCounts.value.names || 20)
+const confirming = ref(false)
+const confirmEl = ref(null)
+watch(confirming, async (open) => {
+  if (!open) return
+  await nextTick()
+  confirmEl.value?.focus()
+})
 
 const summoning = ref(false)
 const summonError = ref('')
 const canSummon = computed(
-  () => props.currentPhase >= 2 && !!props.projectData?.project_id && !!props.projectData?.graph_id && !summoning.value
+  () => props.currentPhase >= 2 && props.gatheringsRead && !!props.projectData?.project_id && !!props.projectData?.graph_id && !summoning.value
 )
 
 const summonCitizens = async () => {
@@ -410,6 +564,7 @@ const summonCitizens = async () => {
       enable_reddit: true
     })
     if (res.success && res.data?.simulation_id) {
+      emit('summoned', res.data.simulation_id)
       router.push({ name: 'Simulation', params: { simulationId: res.data.simulation_id } })
     } else {
       summonError.value = res.error || t('common.unknownError')
@@ -422,6 +577,26 @@ const summonCitizens = async () => {
     summoning.value = false
   }
 }
+
+// Begun from the steps in this tab: once the court has finished, a breath for
+// the visitor to see the city knows its names, and then the citizens are
+// summoned. Once only: a failure waits for the visitor to try again.
+let autoTimer = 0
+let autoDone = false
+watch(
+  () => props.autoSummon && canSummon.value && !props.gatherings.length,
+  (ready) => {
+    clearTimeout(autoTimer)
+    if (!ready || autoDone) return
+    autoTimer = setTimeout(() => {
+      if (autoDone || !props.autoSummon || !canSummon.value) return
+      autoDone = true
+      summonCitizens()
+    }, 1600)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => clearTimeout(autoTimer))
 
 watch(() => props.seedText, () => { unrolled.value = false })
 </script>
@@ -436,6 +611,13 @@ watch(() => props.seedText, () => { unrolled.value = false })
   flex-direction: column;
   gap: 44px;
   min-width: 0;
+}
+
+/* Chinese is not set in capitals with inscription tracking. */
+.p-eyebrow:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 /* Status */
@@ -467,7 +649,8 @@ watch(() => props.seedText, () => { unrolled.value = false })
 }
 
 .status-ember.is-known { background: var(--p-olive); box-shadow: 0 0 0 4px var(--p-olive-tint); }
-.status-ember.is-waiting { background: var(--p-ink-4); box-shadow: none; }
+.status-ember.is-waiting,
+.status-ember.is-lost { background: var(--p-ink-4); box-shadow: none; }
 .status-ember.is-trouble { background: var(--p-error); box-shadow: 0 0 0 4px var(--p-error-tint); }
 
 @keyframes ember {
@@ -797,13 +980,21 @@ watch(() => props.seedText, () => { unrolled.value = false })
   color: var(--p-ink-3);
 }
 
+/* Chinese is not set in capitals with inscription tracking. */
+.tablet-heading:lang(zh),
+.host-floor:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 .carved {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: 6px 6px;
 }
 
 .carved-item { min-width: 0; }
@@ -813,7 +1004,9 @@ watch(() => props.seedText, () => { unrolled.value = false })
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px;
+  /* A thumb needs 44px; the row gap below keeps rows apart. */
+  min-height: 44px;
+  padding: 10px 12px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--p-ink);
@@ -890,6 +1083,147 @@ watch(() => props.seedText, () => { unrolled.value = false })
 .pair-word { color: var(--p-ink); }
 .pair-verb { font-style: italic; color: var(--p-ink-3); }
 
+/* The host: who took the steps keeps the floor */
+.host {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px 22px;
+  align-items: center;
+  padding: 18px 22px 18px 18px;
+  border: 1px solid var(--p-line);
+  border-left: 2px solid var(--p-gold);
+  background:
+    radial-gradient(ellipse 60% 120% at 0% 50%, rgba(240, 182, 96, 0.1), transparent 70%),
+    var(--p-surface-2);
+  min-width: 0;
+}
+
+.host-coin {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 92px;
+  height: 92px;
+  border-radius: var(--p-radius-coin);
+  overflow: hidden;
+  background: var(--p-surface);
+  box-shadow: 0 0 0 1px var(--p-gold), 0 0 0 5px rgba(240, 182, 96, 0.12), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.host-coin img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 22%;
+}
+
+.host-letter {
+  font-family: var(--p-font-display);
+  font-size: 2.2rem;
+  color: var(--p-gold);
+}
+
+.host-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.host-floor {
+  color: var(--p-gold);
+}
+
+.host-line {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-style: italic;
+  font-size: var(--t-xl);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--p-ink);
+  text-wrap: balance;
+}
+
+.host-line:lang(zh) {
+  font-style: normal;
+  font-family: var(--p-font-serif);
+}
+
+.host-hear {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin-left: -8px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: var(--p-ink-3);
+  font-family: var(--p-font-body);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.host-hear:hover,
+.host-hear:focus-visible {
+  color: var(--p-ink);
+}
+
+/* Doors */
+.door-row {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.empty .door-row { margin-top: 4px; }
+.empty .bema { margin: 0 0 18px; }
+
+.revisit-line {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: var(--t-md);
+  line-height: 1.5;
+  color: var(--p-ink-2);
+  max-width: 44em;
+}
+
+.new-crowd { min-height: 44px; }
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 44em;
+  padding: 16px 18px;
+  border: 1px solid var(--p-line-strong);
+  border-left: 2px solid var(--p-terracotta);
+  background: var(--p-surface-2);
+}
+
+.confirm-title {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-size: var(--t-lg);
+  font-weight: 500;
+  color: var(--p-ink);
+}
+
+.confirm-body {
+  margin: 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-md);
+  line-height: 1.55;
+  color: var(--p-ink-2);
+}
+
+.confirm .p-button { min-height: 44px; }
+
 /* Summon */
 .summon-section {
   display: flex;
@@ -939,6 +1273,10 @@ watch(() => props.seedText, () => { unrolled.value = false })
 
   .parchment.folded { max-height: 28rem; }
   .parchment-title { font-size: var(--t-xl); }
+  .host { grid-template-columns: auto minmax(0, 1fr); padding: 14px; gap: 14px; }
+  .host-coin { width: 68px; height: 68px; }
+  .host-line { font-size: var(--t-lg); }
+  .door-row > .p-button { flex: 1 1 auto; justify-content: center; }
   .tablet { padding: 20px 16px 22px; }
   .names { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 }

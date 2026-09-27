@@ -331,8 +331,8 @@
       "thinking": "{name} is thinking",
       "scribeWriting": "The Scribe is writing",
       "crowdAnswering": "The crowd is answering",
-      "asleep": "The citizens have gone home for the night, so the crowd cannot be asked. The Scribe is still at the table.",
-      "asleepCitizen": "{name} has gone home for the night. Citizens answer only while the city is awake; the Scribe is still at the table.",
+      "asleep": "The crowd went home when the square closed. The Scribe is still at the table.",
+      "asleepCitizen": "{name} went home when the square closed. Here is what they said; the Scribe can answer for the city.",
       "sitWithScribe": "Sit with the Scribe",
       "placeholder": "Ask your question",
       "placeholderScribe": "Ask the Scribe",
@@ -380,7 +380,7 @@
       "scribeSaw": "What she saw",
       "city": {
         "awake": "The city is awake. Every citizen in the room will answer.",
-        "asleep": "The city is asleep. The citizens have gone home; only the Scribe can answer tonight.",
+        "asleep": "The square has closed and the citizens have gone home. Their words stay: sit with any of them to read what they said, and put your questions to the Scribe.",
         "listening": "Listening for the city.",
         "statusAwake": "City awake",
         "statusAsleep": "City asleep"
@@ -454,6 +454,9 @@
         "resting": "The city's voices are resting; your browser reads instead",
         "restingQuiet": "The city's voices are resting",
         "brokeOff": "The voice fell quiet before the end"
+      },
+      "honour": {
+        "floor": "{name} had the floor"
       }
     }
   },
@@ -856,12 +859,12 @@
     "heroLine1": "Sit on the steps.",
     "heroLine2": "Listen.",
     "heroLine3": "Then let Athens talk.",
-    "heroLede": "Bring a philosopher into the age of AI. A swarm of citizens argues it out and reports back.",
+    "heroLede": "Bring a philosopher into the age of AI. Let the city argue over what was said, then read what Athens came to believe.",
     "heroCta": "Choose your stage",
     "speakersTitle": "Who takes the steps today?",
     "speakersDesc": "Six philosophers in their own age, each with a retelling of their words and the crowd who heard them.",
     "ownScrollTitle": "Or bring your own scroll.",
-    "ownScrollDesc": "A speech, an essay, a news story: any .md, .txt or .pdf file.",
+    "ownScrollDesc": "A speech, an essay, a news story, as text or PDF.",
     "ownScrollCta": "Unroll",
     "scrollLabel": "The scroll",
     "scrollNote": "Retold for Parthenon, not a translation. It becomes the seed file",
@@ -902,7 +905,7 @@
       }
     ],
     "footerLead": "Parthenon is built on",
-    "footerVoices": "voices by Grok, memory kept locally",
+    "footerVoices": "The footage, the sound of the night and the voices were made with Grok. Memory is kept locally.",
     "eraLabel": "Choose an era",
     "eraAncient": "399 BC",
     "eraNow": "2026",
@@ -936,7 +939,7 @@
       }
     ],
     "buildTitle": "The bema is empty. Who will speak?",
-    "buildIntro": "Put anyone on the steps: Socrates beside a schoolteacher, Hypatia against an AI lab, your grandmother and the Machine. Describe them, gather a crowd, let the Oracle draft their opening words, then let the city decide.",
+    "buildIntro": "Put anyone on the steps: Socrates beside a schoolteacher, Hypatia against an AI lab, your grandmother and the Machine. The Oracle will ask you five questions: who speaks, when and where, what they say, who listens, and what Athens should decide. Or write it all yourself.",
     "scrollNoteArrival": "Imagined for Parthenon: real ideas carried into 2026. It becomes the seed file",
     "scrollNoteSand": "Staged for Parthenon from \"When Sand Speaks\": the dialogue is quoted exactly; the island and its people are imagined. It becomes the seed file",
     "scrollNoteStage": "Composed from your stage. It becomes the seed file",
@@ -1057,7 +1060,7 @@
       "useSuggestion": "Use the suggested question",
       "nextLabel": "What happens next",
       "nextHelp": "The moment the city is waiting for: a vote, a verdict, a launch.",
-      "actionsLabel": "Consult the Oracle and take the stage",
+      "actionsLabel": "Consult the Oracle and carry the scroll to the bema",
       "oracleEyebrow": "The Oracle",
       "oracleDesc": "Ask the Oracle to draft whatever you left blank: opening words in each speaker's voice, a crowd with something at stake, the question, a title. It never touches what you wrote.",
       "oracleConsult": "Consult the Oracle",
@@ -1083,12 +1086,12 @@
       "oracleTag": "Oracle",
       "oracleTagTitle": "Drafted by the Oracle. Edit it and the mark goes away.",
       "problemsLabel": "Before the stage is ready",
-      "take": "Take the stage",
-      "taken": "The scroll {file} is on the steps below, with its question. Change anything here and take the stage again to replace it.",
+      "take": "Carry the scroll to the bema",
+      "taken": "The scroll is at the bema below, with its question. Change anything here and carry it down again to replace it.",
       "hintsLabel": "Worth knowing",
       "previewSummary": "Read the scroll before it is unrolled",
-      "previewNote": "This becomes the seed file",
-      "saveScroll": "Save as Markdown",
+      "previewNote": "This is the scroll the city will hear.",
+      "saveScroll": "Keep a copy of the scroll",
       "startOver": "Start over",
       "confirmStartOver": "Clear the whole stage and start over? This cannot be undone.",
       "draftSaved": "Draft kept in this browser.",
@@ -1098,13 +1101,179 @@
       "announceMoved": "{name} now speaks in position {position}.",
       "announceJoined": "{name} added to the crowd.",
       "announceLeft": "{name} removed from the crowd.",
-      "announceCleared": "The stage is empty again."
+      "announceCleared": "The stage is empty again.",
+      "oracle": {
+        "eyebrow": "The Oracle at the bema",
+        "label": "The Oracle's questions",
+        "progress": "{n} of {total}",
+        "progressAria": "Question {n} of {total}",
+        "back": "Back",
+        "next": "Next",
+        "speak": "Carry the scroll to the bema",
+        "enterHint": "or press {keys}",
+        "writeIt": "Write it yourself",
+        "writeItHint": "Every field at once, filled from what you have told the Oracle.",
+        "returnTo": "Return to the Oracle",
+        "formIntro": "Every field at once. Nothing is lost when you return to the Oracle.",
+        "announceStep": "Question {n} of {total}: {question}",
+        "announceSummary": "The stage is set. Read it, then carry the scroll to the bema.",
+        "announceForm": "The full form is open.",
+        "announceWalk": "Back with the Oracle.",
+        "steps": {
+          "who": {
+            "question": "Who takes the floor?",
+            "voice": "Name one voice, or two who disagree. Any century will answer."
+          },
+          "where": {
+            "question": "When and where?",
+            "voice": "Choose an age, then the ground they stand on."
+          },
+          "words": {
+            "question": "What do they say?",
+            "voice": "In their own words. Replace my sentence with theirs; a few lines are enough."
+          },
+          "listeners": {
+            "question": "Who listens?",
+            "voice": "Seat the crowd. Every group you add comes back as citizens with something at stake."
+          },
+          "question": {
+            "question": "What should Athens decide?",
+            "voice": "Put one question to the city. Mine is written below; change it, or take up a quarrel of the age."
+          }
+        },
+        "who": {
+          "featured": "Philosophers on the steps",
+          "more": "More of the Greek world",
+          "fewer": "Fewer figures",
+          "guests": "From our own time",
+          "writeLabel": "Or write a name",
+          "writePlaceholder": "Anyone: your grandmother, a senator, the Machine",
+          "add": "Add",
+          "onFloor": "On the floor",
+          "remove": "Remove {name}",
+          "full": "The floor holds {max} at most.",
+          "formatNow": "So far this is {format}. One voice makes a speech, two a dialogue, more a symposium."
+        },
+        "formats": {
+          "speech": "a speech",
+          "dialogue": "a dialogue",
+          "panel": "a symposium",
+          "trial": "a trial",
+          "assembly": "an assembly"
+        },
+        "formatNoun": {
+          "speech": "speech",
+          "dialogue": "dialogue",
+          "panel": "symposium",
+          "trial": "trial",
+          "assembly": "assembly"
+        },
+        "titleFor": "The {format} of {names}",
+        "where": {
+          "ageLabel": "The age",
+          "placeLabel": "The place",
+          "placePlaceholder": "Where do they stand?",
+          "placesLabel": "Or stand in"
+        },
+        "eras": {
+          "ancient": {
+            "name": "Ancient Athens",
+            "year": "399 BC"
+          },
+          "now": {
+            "name": "Today",
+            "year": "2026"
+          },
+          "future": {
+            "name": "The near future",
+            "year": "2040"
+          },
+          "custom": {
+            "name": "Anywhere",
+            "year": "Any age"
+          }
+        },
+        "words": {
+          "says": "{name} says",
+          "figureHint": "Or clear it, and {name} will speak from what they taught.",
+          "blankHint": "Replace each ___ with their words."
+        },
+        "listeners": {
+          "suggested": "Who might be there",
+          "more": "More groups",
+          "fewer": "Fewer groups",
+          "ownLabel": "Or name a group",
+          "ownPlaceholder": "Night-shift nurses, the chess club, the island's fishermen",
+          "add": "Add",
+          "remove": "Remove {name}",
+          "cityAtLarge": "No one seated yet, so the city at large will listen.",
+          "full": "The steps hold {max} groups at most."
+        },
+        "question": {
+          "inputLabel": "The question put to the city",
+          "useOracle": "Use the Oracle's question",
+          "quarrels": {
+            "ancient": "Quarrels of 399 BC",
+            "now": "Quarrels of 2026",
+            "future": "Quarrels of 2040",
+            "custom": "Quarrels of every age"
+          }
+        },
+        "summary": {
+          "heading": "The stage is set",
+          "voice": "Read it once more. When you are ready, carry it to the bema.",
+          "eyebrow": "The stage",
+          "who": "Who takes the floor",
+          "where": "When and where",
+          "words": "What they say",
+          "listeners": "Who listens",
+          "question": "What Athens must decide",
+          "change": "Change",
+          "changeAria": "Change: {what}",
+          "fromTeaching": "{name} will speak from what they taught.",
+          "cityAtLarge": "The city at large",
+          "notReady": "Before the scroll can go to the bema",
+          "answer": "Answer it",
+          "taken": "The scroll is at the bema below, with its question. Change anything here and carry it down again to replace it."
+        },
+        "problems": {
+          "whoNone": "No one has taken the floor yet. Choose a figure or write a name.",
+          "whoRepeated": "Two speakers answer to {name}. Give each a name of their own.",
+          "whoTooMany": "The floor holds {max} at most. Let someone step down.",
+          "whoFormat": "The form chosen cannot hold this many voices. Add or remove a speaker.",
+          "whereNone": "Say where they stand: the city needs a place to gather.",
+          "wordsBlank": "The words of {name} still have a blank. Fill each ___ or write them anew.",
+          "wordsNeeded": "The city knows nothing of {name} yet. Give them a sentence to say.",
+          "listenersTooMany": "The steps hold {max} groups at most. Let one group go.",
+          "questionNone": "Put a question to the city: what should Athens decide?",
+          "questionBlank": "The question still has a blank. Fill it or write your own.",
+          "formBlank": "The words of {names} still have a blank (___). Fill it before you carry the scroll to the bema."
+        },
+        "pythia": "The Pythia speaks"
+      },
+      "matterHelpAge": "What does the city face? The more concrete it is, the better the city argues.",
+      "sparksLabelAge": {
+        "ancient": "Or take up a quarrel of 399 BC",
+        "future": "Or take up a quarrel of 2040",
+        "custom": "Or take up a quarrel of any age"
+      },
+      "topicPlaceholderAge": {
+        "ancient": "The Assembly must decide whether to pay citizens to attend.",
+        "future": "The council must decide whether a machine may cast a vote.",
+        "custom": "The village must decide whether to open its gates to strangers."
+      },
+      "problemOraclePending": "The Oracle is still drafting. Wait for her answer, or stop waiting, before you carry the scroll to the bema.",
+      "problemRepeatedName": "More than one speaker is called {name}. Give each speaker a name of their own.",
+      "oracleStale": "The stage changed while the Oracle thought, so her drafts no longer fit and nothing was filled in. Consult her again.",
+      "oracleDiscarded": "Opening words drafted for {names} were set aside, because their details changed while she thought.",
+      "noteFigures": "Choose a name and the Oracle says who they were.",
+      "noteGroups": "Choose a group and the Oracle says what they stand to gain or lose."
     },
     "zepMissing": "MEMORY_BACKEND=zep needs a Zep Cloud key. Add ZEP_API_KEY to .env, or set MEMORY_BACKEND=auto to use local memory, then restart npm run dev. Get a key free at",
     "film": {
-      "eyebrow": "Coda",
+      "eyebrow": "Epilogue",
       "title": "Film the Chronicle",
-      "lede": "A screenplay is written from this Chronicle, each shot is painted and animated, and a narrator reads it. It draws on the owner's subscription.",
+      "lede": "A screenplay is written from this Chronicle, each shot is painted and set moving, and a narrator reads it.",
       "notReady": "The camera waits until the Chronicle is finished.",
       "checking": "Looking for a film of this Chronicle…",
       "voiceLabel": "Narrator",
@@ -1124,7 +1293,7 @@
       "againHint": "A new film replaces the one above.",
       "keepFilm": "Keep this film",
       "startFailed": "The film could not be started.",
-      "offline": "Parthenon could not be reached. Is it running?",
+      "offline": "The studio could not be reached. Try again in a moment.",
       "progressLabel": "Film progress",
       "progressValue": "{stage}, {percent}%",
       "announce": "{stage}. {percent} percent done.",
@@ -1169,7 +1338,31 @@
         "eve": "Narrated in a warm voice",
         "ara": "Narrated in a bright voice"
       },
-      "narrated": "Narrated"
+      "narrated": "Narrated",
+      "hear": "Hear",
+      "hearVoice": {
+        "rex": "Hear the deep voice",
+        "eve": "Hear the warm voice",
+        "ara": "Hear the bright voice"
+      },
+      "sampleLine": "“The city talked all night. This is what it said.”",
+      "player": {
+        "label": "The film's controls",
+        "play": "Play the film",
+        "pause": "Pause the film",
+        "replay": "Play the film again",
+        "seek": "Where in the film",
+        "seekValue": "{now} of {total}",
+        "words": "The narrator's words",
+        "wordsOn": "Show the narrator's words",
+        "wordsOff": "Hide the narrator's words",
+        "mute": "Silence the film",
+        "unmute": "Let the film sound",
+        "full": "Fill the screen",
+        "leaveFull": "Leave the full screen",
+        "leave": "Leave the theatre",
+        "theatre": "The film, in the dark"
+      }
     },
     "liveRun": {
       "text": "This swarm is running now (round {round} of {total}). Leaving this page open will not stop it.",
@@ -1191,7 +1384,7 @@
         "working": "Working",
         "live": "Live",
         "done": "Complete",
-        "error": "Trouble"
+        "error": "Athens fell silent"
       },
       "actOrdinal": "The {ordinal} of five acts",
       "ordinals": [
@@ -1200,7 +1393,16 @@
         "third",
         "fourth",
         "fifth"
-      ]
+      ],
+      "statusDone": [
+        "The Web is drawn",
+        "All have come",
+        "The square has closed",
+        "Written",
+        "Seated"
+      ],
+      "skip": "Skip to the act",
+      "webShort": "Web"
     },
     "hearing": {
       "status": {
@@ -1209,7 +1411,11 @@
         "known": "The city knows {names} names and {ties} ties between them. The citizens can be summoned.",
         "trouble": "The court was interrupted.",
         "waiting": "The court waits for a scroll.",
-        "knownChatter": "The city knows {names} names and {ties} ties between them, with {chatter} threads of chatter from an earlier gathering. The citizens can be summoned."
+        "knownChatter": "The city knows {names} names and {ties} ties between them, with {chatter} threads of chatter from an earlier gathering. The citizens can be summoned.",
+        "lost": "The court is empty tonight.",
+        "knownGathered": "The city knows {names} names and {ties} ties between them. Its citizens have gathered before.",
+        "knownGatheredChatter": "The city knows {names} names and {ties} ties between them, with {chatter} threads of chatter from its gathering. Its citizens have gathered before.",
+        "summoningNow": "The court has finished. The citizens are being summoned."
       },
       "scroll": {
         "eyebrow": "The scroll",
@@ -1276,6 +1482,33 @@
         "trouble": "Trouble: {error}",
         "soFarChatter": "{names} names, {ties} ties and {chatter} threads of chatter so far",
         "webReadChatter": "The Web of Athens is read: {names} names, {ties} ties and {chatter} threads of chatter"
+      },
+      "notFound": "No scroll was heard at this address.",
+      "notFoundStatus": "No scroll here",
+      "notFoundBody": "The link may be mistyped, or the gathering it named was cleared away. Every gathering Athens still keeps is on the shelf.",
+      "toChronicles": "See every Chronicle",
+      "revisit": {
+        "eyebrow": "This scroll has been heard",
+        "written": "Athens has argued it, and the Scribe has written its Chronicle.",
+        "argued": "Athens has argued it; its Chronicle is not yet written.",
+        "gathered": "The citizens have gathered, and the argument has not begun.",
+        "more": "{n} gatherings have come from this scroll. The door leads to the one that went furthest.",
+        "return": "Return to the gathering",
+        "newCrowd": "Summon a new crowd",
+        "confirmTitle": "Summon a second crowd?",
+        "confirmBody": "A second crowd of about {n} citizens, about a quarter of an hour to arrive, and a new night on the shelf. The gathering you have keeps its place.",
+        "confirm": "Summon them",
+        "cancel": "Keep the gathering we have"
+      },
+      "recovery": {
+        "title": "The court lost its place",
+        "body": "The page was reloaded before the court had named your scroll. It is kept in this tab and can be handed over again.",
+        "chooseAgain": "Your scroll was a document this page cannot keep. Choose it again on the steps; your question is kept below.",
+        "rehand": "Hand the scroll to the court again"
+      },
+      "host": {
+        "hear": "Hear the line",
+        "label": "Who has the floor"
       }
     },
     "chronicle": {
@@ -1409,6 +1642,15 @@
         "nowCounting": "She is counting the names and ties in the Web of Athens.",
         "nowRoll": "She is reading the roll of the city.",
         "nowRecords": "She is reading the city's records."
+      },
+      "waitNote": "The Scribe takes ten to twenty minutes. You can leave; the Chronicle waits on {shelf}.",
+      "shelf": "the shelf",
+      "notFoundStatus": "No Chronicle here",
+      "notFoundBody": "The link may be mistyped, or the Chronicle it named was cleared away. Every Chronicle Athens keeps is on the shelf.",
+      "toChronicles": "See every Chronicle",
+      "plates": {
+        "fromFilm": "From the film “{title}”",
+        "shot": "Scene {n} of the film"
       }
     },
     "gathering": {
@@ -1602,13 +1844,33 @@
         "done": "The painters have finished: every face is on the slope.",
         "doneSome": "The painters have finished: {done} of {total} faces. The others keep their initials.",
         "failed": "The painters stopped with {done} of {total} faces done. The others keep their initials.",
-        "again": "Ask the painters again"
+        "again": "Ask the painters again",
+        "offer": "The citizens have no faces yet.",
+        "paint": "Paint their faces",
+        "cost": "{n} portraits, a few minutes"
+      },
+      "waitNote": "The citizens arrive over about a quarter of an hour. You can leave; the gathering waits on {shelf}.",
+      "shelf": "the shelf",
+      "argued": {
+        "eyebrow": "The argument",
+        "completedHours": "Argued for its one hour | Argued for all {total} hours",
+        "completedDays": "Argued for all {total} days",
+        "stoppedHours": "Argued for {current} of {total} hours, then stopped",
+        "stoppedDays": "Argued for {current} of {total} days, then stopped",
+        "liveHours": "Arguing now, hour {current} of {total}",
+        "liveDays": "Arguing now, day {current} of {total}",
+        "written": "The Scribe has written its Chronicle.",
+        "notWritten": "Its Chronicle is not yet written; the Agora can ask the Scribe for it.",
+        "fixed": "The length was set when the square opened.",
+        "toAgora": "Return to the Agora",
+        "toChronicle": "Read the Chronicle",
+        "state": "The city's hours were set, and Athens has argued."
       }
     },
     "web": {
       "title": "The Web of Athens",
       "count": "{names} names and {ties} ties between them",
-      "countChatter": "{names} names, {ties} ties, the chatter included",
+      "countChatter": "{names} names, {ties} ties and {chatter} threads of chatter",
       "weaving": "The Web is being woven as the scroll is read",
       "moving": "The city is speaking; new threads are tied as it goes",
       "lateThreads": "The last threads are still being tied.",
@@ -1633,7 +1895,7 @@
       "chosen": "Chosen",
       "hint": "Choose a name to read who they are and whom they are tied to",
       "countShort": "{names} names, {ties} ties",
-      "countShortChatter": "{names} names, {ties} ties with the chatter",
+      "countShortChatter": "{names} names, {ties} ties, {chatter} threads",
       "lookAgain": "Look again",
       "find": "Find a name",
       "findLabel": "Find a name in the Web of Athens",
@@ -1645,7 +1907,7 @@
       "inSquare": "In the square",
       "tiedTo": "Tied to",
       "noFacts": "The scroll names them and says no more.",
-      "keys": "The best-tied names. Tab between them, Enter to choose one, Escape to let go.",
+      "keys": "The best-tied names. Arrow keys move between them, Enter chooses one, Escape lets go.",
       "things": "things spoken of",
       "cardLabel": "{name} in the Web of Athens",
       "readMore": "Read all",
@@ -1658,17 +1920,44 @@
       "listAllied": "Allied with {names}.",
       "listAtOdds": "At odds with {names}.",
       "listAlone": "The scroll ties them to no one yet.",
-      "announce": "{name}, {ties}. Their card is open."
+      "announce": "{name}, {ties}. Their card is open.",
+      "legendKinds": "Light one kind of name",
+      "threads": {
+        "tie": "a tie",
+        "allied": "allied",
+        "atOdds": "at odds",
+        "chatter": "chatter"
+      }
     },
     "navSections": "Sections",
     "pauseMotion": "Pause motion",
     "hero": {
-      "eraCaption": "The same steps, 2,425 years apart"
+      "eraCaption": "The same steps, 2,425 years apart",
+      "lapseCaption": "Twenty-four centuries",
+      "yearBC": "{year} BC",
+      "yearAD": "AD {year}",
+      "climbCue": "Climb the steps",
+      "wayLabel": "Inside the Propylaea, the Parthenon ahead",
+      "scenes": {
+        "ancient": "The Parthenon seen from the steps of the Propylaea at sunrise in 399 BC",
+        "now": "The same view today: the floodlit Parthenon at blue hour, under scaffolding and cranes"
+      },
+      "lapseBeats": {
+        "statue": "About AD 465: Athena Promachos is carried off to Constantinople",
+        "restore": "1975: the restoration begins"
+      }
     },
     "how": {
       "eyebrow": "The Way",
       "title": "How a gathering works",
-      "lede": "Five stations in one night. You choose the stage and put the question; the city does the rest."
+      "lede": "Five stations in one night. You choose the stage and put the question; at each station you open the next door.",
+      "stations": [
+        "The city takes in the words",
+        "Citizens are summoned from the crowd",
+        "They argue in the square and the Stoa",
+        "The Scribe writes what Athens came to believe",
+        "Sit down with any citizen, or the Scribe"
+      ]
     },
     "length": {
       "label": "How long should Athens talk?",
@@ -1676,9 +1965,15 @@
       "day": "A day",
       "threeDays": "Three days",
       "week": "A week",
-      "meta": "{hours} hours in the city, about {minutes} minutes for you",
-      "metaLong": "{hours} hours in the city, about {span} for you",
-      "note": "Longer gatherings move more minds and take longer to write up."
+      "meta": "{hours} hours in the city. The argument: about {minutes} minutes. The whole night: {night}.",
+      "metaLong": "{hours} hours in the city. The argument: about {span}. The whole night: {night}.",
+      "note": "The whole night counts the reading, the gathering and the Chronicle too. Longer gatherings move more minds and take longer to write up.",
+      "night": {
+        "afternoon": "about 40 to 50 minutes",
+        "day": "about an hour",
+        "threeDays": "about an hour and a half",
+        "week": "about three hours"
+      }
     },
     "scrollNotes": {
       "speaker": "Retold for Parthenon, not a translation.",
@@ -1703,8 +1998,8 @@
         "chronicleWriting": "Chronicle being written",
         "filmMade": "film made",
         "troubleEarly": "Ran into trouble before it began",
-        "stoppedHours": "Stopped after {current} of {total} hours",
-        "stoppedDays": "Stopped after {current} of {total} days",
+        "stoppedHours": "After {current} of {total} hours",
+        "stoppedDays": "After {current} of {total} days",
         "arguedHours": "Argued for {total} hour | Argued for {total} hours",
         "arguedDays": "Argued for {total} days",
         "liveHours": "Live, hour {current} of {total}",
@@ -1712,7 +2007,9 @@
         "chronicleTrouble": "Chronicle ran into trouble",
         "pausedHours": "Paused at hour {current} of {total}",
         "pausedDays": "Paused on day {current} of {total}",
-        "gathered": "Gathered, not yet argued"
+        "gathered": "Gathered, not yet argued",
+        "heardOnly": "Heard; the citizens not yet summoned",
+        "hearing": "Still being heard at the court"
       },
       "watchLive": "Watch it live",
       "seeAll": "See every Chronicle",
@@ -1738,7 +2035,7 @@
         "filmDone": "Made",
         "filmRunning": "Being filmed",
         "filmNone": "Not yet filmed",
-        "symposiumOpen": "Ask the citizens",
+        "symposiumOpen": "Sit with the Scribe",
         "symposiumWaiting": "Opens with the Chronicle",
         "closed": "Not yet reached",
         "chronicleTrouble": "Ran into trouble"
@@ -1752,7 +2049,8 @@
         "complete": "Complete",
         "stopped": "Stopped",
         "waiting": "Waiting",
-        "trouble": "Trouble"
+        "trouble": "Trouble",
+        "heard": "Heard"
       },
       "summary": {
         "gatherings": "{n} gathering | {n} gatherings",
@@ -1782,6 +2080,12 @@
         "lede": "Every gathering Athens has held, from the first scroll to the last word of the Symposium. Open one and walk it again.",
         "hold": "Hold a new gathering",
         "back": "Back to the steps"
+      },
+      "partOfDay": {
+        "night": "night",
+        "morning": "morning",
+        "afternoon": "afternoon",
+        "evening": "evening"
       }
     },
     "permalink": {
@@ -1793,7 +2097,40 @@
       "retry": "Try again",
       "toChronicles": "Open the Chronicles",
       "home": "Back to the steps"
-    }
+    },
+    "listen": {
+      "label": "Listen",
+      "titleOff": "Sound is off. Listen to the night, the narrator and the square.",
+      "titleOn": "Sound is on. Press to sit in silence.",
+      "titleWaiting": "Sound is on. It begins at your first touch or key."
+    },
+    "language": {
+      "choose": "Language: {current}"
+    },
+    "figures": {
+      "choose": "Choose a philosopher. The scroll unrolls here.",
+      "carry": "Carry the scroll to the bema",
+      "scene": "The scene",
+      "unrolledBelow": "His scroll is unrolled below"
+    },
+    "bema": {
+      "eyebrow": "The bema",
+      "title": "Hold up the scroll. Cut the question in stone."
+    },
+    "alts": {
+      "omens": "Golden handmaidens at work in the forge of Hephaestus",
+      "bema": "The empty speaker's platform on the Pnyx at dusk, facing the Acropolis"
+    },
+    "nowhere": {
+      "eyebrow": "An empty square",
+      "title": "No gathering was held at this address.",
+      "lede": "The stones are swept and the lamps are lit, but no one has gathered here.",
+      "home": "Back to the steps",
+      "chronicles": "See every Chronicle",
+      "tab": "No gathering here"
+    },
+    "beginning": "Athens is listening…",
+    "scrollRolled": "The scroll is still rolled. Choose a stage above, or drop your own scroll here."
   },
   "agora": {
     "clock": {
@@ -1839,7 +2176,8 @@
       "loading": "The crowd is on its way.",
       "timeMinutes": "{m} minutes",
       "timeHours": "{h} hours",
-      "costShort": "{span} of the city's time, about {time} of yours."
+      "costShort": "{span} of the city's time, about {time} of yours.",
+      "range": "{low} to {high}"
     },
     "live": {
       "opening": "The square is opening. The first voices take a minute.",
@@ -1855,7 +2193,7 @@
       "write": "Write the Chronicle",
       "writing": "Calling the Scribe",
       "read": "Read the Chronicle",
-      "again": "Hold the argument again",
+      "again": "Argue it afresh",
       "againCost": "This clears the record of this argument and opens the square afresh. A Chronicle already written stays on the shelf.",
       "againConfirm": "Clear it and open the square",
       "againCancel": "Keep the record",
@@ -1912,7 +2250,7 @@
       "stopping": "Closing the square.",
       "scribe": "The Scribe has been called to write the Chronicle.",
       "scribeExisting": "A Chronicle of this argument already exists. Opening it.",
-      "leave": "You left the square with the argument still running.",
+      "leave": "You left the argument running. It stays lit on the shelf.",
       "web": "The Web of Athens is redrawn every half minute while the square is open.",
       "webStill": "The Web of Athens stands still.",
       "webRead": "The Web of Athens was read.",
@@ -2030,8 +2368,8 @@
         "failed": "The Scribe could not finish reading their words.",
         "again": "Ask the Scribe again",
         "none": "No one moved. Each citizen ended where they began.",
-        "line": "{name} moved from {from} to {to} {when}",
-        "lineNoWhen": "{name} moved from {from} to {to}",
+        "line": "{name} {from} and {to}{when}",
+        "lineNoWhen": "{name} {from} and {to}",
         "when": {
           "night": "in the night",
           "morning": "in the morning",
@@ -2048,7 +2386,19 @@
         "began": "Where they began",
         "views": "Where the citizens stood",
         "both": "{began}, {ended}",
-        "announce": "The Scribe has read their words. No one moved. | The Scribe has read their words. One citizen moved. | The Scribe has read their words. {n} citizens moved."
+        "announce": "The Scribe has read their words. No one moved. | The Scribe has read their words. One citizen moved. | The Scribe has read their words. {n} citizens moved.",
+        "from": {
+          "for": "began in favour",
+          "against": "began opposed",
+          "undecided": "began undecided",
+          "watching": "began watching"
+        },
+        "came": {
+          "for": "came round in favour",
+          "against": "turned against it",
+          "undecided": "grew undecided",
+          "watching": "stepped back to watch"
+        }
       }
     },
     "replay": {

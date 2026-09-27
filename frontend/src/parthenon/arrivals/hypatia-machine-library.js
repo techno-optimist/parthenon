@@ -19,6 +19,16 @@ export default {
   fileName: 'arrival-hypatia-machine-library.md',
   question:
     "In the two weeks before the trustees vote on October 9, how does opinion move among authors, translators, librarians, patrons and open-knowledge advocates in the Agora and the Stoa, and whose mind does Hypatia's speech change? Does the Aldermere Free Library accept Lanternfold Labs' Open Door offer, object to the settlement as a class member, or find terms of its own, such as citations, consent, private reading records and paid translators?",
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '希帕提娅',
+    title: '希帕提娅与机器图书馆',
+    challenge: '机器读过的东西归谁所有',
+    place: '奥尔德米尔公共图书馆，大阅览室',
+    year: '2026 年',
+    line: '欧几里得正是靠抄写才传到你们手里。但每一份抄本都带着他的名字。',
+    question: '在受托人 10 月 9 日表决之前的两周里，作者、译者、图书馆员、读者和开放知识的倡导者在广场和柱廊上的意见如何变化，希帕提娅的演讲又改变了谁的想法？奥尔德米尔公共图书馆会接受 Lanternfold Labs 的「敞门」提议，以集体诉讼成员的身份反对和解，还是提出自己的条件，比如注明出处、征得同意、保护私人阅读记录、付酬给译者？'
+  },
   seed: `# Hypatia and the Machine Library, staged for Parthenon
 
 *Aldermere Free Library, late September 2026. Eleven days ago Hypatia of Alexandria stepped off the Parthenon steps into the Great Reading Room and has been reading ever since.*

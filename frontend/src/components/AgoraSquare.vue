@@ -32,10 +32,12 @@
             width="2560"
             height="1440"
             decoding="async"
-            :style="{ objectPosition, opacity: light.day }"
+            :style="{ objectPosition, opacity: light.day, '--lift': `${dayLift}%` }"
           />
           <div class="shade" :style="{ opacity: 1 - light.day * 0.7 }" aria-hidden="true"></div>
           <div class="shade warm" :style="{ opacity: light.warm }" aria-hidden="true"></div>
+          <!-- The long gold of the late afternoon, before the dusk takes the square -->
+          <div class="shade gold" :style="{ opacity: golden }" aria-hidden="true"></div>
 
           <!-- The day clock: the sun by day, the moon by night, on a thin arc -->
           <div class="sky" aria-hidden="true">
@@ -105,12 +107,12 @@
               v-for="r in ribbons"
               :key="r.key"
               class="ribbon"
-              :class="[r.align, r.below ? 'below' : 'above', { landed: r.landed }]"
+              :class="[r.align, r.below ? 'below' : 'above', `voice-${r.voice}`, { landed: r.landed }]"
               :data-ribbon="r.key"
               :style="{ left: `${r.left}%`, top: `${r.top}%`, '--role': r.color, '--lift': `${r.lift}px` }"
             >
               <span class="ribbon-who">{{ r.name }}<span v-if="r.verb" class="ribbon-verb"> · {{ r.verb }}</span></span>
-              <span class="ribbon-words">{{ r.words }}</span>
+              <span class="ribbon-words" :lang="r.lang"><span v-if="r.lead" class="lead">{{ r.lead }}</span>{{ r.rest }}</span>
             </div>
           </TransitionGroup>
 
@@ -120,14 +122,14 @@
               v-if="caption"
               :key="caption.key"
               class="caption"
-              :class="{ landed: caption.landed }"
+              :class="[`voice-${caption.voice}`, { landed: caption.landed }]"
               :data-ribbon="caption.key"
               :style="{ '--role': caption.color, ...paceStyle }"
               aria-hidden="true"
             >
               <CitizenCoin class="caption-coin" :name="caption.name" :type="caption.type" :portrait="caption.portrait" size="sm" />
               <span class="ribbon-who">{{ caption.name }}<span v-if="caption.verb" class="ribbon-verb"> · {{ caption.verb }}</span></span>
-              <span class="ribbon-words">{{ caption.words }}</span>
+              <span class="ribbon-words" :lang="caption.lang"><span v-if="caption.lead" class="lead">{{ caption.lead }}</span>{{ caption.rest }}</span>
             </div>
           </Transition>
 
@@ -158,13 +160,13 @@
               v-for="l in stripLines"
               :key="l.key"
               class="strip-line"
-              :class="{ pinned: pinId === l.from }"
+              :class="[`voice-${l.voice}`, { pinned: pinId === l.from }]"
               :data-line="l.key"
               :style="{ '--role': l.color }"
             >
               <CitizenCoin :name="l.name" :type="l.type" :portrait="faceOf(l.from, l.name)" size="sm" />
               <span class="strip-who">{{ l.name }}<span v-if="l.verb" class="strip-verb"> · {{ l.verb }}</span></span>
-              <span class="strip-words">{{ l.words }}</span>
+              <span class="strip-words" :lang="l.lang"><span v-if="l.lead" class="lead">{{ l.lead }}</span>{{ l.rest }}</span>
             </li>
           </ol>
         </section>
@@ -202,11 +204,14 @@
                   @mouseleave="focusId = focusId === m.id ? null : focusId"
                 >
                   <CitizenCoin :name="m.name" :type="m.type" :portrait="faceOf(m.id, m.name)" size="md" />
+                  <!-- 'Sand' over 'began watching and came round in favour in the afternoon'.
+                       Each part carries its own word space, so the name a listener
+                       hears never runs two words together. -->
                   <I18nT :keypath="m.when ? 'agora.square.after.line' : 'agora.square.after.lineNoWhen'" tag="span" class="moved-line" scope="global">
-                    <template #name><span class="moved-name">{{ m.name }}</span></template>
-                    <template #from><span class="moved-side">{{ sideWord(m.from) }}</span></template>
-                    <template #to><span class="moved-side">{{ sideWord(m.to) }}</span></template>
-                    <template #when>{{ whenWords(m.when) }}</template>
+                    <template #name><span class="moved-name">{{ m.name }}{{ gap }}</span></template>
+                    <template #from><span class="moved-side">{{ movedFrom(m.from) }}</span></template>
+                    <template #to><span class="moved-side">{{ movedTo(m.to) }}</span></template>
+                    <template #when><span class="moved-when">{{ gap }}{{ whenWords(m.when) }}</span></template>
                   </I18nT>
                 </button>
               </li>
@@ -302,7 +307,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, w
 import { useI18n, I18nT } from 'vue-i18n'
 import CitizenCoin from './CitizenCoin.vue'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
-import { citizenName, roleColorVar, stanceWords, STANCE_SIDES } from '../parthenon/vocabulary.js'
+import { citizenName, roleColorVar, stanceWords, STANCE_SIDES, voiceOf } from '../parthenon/vocabulary.js'
 import {
   homeSpots,
   walkToward,
@@ -326,6 +331,7 @@ import {
   beatsPerSecond,
   murmurLevel
 } from '../parthenon/square.js'
+import { sound, murmurInput } from '../parthenon/sound.js'
 
 const props = defineProps({
   simulationId: { type: String, default: '' },
@@ -378,6 +384,13 @@ const daySrcset = computed(() => plateSrcset(plate.value, 'day'))
 const nightSrc = computed(() => plateSrc(plate.value, 'night'))
 const daySrc = computed(() => plateSrc(plate.value, 'day'))
 const objectPosition = computed(() => (narrow.value ? `${plate.value.phoneX * 100}% 50%` : '50% 50%'))
+// The daylight paintings were made from the same camera a breath lower: the
+// daylit square sits this far below the night's (in percent of the
+// painting's height, measured by matching their edges). Lifted by it, the day
+// lies exactly over the night, so the stoa never doubles at dawn or dusk and
+// every citizen keeps standing on the same stone.
+const DAY_LIFT = { now: 3.6, ancient: 0.55 }
+const dayLift = computed(() => DAY_LIFT[props.era] ?? 0)
 
 // ---- Faces ----
 const { portraitFor } = useCitizenPortraits(toRef(props, 'simulationId'))
@@ -450,6 +463,16 @@ const tokens = computed(() => {
 // ---- The sky and the light ----
 const sky = computed(() => skyAt(props.hour))
 const light = computed(() => lightAt(props.hour))
+// From mid-afternoon the daylight turns to gold, deepest just before the
+// dusk, gone once the night painting has the square.
+const ease = (a, b, x) => {
+  const k = Math.max(0, Math.min(1, (x - a) / (b - a)))
+  return k * k * (3 - 2 * k)
+}
+const golden = computed(() => {
+  const h = (((Number(props.hour) || 0) % 24) + 24) % 24
+  return Math.round(ease(14.5, 17.6, h) * (1 - ease(18.3, 19.6, h)) * 1000) / 1000
+})
 // The day painting is fetched the first time the sun is up, and kept.
 const dayWanted = ref(false)
 watch(light, (l) => { if (l.day > 0 || l.warm > 0) dayWanted.value = true }, { immediate: true })
@@ -497,10 +520,38 @@ const rowsLabel = computed(() => {
 const lang = computed(() => String(locale.value || 'en').slice(0, 2))
 // 'For', 'Against', 'Undecided', 'Watching' as the city says them everywhere.
 const rowLabel = (side) => (after.value ? stanceWords(side, null, 'side', lang.value) : t(`agora.square.ledger.sides.${side}`))
-// The side inside a sentence: 'moved from for to against'.
-const sideWord = (side) => {
-  const w = stanceWords(side, null, 'side', lang.value)
-  return lang.value === 'en' ? w.toLowerCase() : w
+// The move in a sentence: 'began watching and came round in favour'.
+const movedFrom = (side) => t(`agora.square.after.from.${side}`)
+const movedTo = (side) => t(`agora.square.after.came.${side}`)
+// The space between words, where the language has one.
+const gap = computed(() => (lang.value === 'zh' ? '' : ' '))
+
+// ---- The voices of the square ----
+// Each class of citizen speaks in its own hand (the Pentiment lesson):
+// philosophers and poets in italic, officials and bodies with a lead-in in
+// small capitals, machines in mono, everyone else in the reading serif.
+const HAN = /[㐀-鿿]/
+const langOf = (text) => (HAN.test(String(text || '')) ? 'zh' : 'en')
+const LEAD_MAX = 22
+const leadIn = (words, voice) => {
+  const text = String(words || '')
+  if (voice !== 'official' || HAN.test(text)) return { lead: '', rest: text }
+  const parts = text.split(' ')
+  let lead = ''
+  let n = 0
+  while (n < parts.length - 1 && n < 3 && (lead ? `${lead} ${parts[n]}` : parts[n]).length <= LEAD_MAX) {
+    lead = lead ? `${lead} ${parts[n]}` : parts[n]
+    n++
+  }
+  if (!lead) return { lead: '', rest: text }
+  return { lead, rest: ` ${parts.slice(n).join(' ')}` }
+}
+// A body that opens with its own name ('Ammolith Compute offers...') is not
+// given a lead-in: the name above it already says who speaks.
+const spoken = (words, type, name = '') => {
+  const voice = voiceOf(type)
+  const own = name && String(words || '').toLowerCase().startsWith(String(name).toLowerCase())
+  return { voice, lang: langOf(words), words, ...leadIn(words, own ? '' : voice) }
 }
 // When they moved, by the city's clock: 'in the afternoon', 'on the evening of day 2'.
 const whenWords = (when) => {
@@ -629,7 +680,7 @@ const lineOf = (beat, key) => {
     type: who.type,
     color: roleColorVar(who.type),
     verb: verbOf(beat),
-    words: withoutOwnName(String(beat.words || '').replace(/\s+/g, ' ').trim(), who.name)
+    ...spoken(withoutOwnName(String(beat.words || '').replace(/\s+/g, ' ').trim(), who.name), who.type, who.name)
   }
 }
 const stripLines = computed(() => {
@@ -712,7 +763,7 @@ const raiseRibbon = (beat, at, life) => {
     portrait: faceOf(who.id, who.name),
     color: roleColorVar(who.type),
     verb: verbOf(beat),
-    words,
+    ...spoken(words, who.type, who.name),
     landed: false,
     timer: 0
   }
@@ -730,20 +781,45 @@ const raiseRibbon = (beat, at, life) => {
   while (ribbons.value.length >= 2) settle(ribbons.value[0].key)
   const box = toBox(at, win.value)
   const est = compact.value ? RIBBON_EST.compact : RIBBON_EST.wide
-  const align = box.left > 100 - est.w - 3 ? 'end' : 'start'
   const spanOf = (left, a) => (a === 'end' ? [left - est.w, left] : [left, left + est.w])
-  const [x0, x1] = spanOf(box.left, align)
   const heightOf = (below, top) => (below ? [top + 4, top + 4 + est.h] : [top - 4 - est.h, top - 4])
-  let below = box.top - est.h - 6 < 2
-  const clash = (b) =>
-    ribbons.value.some((r) => {
+  const clashOf = (a, b) => {
+    const [x0, x1] = spanOf(box.left, a)
+    const [y0, y1] = heightOf(b, box.top)
+    return ribbons.value.some((r) => {
       const [rx0, rx1] = spanOf(r.left, r.align)
       const [ry0, ry1] = heightOf(r.below, r.top)
-      const [y0, y1] = heightOf(b, box.top)
       return x0 < rx1 && rx0 < x1 && y0 < ry1 && ry0 < y1
     })
-  if (clash(below)) below = !below
-  if (clash(below)) settle(ribbons.value[0].key)
+  }
+  // The words go where they cover the fewest faces: above or below the
+  // speaker, reading on from them or back toward them, counted before the
+  // test against the other ribbon. Above and reading on is the way a line is
+  // first looked for, so it wins a tie.
+  const facesUnder = (a, b) => {
+    const [x0, x1] = spanOf(box.left, a)
+    const [y0, y1] = heightOf(b, box.top)
+    let n = 0
+    for (const tk of tokens.value) {
+      if (tk.id === beat.from) continue
+      if (tk.homeLeft > x0 - 2 && tk.homeLeft < x1 + 2 && tk.homeTop > y0 - 3 && tk.homeTop < y1 + 3) n++
+    }
+    return n
+  }
+  const places = []
+  for (const a of ['start', 'end']) {
+    for (const b of [false, true]) {
+      const [x0, x1] = spanOf(box.left, a)
+      const [y0, y1] = heightOf(b, box.top)
+      if (x0 < -1 || x1 > 101 || y0 < 2 || y1 > 97) continue
+      places.push({ align: a, below: b, cost: (clashOf(a, b) ? 100 : 0) + facesUnder(a, b) + (a === 'end' ? 0.3 : 0) + (b ? 0.2 : 0) })
+    }
+  }
+  places.sort((p, q) => p.cost - q.cost)
+  const align = places[0]?.align ?? (box.left > 100 - est.w - 3 ? 'end' : 'start')
+  let below = places[0]?.below ?? box.top - est.h - 6 < 2
+  if (!places.length && clashOf(align, below)) below = !below
+  if (clashOf(align, below)) settle(ribbons.value[0].key)
   const scale = depthScale(at.y, { ground: ground.value })
   const ribbon = {
     ...base,
@@ -765,17 +841,28 @@ const noteBeat = () => {
   while (beatTimes.length && beatTimes[0] < now - 8000) beatTimes.shift()
   return now
 }
+// The murmur is one voice in the city's sound. Its few nodes stand on the
+// shared context from parthenon/sound.js and feed its murmur bus, so the one
+// Listen switch, the fade while the tab is hidden and the dip under any voice
+// all reach it. The square only sets its own level, which follows the pace.
+// The shared context is never suspended or closed here; it is not ours.
 let audio = null
-let resumeOnGesture = null
-const murmurOn = computed(() => props.murmur && !reduced)
-const LOUD = 0.11
+const murmurOn = computed(() => !!props.murmur)
+const LOUD = 0.12
 
 const buildAudio = () => {
-  if (audio || typeof window === 'undefined') return audio
-  const AC = window.AudioContext || window.webkitAudioContext
-  if (!AC) return null
+  if (audio) return audio
+  // Null until the visitor has chosen Listen and touched the page; asked again
+  // when the switch moves, on the next beat, or on the next slow tick.
+  const shared = murmurInput()
+  if (!shared) return null
+  const { ctx, input } = shared
+  const made = []
+  const keep = (node) => {
+    made.push(node)
+    return node
+  }
   try {
-    const ctx = new AC()
     // Brown noise, shaped into the band of voices and set talking by slow pulses.
     const len = Math.floor(ctx.sampleRate * 4)
     const buf = ctx.createBuffer(1, len, ctx.sampleRate)
@@ -785,26 +872,25 @@ const buildAudio = () => {
       last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02
       d[i] = last * 3.2
     }
-    const src = ctx.createBufferSource()
+    const src = keep(ctx.createBufferSource())
     src.buffer = buf
     src.loop = true
-    const master = ctx.createGain()
+    const master = keep(ctx.createGain())
     master.gain.value = 0
-    const soft = ctx.createBiquadFilter()
+    const soft = keep(ctx.createBiquadFilter())
     soft.type = 'lowpass'
     soft.frequency.value = 1500
     soft.connect(master)
-    master.connect(ctx.destination)
     const pulses = [230, 360, 540, 780, 1050].map((f, i) => {
-      const band = ctx.createBiquadFilter()
+      const band = keep(ctx.createBiquadFilter())
       band.type = 'bandpass'
       band.frequency.value = f
       band.Q.value = 1.8
-      const voice = ctx.createGain()
+      const voice = keep(ctx.createGain())
       voice.gain.value = 0.22
-      const lfo = ctx.createOscillator()
+      const lfo = keep(ctx.createOscillator())
       lfo.frequency.value = 1.7 + i * 0.93
-      const depth = ctx.createGain()
+      const depth = keep(ctx.createGain())
       depth.gain.value = 0.18
       lfo.connect(depth)
       depth.connect(voice.gain)
@@ -815,8 +901,12 @@ const buildAudio = () => {
       return lfo
     })
     src.start()
-    audio = { ctx, master, src, pulses }
+    master.connect(input)
+    audio = { ctx, master, src, pulses, nodes: made }
   } catch (err) {
+    for (const node of made) {
+      try { node.disconnect() } catch (e) { /* never joined */ }
+    }
     audio = null
   }
   return audio
@@ -827,7 +917,7 @@ const levelNow = () => {
   return murmurLevel(beatsPerSecond(beatTimes, now))
 }
 const setMurmur = (swell = false) => {
-  if (!audio || !murmurOn.value) return
+  if (!murmurOn.value || !sound.enabled || !buildAudio()) return
   const { ctx, master } = audio
   const at = ctx.currentTime
   const level = levelNow() * LOUD
@@ -835,30 +925,40 @@ const setMurmur = (swell = false) => {
   master.gain.setTargetAtTime(swell ? level * 1.7 : level, at, swell ? 0.12 : 0.9)
   if (swell) master.gain.setTargetAtTime(level, at + 0.6, 0.9)
 }
-const startMurmur = () => {
-  if (!buildAudio()) return
-  audio.ctx.resume().catch(() => {})
-  // A browser may keep the sound asleep until the visitor next touches the page.
-  if (audio.ctx.state !== 'running' && !resumeOnGesture) {
-    resumeOnGesture = () => {
-      audio?.ctx.resume().then(() => setMurmur()).catch(() => {})
-      window.removeEventListener('pointerdown', resumeOnGesture)
-      window.removeEventListener('keydown', resumeOnGesture)
-      resumeOnGesture = null
-    }
-    window.addEventListener('pointerdown', resumeOnGesture)
-    window.addEventListener('keydown', resumeOnGesture)
-  }
-  setMurmur()
-}
-const stopMurmur = () => {
+// Off: the square falls quiet; the engine's own switch fades everything else.
+const quietMurmur = () => {
   if (!audio) return
   const { ctx, master } = audio
   master.gain.cancelScheduledValues(ctx.currentTime)
   master.gain.setTargetAtTime(0, ctx.currentTime, 0.25)
-  later(() => { if (!murmurOn.value) ctx.suspend().catch(() => {}) }, 900)
 }
-watch(murmurOn, (on) => (on ? startMurmur() : stopMurmur()))
+// The square's nodes leave with the square, after a breath so nothing clicks.
+const dropMurmur = () => {
+  if (!audio) return
+  const { ctx, master, src, pulses, nodes } = audio
+  audio = null
+  try {
+    const at = ctx.currentTime
+    master.gain.cancelScheduledValues(at)
+    master.gain.setTargetAtTime(0, at, 0.04)
+    src.stop(at + 0.25)
+    pulses.forEach((o) => o.stop(at + 0.25))
+  } catch (err) {
+    // already stopped
+  }
+  setTimeout(() => {
+    for (const node of nodes) {
+      try { node.disconnect() } catch (e) { /* already gone */ }
+    }
+  }, 400)
+}
+watch(
+  () => murmurOn.value && sound.enabled,
+  (on) => (on ? setMurmur() : quietMurmur())
+)
+// In a dev build only: the square's own murmur, for the capture scripts.
+const DEV_HOOK = typeof window !== 'undefined' && !!(import.meta.env && import.meta.env.DEV)
+const murmurProbe = () => audio
 // The bed settles back as the pace slows.
 let murmurTick = 0
 
@@ -875,8 +975,7 @@ const perform = (beat, { speed = 1 } = {}) => {
   const n = ++seq
   pace.value = Number(speed) || 1
   noteBeat()
-  if (ribbon) setMurmur(true)
-  else if (murmurOn.value) setMurmur()
+  setMurmur(ribbon)
 
   if (!from) {
     if (ribbon) emit('settle', beat.id)
@@ -967,8 +1066,9 @@ onMounted(() => {
     sceneObserver = new ResizeObserver(measure)
     sceneObserver.observe(sceneEl.value)
   }
-  if (murmurOn.value) startMurmur()
-  murmurTick = setInterval(() => { if (murmurOn.value) setMurmur() }, 2000)
+  setMurmur()
+  murmurTick = setInterval(() => setMurmur(), 2000)
+  if (DEV_HOOK) window.__parthenonMurmur = murmurProbe
 })
 onBeforeUnmount(() => {
   narrowQuery?.removeEventListener('change', onNarrow)
@@ -976,20 +1076,8 @@ onBeforeUnmount(() => {
   for (const id of timers) clearTimeout(id)
   timers.clear()
   if (murmurTick) clearInterval(murmurTick)
-  if (resumeOnGesture) {
-    window.removeEventListener('pointerdown', resumeOnGesture)
-    window.removeEventListener('keydown', resumeOnGesture)
-  }
-  if (audio) {
-    try {
-      audio.src.stop()
-      audio.pulses.forEach((o) => o.stop())
-      audio.ctx.close()
-    } catch (err) {
-      // already closed
-    }
-    audio = null
-  }
+  dropMurmur()
+  if (DEV_HOOK && window.__parthenonMurmur === murmurProbe) delete window.__parthenonMurmur
 })
 </script>
 
@@ -1034,7 +1122,12 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+/* Lifted to lie exactly over the night (see DAY_LIFT); its fade into the page
+   is moved with it, so both paintings melt into the stone at the same line. */
 .painting.day {
+  transform: translateY(calc(-1 * var(--lift, 0%)));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(80% + var(--lift, 0%)), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(80% + var(--lift, 0%)), transparent 100%);
   transition: opacity 1.4s ease;
 }
 
@@ -1053,6 +1146,14 @@ onBeforeUnmount(() => {
   background:
     linear-gradient(to bottom, rgba(255, 148, 98, 0.42), rgba(255, 176, 120, 0.18) 22%, rgba(255, 190, 140, 0) 48%),
     radial-gradient(70% 50% at var(--sun-x) 8%, rgba(255, 200, 140, 0.35), rgba(255, 200, 140, 0) 70%);
+  mix-blend-mode: soft-light;
+}
+
+/* The late gold: the sunlit stone warmed and the shadows deepened toward amber */
+.shade.gold {
+  background:
+    radial-gradient(90% 70% at var(--sun-x) 0%, rgba(255, 196, 120, 0.5), rgba(255, 196, 120, 0) 70%),
+    linear-gradient(to bottom, rgba(255, 170, 90, 0.42), rgba(236, 140, 64, 0.34) 55%, rgba(120, 58, 24, 0.4));
   mix-blend-mode: soft-light;
 }
 
@@ -1194,6 +1295,12 @@ onBeforeUnmount(() => {
   transform: translate(-50%, -62%) scale(calc(var(--depth) * 1.12));
 }
 
+/* While words are in the air the square is lit for the two who are talking:
+   everyone else steps back into the dusk, so no face competes with the line. */
+.ribboning .token:not(.speaking):not(.listening):not(.pinned):not(.focus) .token-body {
+  filter: brightness(0.6) saturate(0.65);
+}
+
 .token.speaking .token-body :deep(.citizen-coin) {
   box-shadow: 0 0 0 2px var(--role), 0 0 22px 2px color-mix(in srgb, var(--role) 70%, transparent);
 }
@@ -1220,7 +1327,7 @@ onBeforeUnmount(() => {
   background: rgba(11, 14, 19, 0.84);
   color: var(--p-ink);
   font-family: var(--p-font-body);
-  font-size: 11px;
+  font-size: var(--t-xs);
   font-weight: 600;
   line-height: 1.3;
   white-space: nowrap;
@@ -1294,17 +1401,21 @@ onBeforeUnmount(() => {
 
 .ribbon.below { --ty: var(--lift); }
 
-/* A soft dark halo behind the words, feathered into the stone */
+/* A soft seat of shadow under the words, feathered into the stone: dark
+   enough to carry a line over sunlit paving or a lit colonnade, never a box. */
 .ribbon::before {
   content: '';
   position: absolute;
-  inset: -20px -30px -20px -18px;
+  inset: -16px -34px -16px -22px;
   z-index: -1;
-  background: radial-gradient(closest-side, rgba(6, 8, 12, 0.66), rgba(6, 8, 12, 0.34) 60%, rgba(6, 8, 12, 0));
+  background: radial-gradient(ellipse 62% 64% at 42% 52%, rgba(9, 11, 16, 0.84), rgba(9, 11, 16, 0.62) 46%, rgba(9, 11, 16, 0.22) 76%, rgba(9, 11, 16, 0));
   pointer-events: none;
 }
 
-.ribbon.end::before { inset: -20px -18px -20px -30px; }
+.ribbon.end::before {
+  inset: -16px -22px -16px -34px;
+  background: radial-gradient(ellipse 62% 64% at 58% 52%, rgba(9, 11, 16, 0.84), rgba(9, 11, 16, 0.62) 46%, rgba(9, 11, 16, 0.22) 76%, rgba(9, 11, 16, 0));
+}
 
 /* The thread down to the coin: the ribbon's own rule, carried on */
 .ribbon::after {
@@ -1321,15 +1432,17 @@ onBeforeUnmount(() => {
 .ribbon.end::after { left: auto; right: -2px; }
 .ribbon.below::after { top: auto; bottom: 100%; background: linear-gradient(transparent, var(--role)); }
 
+/* The name in its role's colour, lifted toward the light so it holds over
+   the day's pale stone as well as the night's. */
 .ribbon-who {
   display: block;
   line-height: 1.35;
   font-family: var(--p-font-inscription);
-  font-size: 10.5px;
+  font-size: var(--t-xs);
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: var(--role);
+  color: color-mix(in srgb, var(--role) 78%, #fff6e8);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 12px rgba(0, 0, 0, 0.8);
 }
 
@@ -1340,7 +1453,8 @@ onBeforeUnmount(() => {
 
 .ribbon-words {
   display: block;
-  margin-top: 1px;
+  max-width: 26ch;
+  margin-top: 2px;
   font-family: var(--p-font-display);
   font-style: italic;
   font-size: 1.375rem;
@@ -1350,6 +1464,39 @@ onBeforeUnmount(() => {
   text-wrap: balance;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 16px rgba(0, 0, 0, 0.85), 0 0 30px rgba(0, 0, 0, 0.5);
 }
+
+.ribbon.end .ribbon-words { margin-left: auto; }
+
+/* ---- The voices: each class of citizen speaks in its own hand ---- */
+/* The common citizen: the reading serif, upright, a little smaller for its larger eye */
+.voice-common .ribbon-words {
+  font-family: var(--p-font-serif);
+  font-style: normal;
+  font-size: 1.1875rem;
+  font-weight: 400;
+  line-height: 1.24;
+}
+
+/* Officials and bodies: Cormorant upright, the opening words in small capitals */
+.voice-official .ribbon-words { font-style: normal; font-weight: 500; }
+.lead {
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+/* Machines: mono, upright, set a touch wider, a faint cool cast */
+.voice-machine .ribbon-words {
+  font-family: var(--p-font-mono);
+  font-style: normal;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.34;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--p-ink) 88%, #9cc2e6);
+}
+
+/* Elders, poets, philosophers keep the italic of the display face (the default). */
 
 .ribbon.landed,
 .caption.landed { opacity: 0 !important; transition: none !important; }
@@ -1377,8 +1524,10 @@ onBeforeUnmount(() => {
 }
 
 .caption-coin { grid-row: 1 / span 2; box-shadow: 0 0 0 2px var(--role), 0 0 14px 2px color-mix(in srgb, var(--role) 60%, transparent); }
-.caption .ribbon-who { font-size: 9.5px; }
-.caption .ribbon-words { font-size: var(--t-md); line-height: 1.22; text-wrap: pretty; }
+.caption .ribbon-who { font-size: 13px; letter-spacing: 0.08em; }
+.caption .ribbon-words { max-width: none; font-size: var(--t-md); line-height: 1.22; text-wrap: pretty; }
+.caption.voice-common .ribbon-words { font-size: 0.9375rem; line-height: 1.32; }
+.caption.voice-machine .ribbon-words { font-size: 0.875rem; line-height: 1.36; }
 
 .caption-enter-active { transition: opacity var(--ribbon-in, 0.3s) ease, transform var(--ribbon-in, 0.3s) ease; }
 .caption-leave-active { transition: opacity 0.2s ease; }
@@ -1453,9 +1602,21 @@ onBeforeUnmount(() => {
   will-change: transform;
 }
 
-.strip-line + .strip-line { opacity: 0.72; }
-.strip-line + .strip-line + .strip-line { opacity: 0.5; }
-.strip-line.pinned { opacity: 1; background: rgba(240, 182, 96, 0.08); }
+/* Older lines step back in tone, never below reading contrast: the words go
+   from ink-2 to ink-3 to ink-4, the faces and the rule dim with them. */
+.strip-line + .strip-line { border-left-color: color-mix(in srgb, var(--role) 62%, transparent); }
+.strip-line + .strip-line + .strip-line { border-left-color: color-mix(in srgb, var(--role) 40%, transparent); }
+.strip-line + .strip-line :deep(.citizen-coin) { filter: brightness(0.82) saturate(0.8); }
+.strip-line + .strip-line + .strip-line :deep(.citizen-coin) { filter: brightness(0.66) saturate(0.6); }
+.strip-line + .strip-line .strip-who { color: var(--p-ink-2); }
+.strip-line + .strip-line .strip-words { color: var(--p-ink-3); }
+.strip-line + .strip-line + .strip-line .strip-who { color: var(--p-ink-3); }
+.strip-line + .strip-line + .strip-line .strip-words,
+.strip-line + .strip-line .strip-verb { color: var(--p-ink-4); }
+.strip-line.pinned { background: rgba(240, 182, 96, 0.08); border-left-color: var(--role); }
+.strip-line.pinned :deep(.citizen-coin) { filter: none; }
+.strip-line.pinned .strip-who { color: var(--p-ink); }
+.strip-line.pinned .strip-words { color: var(--p-ink-2); }
 
 .strip-who {
   font-family: var(--p-font-display);
@@ -1482,6 +1643,18 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   color: var(--p-ink-2);
 }
+
+/* The voices carry down into the record */
+.voice-elder .strip-words { font-family: var(--p-font-display); font-style: italic; font-size: var(--t-md); }
+.voice-official .strip-words { font-family: var(--p-font-display); font-size: var(--t-md); }
+.voice-machine .strip-words { font-family: var(--p-font-mono); font-size: 0.8125rem; letter-spacing: 0.01em; }
+
+/* Chinese has no italic and no small capitals: the voices stay upright in the serif */
+.ribbon-words:lang(zh),
+.strip-words:lang(zh) { font-style: normal; font-variant-caps: normal; }
+.voice-elder .ribbon-words:lang(zh),
+.voice-official .ribbon-words:lang(zh),
+.voice-common .ribbon-words:lang(zh) { font-family: var(--p-font-serif); font-size: 1.1875rem; line-height: 1.4; }
 
 /* ---- Where they stood ---- */
 .stood {
@@ -1717,12 +1890,26 @@ onBeforeUnmount(() => {
 /* ---- Phones and narrow stages ---- */
 .compact .ribbon { max-width: 42%; }
 .compact .ribbon-words { font-size: var(--t-lg); }
-.compact .plate { top: calc(var(--depth) * 16px + 5px); font-size: 10px; }
+.compact .voice-common .ribbon-words { font-size: 1.0625rem; }
+.compact .voice-machine .ribbon-words { font-size: 0.9375rem; }
+.compact .plate { top: calc(var(--depth) * 16px + 5px); }
+
+/* Chinese in the square's inscriptions: the serif, upright, lightly tracked */
+.sky-words:lang(zh),
+.ribbon-who:lang(zh),
+.stood-title:lang(zh),
+.stood-sub:lang(zh),
+.strip-title:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.ribbon-who:lang(zh) { font-size: 13px; }
 
 @media (max-width: 899px) {
   .scene { aspect-ratio: 4 / 3; max-width: none; }
-  .sky-words { left: 10px; top: 8px; font-size: 10px; }
-  .plate { font-size: 10px; top: calc(var(--depth) * 16px + 5px); }
+  .sky-words { left: 10px; top: 8px; }
+  .plate { top: calc(var(--depth) * 16px + 5px); }
   .hold { padding: 10px 16px; }
   .strip { padding: 10px 16px 4px; }
   .strip-line { grid-template-columns: auto minmax(0, 1fr); row-gap: 0; padding-block: 5px; }

@@ -18,6 +18,16 @@ export default {
   fileName: 'arrival-plato-new-cave.md',
   question:
     'Plato has testified for SB 1180, and the committee votes on October 6 with Senator Brennan undecided and a new Lantern Watch video promised. Over the next two weeks, how do voters, creators, Glimmer, the AI agents and the anonymous accounts argue about labels, takedowns and the operator-of-record clause, and who changes their mind? Does the bill pass whole, weakened or not at all, and does the 9th District end up believing the fake, the correction, or nothing at all?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '柏拉图',
+    title: '柏拉图的新洞穴',
+    challenge: '深度伪造、来源标签与看不见的操纵者',
+    place: '州议会大厦第 4 听证室',
+    year: '2026 年',
+    line: '如今的火更亮了，影子也学会了自己投下自己。',
+    question: '柏拉图已为 SB 1180 法案作证。委员会将于 10 月 6 日表决，布伦南参议员仍未表态，Lantern Watch 又预告了一段新视频。接下来两周，选民、创作者、Glimmer、那些 AI 程序和匿名账号如何围绕标签、下架和「登记运营者」条款争论，谁改变了主意？法案是完整通过、被削弱，还是根本没有通过？第九选区最后相信的是假视频、更正，还是什么都不信？'
+  },
   seed: `# Plato's New Cave, staged for Parthenon
 
 *Hearing Room 4, the State Capitol, late September 2026. Plato stepped off the Parthenon steps into a metal detector and was on the witness list by lunchtime.*

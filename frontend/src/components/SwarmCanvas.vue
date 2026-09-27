@@ -3,9 +3,11 @@
 </template>
 
 <script setup>
-// Runs the murmuration (parthenon/swarm.js) over the hero: parts around the
-// pointer, gathers when a speaker takes the steps, keeps out of the headline,
-// pauses off-screen, stays still for reduced motion.
+// Runs the sky over the hero (parthenon/swarm.js): the starlings of 399 BC,
+// the embers of 2026. The flock parts around the pointer, gathers when a
+// speaker takes the steps and keeps out of the headline. The loop stops off
+// screen, in a hidden tab and while paused, and resumes where it left off;
+// under reduced motion it draws one still frame.
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { createSwarm } from '../parthenon/swarm.js'
 
@@ -15,16 +17,23 @@ const props = defineProps({
   // The sky, as fractions of the canvas: { top, bottom, left, right }
   region: { type: Object, default: null },
   // A rectangle in canvas pixels the flock stays out of: { x, y, w, h }
-  avoid: { type: Object, default: null }
+  avoid: { type: Object, default: null },
+  // Hold the sky still (the visitor paused motion); the frame stays on screen.
+  paused: { type: Boolean, default: false }
 })
 
 const canvas = ref(null)
 
-// Home.vue's fixed .topbar is 68px tall. The strip of hero under it does not
-// count as on screen; the extra pixel matters because the #stages anchor lands
-// the hero's bottom exactly on 68, and an edge-adjacent target still reports
-// isIntersecting.
+// The hero keeps this canvas in its sticky stage for the whole descent and
+// holds the sky itself (:paused) once the descent is nearly over or the stage
+// is off screen. This observer is the backstop for any host: when the stage
+// finally scrolls up under Home.vue's fixed 68px .topbar, the strip behind the
+// bar does not count as sky. The extra pixel matters because a canvas whose
+// bottom rests exactly on the bar's edge still reports isIntersecting.
 const TOPBAR = 68
+// Birds a pixel wide need no more than this; it keeps the fill cheap on 3x phones.
+const MAX_DPR = 1.5
+const DEV = import.meta.env.DEV
 
 let ctx = null
 let swarm = null
@@ -36,23 +45,38 @@ let visible = true
 let reduced = false
 let resizeObserver = null
 let resizeRaf = 0
-let settleTimer = 0
 let intersectionObserver = null
 let reduceQuery = null
 let dprQuery = null
 let host = null
+let settleTimer = 0
+// Dev only: running averages of the frame's cost, for checks.
+const cost = { step: 0, draw: 0, frames: 0 }
 
 const frame = (now) => {
   if (!running) return
   const dt = Math.min(34, last ? now - last : 16.67)
   last = now
-  swarm.step(dt, props.intensity)
-  swarm.draw(ctx, props.era, dpr)
+  if (DEV) {
+    const t0 = performance.now()
+    swarm.step(dt, props.intensity)
+    const t1 = performance.now()
+    swarm.draw(ctx, props.era, dpr)
+    const t2 = performance.now()
+    cost.step += (t1 - t0 - cost.step) * 0.05
+    cost.draw += (t2 - t1 - cost.draw) * 0.05
+    cost.frames++
+  } else {
+    swarm.step(dt, props.intensity)
+    swarm.draw(ctx, props.era, dpr)
+  }
   raf = requestAnimationFrame(frame)
 }
 
+const canRun = () => !reduced && !props.paused && visible && !document.hidden && !!swarm
+
 const start = () => {
-  if (running || reduced || !visible || document.hidden || !swarm) return
+  if (running || !canRun()) return
   running = true
   last = 0
   raf = requestAnimationFrame(frame)
@@ -63,19 +87,22 @@ const stop = () => {
   cancelAnimationFrame(raf)
 }
 
-// A still murmuration for reduced motion: let the flock settle, then draw once.
-const drawStill = () => {
-  for (let i = 0; i < 90; i++) swarm.step(16.67, props.intensity)
-  swarm.draw(ctx, props.era, dpr)
+const sync = () => (canRun() ? start() : stop())
+
+// The flock is settled when it is seeded, so a still frame is one draw.
+const drawOnce = () => {
+  if (swarm && ctx) swarm.draw(ctx, props.era, dpr)
 }
 
-// Reduced motion: settle a reseeded flock once, after the resize goes quiet,
-// so a drag-resize never runs the whole settle on every callback.
+// Held still, a new layout (the sky measured, the words moved) is flown into
+// quietly for a second of sky, once the changes stop, then drawn.
 const settleSoon = () => {
   clearTimeout(settleTimer)
   settleTimer = setTimeout(() => {
     settleTimer = 0
-    if (reduced && swarm) drawStill()
+    if (running || !swarm) return
+    for (let i = 0; i < 60; i++) swarm.step(16.67, props.intensity)
+    drawOnce()
   }, 150)
 }
 
@@ -86,23 +113,18 @@ const resize = () => {
   const rect = el.getBoundingClientRect()
   const width = Math.max(1, Math.round(rect.width))
   const height = Math.max(1, Math.round(rect.height))
-  dpr = Math.min(window.devicePixelRatio || 1, 2)
+  dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR)
   el.width = Math.round(width * dpr)
   el.height = Math.round(height * dpr)
-  const birds = swarm?.state.birds
   if (!swarm) {
     swarm = createSwarm({ width, height, region: props.region || undefined, era: props.era })
     swarm.setAvoid(props.avoid)
   } else {
     swarm.resize(width, height)
   }
-  if (reduced && !birds) {
-    drawStill()
-  } else {
-    // Resizing clears the canvas: repaint once so no blank frame shows.
-    swarm.draw(ctx, props.era, dpr)
-    if (reduced && swarm.state.birds !== birds) settleSoon()
-  }
+  // Resizing clears the canvas: repaint once so no blank frame shows.
+  drawOnce()
+  if (!running) settleSoon()
 }
 
 // Coalesce resize bursts (window drags, mobile toolbars) into one per frame.
@@ -130,16 +152,17 @@ const onPointerMove = (event) => {
 
 const onPointerLeave = () => swarm?.setPointer(-9999, -9999, false)
 
-const onVisibility = () => (document.hidden ? stop() : start())
+// A finger lifts (or the page takes it for a scroll) without leaving the hero.
+const onPointerEnd = (event) => {
+  if (event.pointerType !== 'mouse') onPointerLeave()
+}
+
+const onVisibility = () => sync()
 
 const onReduceChange = () => {
   reduced = reduceQuery.matches
-  if (reduced) {
-    stop()
-    drawStill()
-  } else {
-    start()
-  }
+  sync()
+  if (!running) drawOnce()
 }
 
 onMounted(() => {
@@ -155,7 +178,7 @@ onMounted(() => {
 
   intersectionObserver = new IntersectionObserver(([entry]) => {
     visible = entry.isIntersecting
-    visible ? start() : stop()
+    sync()
   }, { rootMargin: `-${TOPBAR + 1}px 0px 0px 0px` })
   intersectionObserver.observe(canvas.value)
 
@@ -163,7 +186,24 @@ onMounted(() => {
   host = canvas.value.parentElement
   host.addEventListener('pointermove', onPointerMove, { passive: true })
   host.addEventListener('pointerleave', onPointerLeave, { passive: true })
+  host.addEventListener('pointerup', onPointerEnd, { passive: true })
+  host.addEventListener('pointercancel', onPointerEnd, { passive: true })
   document.addEventListener('visibilitychange', onVisibility)
+
+  if (DEV) {
+    window.__parthenonSwarm = {
+      swarm,
+      stats: () => ({
+        running,
+        dpr,
+        era: swarm?.state.era,
+        birds: swarm?.state.flocks[swarm.state.era]?.n || 0,
+        stepMs: +cost.step.toFixed(3),
+        drawMs: +cost.draw.toFixed(3),
+        frames: cost.frames
+      })
+    }
+  }
   start()
 })
 
@@ -177,16 +217,30 @@ onBeforeUnmount(() => {
   dprQuery?.removeEventListener('change', onDprChange)
   host?.removeEventListener('pointermove', onPointerMove)
   host?.removeEventListener('pointerleave', onPointerLeave)
+  host?.removeEventListener('pointerup', onPointerEnd)
+  host?.removeEventListener('pointercancel', onPointerEnd)
   document.removeEventListener('visibilitychange', onVisibility)
+  if (DEV && window.__parthenonSwarm?.swarm === swarm) delete window.__parthenonSwarm
 })
 
 watch(() => props.era, (era) => {
-  swarm?.setEra(era)
-  if (reduced && swarm) swarm.draw(ctx, era, dpr)
+  if (!swarm) return
+  // On screen the flocks cross-fade; held still, the new sky shows at once.
+  swarm.setEra(era, !running)
+  if (!running) drawOnce()
 })
 
-watch(() => props.region, (region) => swarm?.setRegion(region), { deep: true })
-watch(() => props.avoid, (avoid) => swarm?.setAvoid(avoid), { deep: true })
+watch(() => props.paused, () => sync())
+
+watch(() => props.region, (region) => {
+  swarm?.setRegion(region)
+  if (!running) settleSoon()
+}, { deep: true })
+
+watch(() => props.avoid, (avoid) => {
+  swarm?.setAvoid(avoid)
+  if (!running) settleSoon()
+}, { deep: true })
 </script>
 
 <style scoped>

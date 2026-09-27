@@ -24,6 +24,16 @@ export default {
   fileName: 'arrival-socrates-answer-machine.md',
   question:
     'After Socrates speaks, Larissa has fourteen days before its school board votes on giving every student in grades 3 to 12 the always-on EverAnswer tutor and cutting eleven interventionists to pay for it. How do parents, teachers, students and the vendor argue over those two weeks, and who changes their mind? Does the board buy the tutor as sold, reject it, let the grant lapse by delaying, or rewrite the contract so the machine must question before it answers?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '苏格拉底',
+    title: '苏格拉底与有问必答的机器',
+    challenge: '什么都能回答的 AI 辅导',
+    place: '俄亥俄州拉里萨，学校董事会听证会',
+    year: '2026 年',
+    line: '真意见若不用推究原因把它拴住，就会逃走。',
+    question: '苏格拉底讲完之后，拉里萨还有十四天，学校董事会就要表决：是否为三至十二年级的每个学生配备全天候的 EverAnswer 辅导程序，并裁掉十一名辅导教师来支付这笔钱。这两周里，家长、教师、学生和供应商如何争论，谁改变了主意？董事会是照单全收、断然拒绝、借拖延让补助金过期，还是改写合同，让机器必须先提问再回答？'
+  },
   seed: `# Socrates and the Answer Machine, staged for Parthenon
 
 *Larissa, Ohio, October 2026. Socrates came down the steps of the Parthenon onto the parking lot of Larissa Central High School, barefoot as ever, and spent a week asking questions before anyone asked who he was.*

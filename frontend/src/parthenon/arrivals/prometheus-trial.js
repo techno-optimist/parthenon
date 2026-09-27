@@ -21,6 +21,16 @@ export default {
   fileName: 'arrival-prometheus-trial.md',
   question:
     'The jury in Prometheus’s streamed mock trial must reach its verdict within three days, and ten days later the Lindos Accord votes on the Firebreak Protocol. Over those thirteen days, how does opinion move in the Agora and the Stoa, and who changes their mind after Hephaestus testifies and the verdict is read? By the Accord vote, does the majority back the Protocol’s ban on the released weights, reject it, or rally behind a middle path such as licensed, safeguarded versions?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '普罗米修斯',
+    title: '普罗米修斯受审',
+    challenge: '向所有人开放的前沿 AI',
+    place: '雅典，战神山下的旧法院',
+    year: '2026 年',
+    line: '我是自愿的，自愿犯下这过错，我不否认。',
+    question: '普罗米修斯这场全程直播的假想庭审，陪审团须在三天内作出裁决；十天之后，《林多斯协定》将就「防火带协议」表决。这十三天里，广场和柱廊上的意见如何变化？赫菲斯托斯作证、裁决宣读之后，谁改变了主意？到协定表决时，多数人会支持协议对已公开模型权重的禁令、否决它，还是聚到一条中间道路上，比如经过许可、加上防护的版本？'
+  },
   seed: `# Prometheus on Trial, staged for Parthenon
 
 *Athens, autumn 2026. The old courthouse below the Areopagus, streamed live. A month ago Prometheus stepped off the Parthenon steps and asked where the fire was kept.*

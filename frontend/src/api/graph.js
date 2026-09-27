@@ -64,3 +64,15 @@ export function getProject(projectId) {
     method: 'get'
   })
 }
+
+/**
+ * Every scroll the court has heard (projects), newest first.
+ * @returns {Promise<{ success: true, count: number, data: Array<{ project_id, status,
+ *   simulation_requirement, created_at, updated_at, files? }> }>}
+ */
+export function listProjects() {
+  return service({
+    url: '/api/graph/project/list',
+    method: 'get'
+  })
+}

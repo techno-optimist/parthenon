@@ -28,6 +28,16 @@ export default {
   fileName: 'arrival-aristotle-self-weaving-loom.md',
   question:
     "Aristotle has asked the Merrow Falls Citizens' Assembly what the freed time is for. Over the two weeks before its vote on Saturday, October 17, how does the argument move in the Agora and the Stoa, and who changes their mind? Does the assembly back the Merrow Dividend, the Human Hands Ordinance, the Guilds, the Loom Levy or a package, and does any proposal come to say what the freed time is for?",
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '亚里士多德',
+    title: '亚里士多德与自动织机',
+    challenge: 'AI 自动化与美好生活',
+    place: '梅罗瀑布镇织工会堂，市民大会',
+    year: '2026 年',
+    line: '我们忙碌，是为了得到闲暇。',
+    question: '亚里士多德问梅罗瀑布镇的市民大会：省下来的时间是为了什么？在 10 月 17 日星期六表决之前的两周里，广场和柱廊上的争论如何演变，谁改变了主意？大会将支持梅罗红利、人手条例、行会方案、织机税，还是一揽子方案？有没有哪一项提案最终说清了省下来的时间是为了什么？'
+  },
   seed: `# Aristotle and the Self-Weaving Loom, staged for Parthenon
 
 *Merrow Falls, a Midwestern river city, Saturday, October 3, 2026. Aristotle stepped off the Parthenon steps onto the floor of the Weavers' Hall, a converted textile mill, where the city's first citizens' assembly was sitting.*

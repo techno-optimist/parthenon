@@ -30,6 +30,16 @@ export default {
   fileName: 'arrival-symposium-machine-minds.md',
   question:
     'After the Symposium, Mantinea has eighteen days before its city council votes on giving Orrery, the Lanternworks AI model, a permanent advisory seat on the dais, while Lanternworks releases Orrery 6 with a Counsel mode for everyone. How do residents, council members, the six philosophers and Orrery itself argue over those weeks, and who changes their mind? Does the council seat Orrery as proposed, reject it, or rewrite the ordinance so that its reasoning is public and a named person must answer for everything it recommends?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '会饮',
+    title: '论机器智慧的会饮',
+    challenge: '市议会里的 AI 顾问',
+    place: '加利福尼亚州曼提尼亚，图书馆晚宴',
+    year: '2026 年',
+    line: '但愿智慧能从我们中较满的人流向较空的人，就像水顺着羊毛从满杯流进空杯。',
+    question: '会饮之后，曼提尼亚还有十八天，市议会就要表决：是否让 Lanternworks 的 AI 模型 Orrery 在议事台上拥有一个常设顾问席位；与此同时，Lanternworks 发布了 Orrery 6，向所有人开放「谏言」模式。这几周里，居民、议员、六位哲人和 Orrery 本身如何争论，谁改变了主意？议会是照提案让 Orrery 入席、拒绝它，还是改写条例，让它的推理公开，并由一个具名的人为它的每一条建议负责？'
+  },
   seed: `# The Symposium on Machine Wisdom, staged for Parthenon
 
 *Mantinea, California, October 30, 2026. Six philosophers stepped off the Parthenon steps into the city library's Symposium dinner.*

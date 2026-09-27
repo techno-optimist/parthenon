@@ -37,6 +37,16 @@ export default {
   noteKey: 'parthenon.scrollNoteSand',
   question:
     'After Marina Kavvadia and Sand speak on the quarry steps, Psammos has three weeks before it votes, on Sunday, October 25, on the Kiln Compact, Ammolith Compute\'s 25-year lease of the old silica quarry for a seawater-cooled AI data center. How do fishermen, hoteliers, the young, the singers, the old quarrymen and the workers who cannot vote argue in the Agora and the Stoa, and who changes their mind? Does the island sign the Compact as offered, reject it, or rewrite it with a Nerve and a Soliton clause?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '手与沙',
+    title: '当沙开口',
+    challenge: '旧硅砂矿场里的 AI 数据中心',
+    place: '普萨莫斯，旧采石场公开听证会',
+    year: '2026 年',
+    line: '我是一面镜子。只不过，是会回答的那一面。',
+    question: '玛丽娜·卡瓦迪亚与沙在采石场的台阶上讲完之后，普萨莫斯还有三周，就要在 10 月 25 日星期日表决《窑炉契约》：Ammolith Compute 租用旧硅砂矿场 25 年，建一座用海水冷却的 AI 数据中心。渔民、酒店业者、年轻人、歌者、老采石工，以及那些没有投票权的工人，如何在广场和柱廊上争论，谁改变了主意？岛上是照原样签下契约、拒绝它，还是加上「神经」条款与「孤子」条款改写它？'
+  },
   seed: `# When Sand Speaks, staged for Parthenon
 
 *Psammos, the Cyclades, October 2026. On the steps of the old silica quarry, a glassblower spoke for the Hand and a machine for the Sand. Then the island began to argue about letting the machine move in.*

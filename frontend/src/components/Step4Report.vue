@@ -26,7 +26,7 @@
               @click="goToChapter(ch.index)"
             >
               <span class="contents-num">{{ numeral(ch.index) }}</span>
-              <span class="contents-title">{{ ch.title }}</span>
+              <span class="contents-title" :lang="ch.lang">{{ ch.title }}</span>
               <span v-if="ch.state !== 'done'" class="contents-note">{{ stateNote(ch.state) }}</span>
             </button>
           </li>
@@ -42,8 +42,8 @@
           <div class="marquee-shade" aria-hidden="true"></div>
           <div class="marquee-copy">
             <p class="p-eyebrow marquee-eyebrow">{{ $t('parthenon.chronicle.marquee.eyebrow') }}</p>
-            <p :id="ids.marquee" class="marquee-title">{{ marquee.title }}</p>
-            <p v-if="marquee.logline" class="marquee-logline">{{ marquee.logline }}</p>
+            <p :id="ids.marquee" class="marquee-title" :lang="textLang(marquee.title)">{{ marquee.title }}</p>
+            <p v-if="marquee.logline" class="marquee-logline" :lang="textLang(marquee.logline)">{{ marquee.logline }}</p>
             <div class="marquee-actions">
               <button type="button" class="p-button" @click="watchFilm">
                 <svg class="play" viewBox="0 0 12 14" width="11" height="13" aria-hidden="true"><path d="M1 1.2v11.6L11 7z" fill="currentColor" /></svg>
@@ -55,16 +55,34 @@
         </aside>
 
         <!-- The page itself: parchment held up in the dark -->
-        <article class="p-paper page" :aria-labelledby="ids.title">
+        <!-- An address with no Chronicle behind it -->
+        <article v-if="missing" class="p-paper page page--missing" :aria-labelledby="ids.title">
+          <header class="title-page">
+            <div class="title-head">
+              <p class="p-eyebrow">{{ $t('history.title') }}</p>
+              <h1 :id="ids.title" class="title">{{ $t('parthenon.chronicle.notFound') }}</h1>
+              <p class="standfirst">{{ $t('parthenon.chronicle.notFoundBody') }}</p>
+            </div>
+            <div class="title-rest">
+              <div class="p-meander rule" aria-hidden="true"></div>
+              <div class="actions">
+                <router-link :to="{ name: 'Chronicles' }" class="p-button">{{ $t('parthenon.chronicle.toChronicles') }}</router-link>
+                <router-link to="/" class="p-button secondary">{{ $t('parthenon.hearing.empty.back') }}</router-link>
+              </div>
+            </div>
+          </header>
+        </article>
+
+        <article v-else class="p-paper page" :aria-labelledby="ids.title" :lang="pageLang">
           <header class="title-page" :class="plate ? `has-plate plate-${plate.kind}` : ''">
             <div class="title-head">
-              <p class="p-eyebrow">{{ $t('parthenon.chronicle.eyebrow') }}</p>
+              <p class="p-eyebrow" :lang="uiLang">{{ $t('parthenon.chronicle.eyebrow') }}</p>
               <h1 :id="ids.title" class="title">{{ title }}</h1>
               <p v-if="standfirst" class="standfirst">{{ standfirst }}</p>
             </div>
 
             <!-- Who took the steps, or the stage the city gathered on -->
-            <figure v-if="plate" class="plate" :class="`is-${plate.kind}`">
+            <figure v-if="plate" class="plate" :class="`is-${plate.kind}`" :lang="uiLang">
               <div class="plate-frame">
                 <img :src="plate.src" :alt="plate.name || ''" decoding="async" />
               </div>
@@ -78,12 +96,12 @@
             <div class="title-rest">
               <div class="p-meander rule" aria-hidden="true"></div>
               <div v-if="question" class="question">
-                <span class="p-eyebrow question-label">{{ $t('parthenon.chronicle.questionLabel') }}</span>
-                <p class="question-text">{{ question }}</p>
+                <span class="p-eyebrow question-label" :lang="uiLang">{{ $t('parthenon.chronicle.questionLabel') }}</span>
+                <p class="question-text" :lang="textLang(question)">{{ question }}</p>
               </div>
-              <p v-if="dateLine" class="date">{{ dateLine }}</p>
+              <p v-if="dateLine" class="date" :lang="uiLang">{{ dateLine }}</p>
 
-              <div v-if="isComplete" class="actions">
+              <div v-if="isComplete" class="actions" :lang="uiLang">
                 <button type="button" class="p-button" @click="goToInteraction">
                   {{ $t('parthenon.chronicle.enterSymposium') }}
                 </button>
@@ -94,8 +112,19 @@
             </div>
           </header>
 
+          <!-- The film's first scene, held up after the title page -->
+          <figure v-if="frontispiece" class="shot-plate is-frontispiece">
+            <div class="shot-frame">
+              <img :src="frontispiece.src" :alt="frontispiece.narration" loading="lazy" decoding="async" width="1280" height="720" />
+            </div>
+            <figcaption class="shot-caption">
+              <span class="shot-from" :lang="uiLang">{{ $t('parthenon.chronicle.plates.fromFilm', { title: filmTitle }) }}</span>
+              <span class="shot-line" :lang="textLang(frontispiece.narration)">{{ frontispiece.narration }}</span>
+            </figcaption>
+          </figure>
+
           <!-- Trouble: the Scribe could not finish -->
-          <section v-if="trouble" class="trouble" role="alert">
+          <section v-if="trouble" class="trouble" role="alert" :lang="uiLang">
             <p class="trouble-title">{{ $t('parthenon.chronicle.troubleTitle') }}</p>
             <details class="trouble-why">
               <summary>{{ $t('parthenon.chronicle.troubleWhy') }}</summary>
@@ -104,14 +133,24 @@
           </section>
 
           <!-- While the Scribe writes: one line, in words, and a breathing ink line -->
-          <p v-else-if="!isComplete" class="scribe-status">
-            <span class="ink-line" aria-hidden="true"></span>
-            <span>{{ statusLine }}</span>
-          </p>
+          <div v-else-if="!isComplete" class="scribe-wait" :lang="uiLang">
+            <p class="scribe-status">
+              <span class="ink-line" aria-hidden="true"></span>
+              <span>{{ statusLine }}</span>
+            </p>
+            <p class="wait-note">
+              <i18n-t keypath="parthenon.chronicle.waitNote" tag="span" scope="global">
+                <template #shelf>
+                  <router-link :to="{ name: 'Chronicles' }">{{ $t('parthenon.chronicle.shelf') }}</router-link>
+                </template>
+              </i18n-t>
+            </p>
+          </div>
 
           <!-- The contents, on the page, when there is no margin for them -->
           <nav
             v-if="!wide && chapters.length"
+            :lang="uiLang"
             class="contents contents--inline"
             :aria-label="$t('parthenon.chronicle.chaptersNav')"
           >
@@ -131,7 +170,7 @@
                   @click="goToChapter(ch.index)"
                 >
                   <span class="contents-num">{{ numeral(ch.index) }}</span>
-                  <span class="contents-title">{{ ch.title }}</span>
+                  <span class="contents-title" :lang="ch.lang">{{ ch.title }}</span>
                   <span v-if="ch.state !== 'done'" class="contents-note">{{ stateNote(ch.state) }}</span>
                 </button>
               </li>
@@ -144,18 +183,29 @@
             :key="ch.index"
             :id="chapterId(ch.index)"
             class="chapter"
-            :class="[`is-${ch.state}`, { 'has-notes': ch.state === 'done' && (ch.cast.length || ch.notes.length) }]"
+            :class="[`is-${ch.state}`, { 'has-notes': ch.state === 'done' && (ch.cast.length || ch.notes.length), 'has-plates': ch.plates.length }]"
             :aria-labelledby="chapterId(ch.index) + '-title'"
+            :lang="ch.lang"
           >
             <header class="chapter-head">
-              <span class="p-eyebrow chapter-num">{{ $t('parthenon.chronicle.chapter', { n: numeral(ch.index) }) }}</span>
+              <span class="p-eyebrow chapter-num" :lang="uiLang">{{ $t('parthenon.chronicle.chapter', { n: numeral(ch.index) }) }}</span>
               <h2 :id="chapterId(ch.index) + '-title'" class="chapter-title" tabindex="-1">{{ ch.title }}</h2>
             </header>
+
+            <!-- A scene of the film opens the chapter -->
+            <figure v-if="ch.plates[0]" class="shot-plate is-opening">
+              <div class="shot-frame">
+                <img :src="ch.plates[0].src" :alt="ch.plates[0].narration" loading="lazy" decoding="async" width="1280" height="720" />
+              </div>
+              <figcaption class="shot-caption">
+                <span class="shot-line" :lang="textLang(ch.plates[0].narration)">{{ ch.plates[0].narration }}</span>
+              </figcaption>
+            </figure>
 
             <!-- The margin: the faces this chapter names, and how the Scribe found it.
                  On narrow screens its parts fall into the column: faces under the
                  heading, the note after the prose. -->
-            <div v-if="ch.state === 'done' && (ch.cast.length || ch.notes.length)" class="chapter-margin">
+            <div v-if="ch.state === 'done' && (ch.cast.length || ch.notes.length)" class="chapter-margin" :lang="uiLang">
               <div
                 v-if="ch.cast.length"
                 class="cast"
@@ -188,8 +238,18 @@
               </details>
             </div>
 
-            <div v-if="ch.state === 'done'" class="chapter-body" v-html="ch.html"></div>
-            <div v-else class="chapter-writing">
+            <div v-if="ch.state === 'done'" class="chapter-body" v-html="ch.htmlA"></div>
+            <!-- And another at its middle -->
+            <figure v-if="ch.state === 'done' && ch.plates[1]" class="shot-plate is-mid">
+              <div class="shot-frame">
+                <img :src="ch.plates[1].src" :alt="ch.plates[1].narration" loading="lazy" decoding="async" width="1280" height="720" />
+              </div>
+              <figcaption class="shot-caption">
+                <span class="shot-line" :lang="textLang(ch.plates[1].narration)">{{ ch.plates[1].narration }}</span>
+              </figcaption>
+            </figure>
+            <div v-if="ch.state === 'done' && ch.htmlB" class="chapter-body chapter-body--rest" v-html="ch.htmlB"></div>
+            <div v-if="ch.state !== 'done'" class="chapter-writing" :lang="uiLang">
               <p class="scribe-status">
                 <span class="ink-line" aria-hidden="true"></span>
                 <span>{{ $t('parthenon.chronicle.writingThis') }}</span>
@@ -199,7 +259,7 @@
           </section>
 
           <!-- Colophon: the Scribe sets down her pen -->
-          <footer v-if="isComplete" class="colophon">
+          <footer v-if="isComplete" class="colophon" :lang="uiLang">
             <div class="p-meander rule" aria-hidden="true"></div>
             <p class="colophon-line">{{ $t('parthenon.chronicle.colophon') }}</p>
             <button type="button" class="p-button" @click="goToInteraction">
@@ -208,7 +268,7 @@
           </footer>
 
           <!-- The film, as the epilogue of the document -->
-          <ChronicleFilm v-if="!trouble" ref="filmPanel" :report-id="reportId" :ready="isComplete" />
+          <ChronicleFilm v-if="!trouble" ref="filmPanel" :lang="uiLang" :report-id="reportId" :ready="isComplete" />
         </article>
       </div>
     </div>
@@ -231,7 +291,15 @@ import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog, getReport } from '../api/report'
 import { getSimulationConfig, getSimulationProfiles } from '../api/simulation'
 import { filmAssetUrl, getChronicleFilm } from '../api/parthenon'
-import { citizenName, entityTypeName, roleFamily, stripIds } from '../parthenon/vocabulary.js'
+import {
+  citizenName,
+  entityTypeName,
+  roleFamily,
+  stripIds,
+  cityWords as speakInCity,
+  smartQuotes,
+  textLang
+} from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
 import ChronicleFilm from './ChronicleFilm.vue'
 import CitizenCoin from './CitizenCoin.vue'
@@ -250,10 +318,12 @@ const props = defineProps({
   report: { type: Object, default: null },
   loadError: { type: String, default: '' },
   // The image beside the title: { kind: portrait|scene|act, src, name, greek, caption }
-  plate: { type: Object, default: null }
+  plate: { type: Object, default: null },
+  // No Chronicle at this address (a mistyped or forgotten link)
+  missing: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['add-log', 'update-status'])
+const emit = defineEmits(['add-log', 'update-status', 'update-title'])
 
 const uid = String(useId() || 'ch').replace(/[^A-Za-z0-9_-]/g, '')
 const ids = { title: `${uid}-chronicle-title`, marquee: `${uid}-chronicle-marquee` }
@@ -280,8 +350,70 @@ const filmPanel = ref(null)
 
 // The document
 
-const title = computed(() => reportOutline.value?.title || t('parthenon.chronicle.untitled'))
-const standfirst = computed(() => reportOutline.value?.summary || '')
+// The Scribe's own words, set as a printer would and in the city's words:
+// her prose and headings pass through the city's vocabulary ("agents" are
+// citizens, "the platforms" the Agora and the Stoa); the citizens' speech she
+// quotes is left as they said it. The record is never changed, only its setting.
+const typesetText = (text, lang = textLang(text)) => {
+  let out = speakInCity(String(text || ''), lang)
+  if (lang !== 'zh') out = smartQuotes(out)
+  return out
+}
+const keepEdges = (text, fn) => {
+  const lead = text.match(/^\s*/)[0]
+  const tail = text.match(/\s*$/)[0]
+  const core = text.slice(lead.length, text.length - tail.length)
+  return core ? lead + fn(core) + tail : text
+}
+// A paragraph, a quotation or a list item in another language than its
+// chapter says so, so a screen reader changes voice for it.
+const markLanguages = (html, lang) =>
+  html.replace(/<(p|blockquote|li)( class="[^"]*"[^>]*)>([\s\S]*?)<\/\1>/g, (m, tag, attrs, inner) => {
+    const own = textLang(inner.replace(/<[^>]+>/g, ''))
+    return own !== lang ? `<${tag}${attrs} lang="${own}">${inner}</${tag}>` : m
+  })
+
+const typeset = (html, lang) => markLanguages(typesetParts(html, lang), lang)
+const typesetParts = (html, lang) => {
+  let inQuote = 0
+  let inCode = 0
+  return html
+    .split(/(<[^>]+>)/g)
+    .map((part) => {
+      if (part.startsWith('<')) {
+        const m = /^<(\/?)(blockquote|pre|code)\b/i.exec(part)
+        if (m) {
+          const step = m[1] ? -1 : 1
+          if (m[2].toLowerCase() === 'blockquote') inQuote = Math.max(0, inQuote + step)
+          else inCode = Math.max(0, inCode + step)
+        }
+        return part
+      }
+      if (!part || inCode) return part
+      let text = part
+      if (!inQuote) text = keepEdges(text, (x) => speakInCity(x, lang))
+      if (lang !== 'zh') text = smartQuotes(text)
+      return text
+    })
+    .join('')
+}
+
+const title = computed(() => (reportOutline.value?.title ? typesetText(reportOutline.value.title) : t('parthenon.chronicle.untitled')))
+const standfirst = computed(() => typesetText(reportOutline.value?.summary || ''))
+// The Chronicle's own title names the browser tab, once the Scribe has given one.
+watch(
+  () => (props.missing || !reportOutline.value?.title ? '' : title.value),
+  (name) => emit('update-title', name),
+  { immediate: true }
+)
+
+// The page is read in the Chronicle's own language; the city's labels on it
+// in the visitor's.
+const uiLang = computed(() => (String(locale.value).startsWith('zh') ? 'zh' : 'en'))
+const pageLang = computed(() => {
+  const sample = `${reportOutline.value?.title || ''} ${reportOutline.value?.summary || ''} ${Object.values(generatedSections.value)[0] || ''}`.trim()
+  return sample ? textLang(sample.slice(0, 3000)) : uiLang.value
+})
 const question = computed(() => props.report?.simulation_requirement || '')
 
 const dateLine = computed(() => {
@@ -301,6 +433,7 @@ const dateLine = computed(() => {
 })
 
 const trouble = computed(() => {
+  if (props.missing) return t('parthenon.chronicle.notFound')
   if (props.loadError) return props.loadError
   if (localTrouble.value) return localTrouble.value
   const r = props.report
@@ -665,8 +798,8 @@ const marquee = computed(() => {
   const f = film.value
   if (!f || f.status !== 'completed' || !f.video_url) return null
   return {
-    title: f.title || t('parthenon.film.untitled'),
-    logline: f.logline || '',
+    title: f.title ? typesetText(f.title) : t('parthenon.film.untitled'),
+    logline: typesetText(f.logline || ''),
     poster: filmAssetUrl(f.poster_url),
     runtime: formatRuntime(f.duration)
   }
@@ -708,6 +841,26 @@ watch(() => [props.reportId, isComplete.value], ([id, done]) => {
   else clearFilmTimer()
 }, { immediate: true })
 
+// The film's painted scenes, set as plates in the reading: the first after the
+// title page, the rest at the chapters' openings and middles in order (at most
+// two to a chapter). None while the Chronicle is still being written.
+const filmShots = computed(() => {
+  const f = film.value
+  if (!f || f.status !== 'completed' || !isComplete.value) return []
+  return (Array.isArray(f.shots) ? f.shots : [])
+    .filter((x) => x && x.status === 'done' && x.thumb_url)
+    .sort((a, b) => Number(a.index) - Number(b.index))
+    .map((x) => ({ key: x.index, src: filmAssetUrl(x.thumb_url), narration: typesetText(String(x.narration || '').trim()) }))
+})
+const filmTitle = computed(() => typesetText(film.value?.title || t('parthenon.film.untitled')))
+// The film's poster is its first scene, already held up in the marquee above
+// the page; the plates begin with the second, unless there is nothing else.
+const plateShots = computed(() => {
+  const shots = filmShots.value
+  return marquee.value?.poster && shots.length > 1 ? shots.slice(1) : shots
+})
+const frontispiece = computed(() => plateShots.value[0] || null)
+
 const watchFilm = () => {
   filmPanel.value?.reveal()
 }
@@ -720,11 +873,13 @@ const chapters = computed(() => {
     if (content) state = 'done'
     else if (currentSectionIndex.value === index) state = 'writing'
     const steps = stepsBySection.value[index] || []
+    const lang = textLang(content || section.title || '')
     return {
       index,
-      title: section.title || t('parthenon.chronicle.chapter', { n: index }),
+      lang,
+      title: section.title ? typesetText(section.title, lang) : t('parthenon.chronicle.chapter', { n: index }),
       state,
-      html: content ? renderMarkdown(content) : '',
+      html: content ? typeset(renderMarkdown(content), lang) : '',
       cast: content ? castOf(content) : [],
       notes: content ? notesFor(steps).map((n) => n.text) : [],
       latest: state === 'writing' ? latestFor(steps) : ''
@@ -732,12 +887,47 @@ const chapters = computed(() => {
   })
 })
 
-const visibleChapters = computed(() => chapters.value.filter((ch) => ch.state !== 'pending'))
+// A chapter's prose in two parts at the paragraph nearest its middle, so a
+// second scene can stand between them.
+const splitBody = (html) => {
+  const cuts = []
+  const re = /<\/p>(?=\s*<(?:p|h[2-5]|ul|ol|blockquote|hr)\b)/g
+  let m
+  while ((m = re.exec(html))) cuts.push(m.index + m[0].length)
+  if (!cuts.length) return [html, '']
+  const mid = html.length / 2
+  const at = cuts.reduce((best, c) => (Math.abs(c - mid) < Math.abs(best - mid) ? c : best), cuts[0])
+  return [html.slice(0, at), html.slice(at)]
+}
+
+const platesByChapter = computed(() => {
+  const out = new Map()
+  const rest = plateShots.value.slice(1)
+  const done = chapters.value.filter((ch) => ch.state === 'done')
+  if (!rest.length || !done.length) return out
+  done.forEach((ch, i) => {
+    const from = Math.floor((i * rest.length) / done.length)
+    const to = Math.floor(((i + 1) * rest.length) / done.length)
+    out.set(ch.index, rest.slice(from, Math.min(to, from + 2)))
+  })
+  return out
+})
+
+const visibleChapters = computed(() =>
+  chapters.value
+    .filter((ch) => ch.state !== 'pending')
+    .map((ch) => {
+      const plates = ch.state === 'done' ? platesByChapter.value.get(ch.index) || [] : []
+      const [htmlA, htmlB] = plates.length > 1 ? splitBody(ch.html) : [ch.html, '']
+      return { ...ch, plates, htmlA, htmlB }
+    })
+)
 
 const totalSections = computed(() => chapters.value.length)
 const completedSections = computed(() => chapters.value.filter((ch) => ch.state === 'done').length)
 
 const statusLine = computed(() => {
+  if (props.missing) return t('parthenon.chronicle.notFound')
   if (trouble.value) return t('parthenon.chronicle.troubleTitle')
   if (isComplete.value) return t('parthenon.chronicle.complete')
   if (!reportOutline.value) {
@@ -1650,10 +1840,13 @@ onBeforeUnmount(() => {
   display: contents;
 }
 
-.cast { order: 1; }
+.shot-plate.is-opening { order: 1; }
+.cast { order: 2; }
 .chapter-body,
-.chapter-writing { order: 2; }
-.how-found { order: 3; }
+.chapter-writing { order: 3; }
+.shot-plate.is-mid { order: 4; }
+.chapter-body--rest { order: 5; }
+.how-found { order: 6; }
 
 .chapter-num {
   display: block;
@@ -1745,6 +1938,128 @@ onBeforeUnmount(() => {
   color: var(--p-ink-3);
 }
 
+/* The film's scenes, held up in the reading as plates: wider than the
+   measure, 16:9, each with the narrator's line beneath in italic. */
+.shot-plate {
+  --bleed: clamp(0px, 4vw, 56px);
+  width: calc(100% + 2 * var(--bleed));
+  max-width: none;
+  margin: 8px calc(-1 * var(--bleed)) 34px;
+  animation: arrive 0.8s ease both;
+}
+
+.shot-plate.is-frontispiece {
+  --bleed: clamp(0px, 4vw, 72px);
+  /* Centred on the page's measure, bleeding past it by the same on each side. */
+  position: relative;
+  left: 50%;
+  translate: -50% 0;
+  width: min(calc(100% + 2 * var(--bleed)), calc(72ch + 2 * var(--bleed)));
+  margin: 44px 0 12px;
+}
+
+.shot-plate.is-mid {
+  margin-top: 26px;
+}
+
+.shot-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #0b0e13;
+  box-shadow: 0 1px 0 rgba(240, 182, 96, 0.35), 0 18px 40px -18px rgba(11, 14, 19, 0.55);
+}
+
+.shot-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 1px rgba(11, 14, 19, 0.25), inset 0 0 60px rgba(11, 14, 19, 0.28);
+  pointer-events: none;
+}
+
+.shot-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shot-caption {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 60ch;
+  margin: 12px auto 0;
+  padding: 0 var(--bleed);
+  text-align: center;
+}
+
+.shot-from {
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  color: var(--p-ochre-deep);
+}
+
+.shot-from:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.shot-line {
+  font-family: var(--p-font-display);
+  font-style: italic;
+  font-size: 1.08rem;
+  line-height: 1.45;
+  color: var(--p-ink-3);
+  text-wrap: balance;
+}
+
+.shot-line:lang(zh) {
+  font-style: normal;
+  font-family: var(--p-font-serif);
+}
+
+/* The long wait, in time, and leave to go */
+.scribe-wait {
+  max-width: 72ch;
+  margin: 0 auto;
+}
+
+.wait-note {
+  margin: 10px 0 0 58px;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--p-ink-3);
+}
+
+.wait-note a {
+  color: var(--p-ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--p-ochre);
+  text-underline-offset: 3px;
+}
+
+/* Chinese is not set in capitals with inscription tracking. */
+.marquee-runtime:lang(zh),
+.how-found summary span:lang(zh),
+.p-eyebrow:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* A missing Chronicle: one sentence, and the way to the shelf */
+.page--missing .title-page {
+  border-top: 0;
+  padding-top: 0;
+}
+
 /* The Scribe's prose */
 .chapter-body {
   color: var(--p-ink-2);
@@ -1759,7 +2074,7 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
 }
 
-.chapter-body :deep(> p:first-of-type)::first-letter {
+.chapter-body:not(.chapter-body--rest) :deep(> p:first-of-type)::first-letter {
   float: left;
   margin: 0.08em 0.12em 0 0;
   font-family: var(--p-font-display);
@@ -2013,13 +2328,41 @@ onBeforeUnmount(() => {
 
   .chapter-head,
   .chapter-body,
-  .chapter-writing {
+  .chapter-writing,
+  .shot-plate.is-mid {
     grid-column: 1;
   }
 
   .chapter-head { grid-row: 1; }
   .chapter-body,
   .chapter-writing { grid-row: 2; }
+  .shot-plate.is-mid { grid-row: 3; }
+  .chapter-body--rest { grid-row: 4; }
+
+  /* With a scene at its opening, the scene spans the page and the rest steps down a row. */
+  .chapter.has-plates {
+    grid-template-rows: auto auto auto auto 1fr;
+  }
+
+  .chapter.has-plates .shot-plate.is-opening {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    margin: 4px 0 34px;
+  }
+
+  .chapter.has-plates .chapter-body:not(.chapter-body--rest),
+  .chapter.has-plates .chapter-writing { grid-row: 3; }
+  .chapter.has-plates .shot-plate.is-mid { grid-row: 4; width: 100%; margin: 26px 0 34px; }
+  .chapter.has-plates .chapter-body--rest { grid-row: 5; }
+  .chapter.has-plates .chapter-margin { grid-row: 3 / span 3; }
+
+  .shot-plate.is-frontispiece {
+    left: 0;
+    translate: none;
+    width: 100%;
+    margin-inline: 0;
+  }
 
   .chapter-margin {
     display: block;
@@ -2103,6 +2446,13 @@ onBeforeUnmount(() => {
     line-height: 1.62;
   }
 
+  /* The scenes bleed to the paper's edge and never past it: the page keeps
+     20px each side here, so a plate reaches out at most as far. */
+  .shot-plate,
+  .shot-plate.is-frontispiece {
+    --bleed: min(4vw, 20px);
+  }
+
   .title {
     font-size: var(--t-2xl);
   }
@@ -2139,7 +2489,7 @@ onBeforeUnmount(() => {
     flex: 1 1 100%;
   }
 
-  .chapter-body :deep(> p:first-of-type)::first-letter {
+  .chapter-body:not(.chapter-body--rest) :deep(> p:first-of-type)::first-letter {
     font-size: 3.8em;
   }
 
@@ -2163,6 +2513,7 @@ onBeforeUnmount(() => {
   .chapter-latest,
   .marquee,
   .plate,
+  .shot-plate,
   .cast-member {
     animation: none;
   }

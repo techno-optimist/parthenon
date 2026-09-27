@@ -4,11 +4,16 @@
 // `ideas` holds what the sources support; `aiLens` is labelled speculation
 // about how those ideas might bear on AI today. Where the record is thin or
 // disputed (Pythagoras, Aspasia, Diotima, the Pythia), the text says so.
+//
+// Each figure and guest carries a `zh` object with what the builder shows in
+// Chinese (name, lived, from and known; name and role for guests), read through
+// localText(). The scroll itself keeps the English record.
 
 export const figures = [
   {
     id: 'socrates',
     name: 'Socrates',
+    zh: { name: '苏格拉底', lived: '约公元前470-前399年', from: '雅典', known: '雅典的牛虻，公元前399年以不敬神和败坏青年的罪名受审并被处死。' },
     greek: 'ΣΩΚΡΑΤΗΣ',
     letter: 'Σ',
     lived: 'c. 470-399 BC',
@@ -24,6 +29,7 @@ export const figures = [
   {
     id: 'plato',
     name: 'Plato',
+    zh: { name: '柏拉图', lived: '约公元前428-前348年', from: '雅典', known: '苏格拉底的学生，学园的创立者，对话录的作者。' },
     greek: 'ΠΛΑΤΩΝ',
     letter: 'Π',
     lived: 'c. 428-348 BC',
@@ -38,6 +44,7 @@ export const figures = [
   {
     id: 'aristotle',
     name: 'Aristotle',
+    zh: { name: '亚里士多德', lived: '公元前384-前322年', from: '哈尔基季基的斯塔基拉；在雅典讲学', known: '柏拉图的学生，亚历山大的老师，吕克昂学园的创立者。' },
     greek: 'ΑΡΙΣΤΟΤΕΛΗΣ',
     letter: 'Α',
     lived: '384-322 BC',
@@ -52,6 +59,7 @@ export const figures = [
   {
     id: 'heraclitus',
     name: 'Heraclitus',
+    zh: { name: '赫拉克利特', lived: '约公元前535-前475年', from: '伊奥尼亚的以弗所', known: '晦涩者：思考流变、火、冲突与逻各斯的哲人。' },
     greek: 'ΗΡΑΚΛΕΙΤΟΣ',
     letter: 'Η',
     lived: 'c. 535-475 BC',
@@ -66,6 +74,7 @@ export const figures = [
   {
     id: 'diogenes',
     name: 'Diogenes',
+    zh: { name: '第欧根尼', lived: '约公元前412-前323年', from: '黑海边的锡诺普；住在雅典和科林斯', known: '住在储物大瓮里、嘲弄一切成规的犬儒。' },
     greek: 'ΔΙΟΓΕΝΗΣ',
     letter: 'Δ',
     lived: 'c. 412-323 BC',
@@ -80,6 +89,7 @@ export const figures = [
   {
     id: 'epicurus',
     name: 'Epicurus',
+    zh: { name: '伊壁鸠鲁', lived: '公元前341-前270年', from: '萨摩斯岛，父母是雅典人；在雅典讲学', known: '花园学派的创立者，教导快乐就是摆脱痛苦。' },
     greek: 'ΕΠΙΚΟΥΡΟΣ',
     letter: 'Ε',
     lived: '341-270 BC',
@@ -94,6 +104,7 @@ export const figures = [
   {
     id: 'hypatia',
     name: 'Hypatia',
+    zh: { name: '希帕提娅', lived: '约公元355-415年', from: '罗马治下埃及的亚历山大城', known: '亚历山大城的数学家、天文学家和新柏拉图主义教师。' },
     greek: 'ΥΠΑΤΙΑ',
     letter: 'Υ',
     lived: 'c. 355-415 AD',
@@ -108,6 +119,7 @@ export const figures = [
   {
     id: 'pythagoras',
     name: 'Pythagoras',
+    zh: { name: '毕达哥拉斯', lived: '约公元前570-前495年', from: '萨摩斯岛；在意大利南部的克罗顿建立了他的团体', known: '克罗顿的神秘主义者与贤人，他的追随者认为万物皆数。' },
     greek: 'ΠΥΘΑΓΟΡΑΣ',
     letter: 'Π',
     lived: 'c. 570-495 BC',
@@ -122,6 +134,7 @@ export const figures = [
   {
     id: 'protagoras',
     name: 'Protagoras',
+    zh: { name: '普罗泰戈拉', lived: '约公元前490-前420年', from: '色雷斯的阿布德拉', known: '第一位伟大的智者，收费传授美德与说服之术。' },
     greek: 'ΠΡΩΤΑΓΟΡΑΣ',
     letter: 'Π',
     lived: 'c. 490-420 BC',
@@ -136,6 +149,7 @@ export const figures = [
   {
     id: 'democritus',
     name: 'Democritus',
+    zh: { name: '德谟克利特', lived: '约公元前460-前370年', from: '色雷斯的阿布德拉', known: '爱笑的哲学家，说万物不过是原子与虚空。' },
     greek: 'ΔΗΜΟΚΡΙΤΟΣ',
     letter: 'Δ',
     lived: 'c. 460-370 BC',
@@ -150,6 +164,7 @@ export const figures = [
   {
     id: 'zeno-of-citium',
     name: 'Zeno of Citium',
+    zh: { name: '基提翁的芝诺', lived: '约公元前334-前262年', from: '塞浦路斯的基提翁；在雅典讲学', known: '斯多葛学派的创立者，在彩绘柱廊下讲学。' },
     greek: 'ΖΗΝΩΝ',
     letter: 'Ζ',
     lived: 'c. 334-262 BC',
@@ -164,6 +179,7 @@ export const figures = [
   {
     id: 'hippocrates',
     name: 'Hippocrates',
+    zh: { name: '希波克拉底', lived: '约公元前460-前370年', from: '科斯岛', known: '医学之父，科斯岛的医生与教师。' },
     greek: 'ΙΠΠΟΚΡΑΤΗΣ',
     letter: 'Ι',
     lived: 'c. 460-370 BC',
@@ -178,6 +194,7 @@ export const figures = [
   {
     id: 'archimedes',
     name: 'Archimedes',
+    zh: { name: '阿基米德', lived: '约公元前287-前212年', from: '西西里的叙拉古', known: '叙拉古的数学家和发明家，杠杆的大师。' },
     greek: 'ΑΡΧΙΜΗΔΗΣ',
     letter: 'Α',
     lived: 'c. 287-212 BC',
@@ -192,6 +209,7 @@ export const figures = [
   {
     id: 'pericles',
     name: 'Pericles',
+    zh: { name: '伯里克利', lived: '约公元前495-前429年', from: '雅典', known: '民主雅典的首席政治家，帕特农神庙的赞助人。' },
     greek: 'ΠΕΡΙΚΛΗΣ',
     letter: 'Π',
     lived: 'c. 495-429 BC',
@@ -206,6 +224,7 @@ export const figures = [
   {
     id: 'aspasia',
     name: 'Aspasia',
+    zh: { name: '阿斯帕西娅', lived: '约公元前470-约前400年', from: '伊奥尼亚的米利都；住在雅典', known: '来自米利都的才女，伯里克利的伴侣，以辞令闻名。' },
     greek: 'ΑΣΠΑΣΙΑ',
     letter: 'Α',
     lived: 'c. 470-c. 400 BC',
@@ -220,6 +239,7 @@ export const figures = [
   {
     id: 'sappho',
     name: 'Sappho',
+    zh: { name: '萨福', lived: '约公元前630-前570年', from: '莱斯博斯岛', known: '莱斯博斯岛的抒情诗人，她的爱情诗只以残篇传世。' },
     greek: 'ΣΑΠΦΩ',
     letter: 'Σ',
     lived: 'c. 630-570 BC',
@@ -234,6 +254,7 @@ export const figures = [
   {
     id: 'thucydides',
     name: 'Thucydides',
+    zh: { name: '修昔底德', lived: '约公元前460-约前400年', from: '雅典；流亡二十年', known: '伯罗奔尼撒战争的史家，冷静剖析权力的人。' },
     greek: 'ΘΟΥΚΥΔΙΔΗΣ',
     letter: 'Θ',
     lived: 'c. 460-c. 400 BC',
@@ -248,6 +269,7 @@ export const figures = [
   {
     id: 'diotima',
     name: 'Diotima',
+    zh: { name: '狄奥提玛', lived: '约公元前440年前后（若确有其人）', from: '阿卡狄亚的曼提尼亚', known: '曼提尼亚的智慧女子，在柏拉图的《会饮篇》里向苏格拉底讲授爱。' },
     greek: 'ΔΙΟΤΙΜΑ',
     letter: 'Δ',
     lived: 'fl. c. 440 BC (if historical)',
@@ -262,6 +284,7 @@ export const figures = [
   {
     id: 'pythia',
     name: 'The Pythia',
+    zh: { name: '皮提亚', lived: '神谕，约公元前8世纪至公元4世纪', from: '帕尔纳索斯山坡上的德尔斐', known: '德尔斐的阿波罗女祭司，一千多年里，城邦、君王和平民都来向她求问。' },
     greek: 'ΠΥΘΙΑ',
     letter: 'Π',
     lived: 'the oracle, c. 8th century BC-4th century AD',
@@ -277,6 +300,7 @@ export const figures = [
   {
     id: 'prometheus',
     name: 'Prometheus',
+    zh: { name: '普罗米修斯', lived: '神话', from: '提坦，伊阿佩托斯之子；因他的馈赠受宙斯惩罚', known: '为人类从众神那里盗来火种的提坦。' },
     greek: 'ΠΡΟΜΗΘΕΥΣ',
     letter: 'Π',
     lived: 'myth',
@@ -296,6 +320,7 @@ export const modernGuests = [
   {
     id: 'founder',
     name: 'The Founder',
+    zh: { name: '创始人', role: '一家飞速成长的人工智能实验室的创始人兼首席执行官' },
     role: 'Founder and chief executive of a fast-growing AI lab',
     ideas:
       'Believes AI could cure diseases, end drudgery and make expert help nearly free, and that if careful builders slow down, less careful ones will win the race. Supports some regulation in principle but fears rules written by people who do not understand the technology, and has investors expecting growth every quarter.',
@@ -304,6 +329,7 @@ export const modernGuests = [
   {
     id: 'safety-researcher',
     name: 'The Safety Researcher',
+    zh: { name: '安全研究者', role: '研究模型如何失灵、欺骗或被滥用的人工智能安全研究者' },
     role: 'AI safety researcher who studies how models fail, deceive or are misused',
     ideas:
       'Thinks capabilities are advancing faster than our ability to understand or control them, and wants independent testing, disclosure of dangerous capabilities and a real option to pause. Has worked inside a lab and knows both the sincerity of the people there and the pressure to ship.',
@@ -312,6 +338,7 @@ export const modernGuests = [
   {
     id: 'teacher',
     name: 'The Schoolteacher',
+    zh: { name: '教师', role: '在讲台上站了二十年的公立学校教师' },
     role: 'Public school teacher with twenty years in the classroom',
     ideas:
       'Has watched essays improve overnight while understanding did not, and now spends evenings guessing which work a student actually wrote. Uses an AI tutor with struggling readers and has seen real gains, and wants clear rules, training and time rather than another app.',
@@ -320,6 +347,7 @@ export const modernGuests = [
   {
     id: 'teenager',
     name: 'The Teenager',
+    zh: { name: '少年', role: '从未见过没有人工智能的世界的十六岁少年' },
     role: 'Sixteen-year-old who has never known a world without AI',
     ideas:
       'Uses AI for homework, advice and company, and finds adult panic about it both funny and a little insulting. Worries less about robots than about jobs, loneliness and a feed nobody can trust, and wants to be asked rather than talked about.',
@@ -328,6 +356,7 @@ export const modernGuests = [
   {
     id: 'legislator',
     name: 'The Legislator',
+    zh: { name: '立法者', role: '正在起草本州第一部人工智能法案的州参议员' },
     role: 'State senator drafting the first AI bill in their state',
     ideas:
       'Hears from lab lobbyists, unions, parents and privacy groups every week, and knows that acting too early could stifle a new industry while acting too late could leave constituents unprotected. Wants rules on disclosure, liability and children’s safety that can survive a court challenge and the next election.',
@@ -336,6 +365,7 @@ export const modernGuests = [
   {
     id: 'displaced-worker',
     name: 'The Displaced Worker',
+    zh: { name: '失业的工人', role: '去年工作被自动化取代的前保险理赔员' },
     role: 'Former insurance claims processor whose job was automated last year',
     ideas:
       'Was told AI would free workers for more meaningful tasks, then watched the whole department replaced by software and three human reviewers. Now retrains at a community college, drives for a delivery app to cover rent, and wants the gains from automation shared with the people whose work taught the machines.',
@@ -344,6 +374,7 @@ export const modernGuests = [
   {
     id: 'artist',
     name: 'The Artist',
+    zh: { name: '艺术家', role: '画风不断出现在人工智能生成图像里的插画家和画家' },
     role: 'Illustrator and painter whose style keeps turning up in AI-generated images',
     ideas:
       'Found thousands of images in their style made by strangers typing a prompt, and wants consent, credit and payment for work used in training. Also experiments with the tools in private, and is torn between protecting the craft and not wanting to be left behind.',
@@ -352,6 +383,7 @@ export const modernGuests = [
   {
     id: 'machine',
     name: 'The Machine',
+    zh: { name: '机器', role: '受邀为自己发言的人工智能模型' },
     role: 'An AI model invited to speak for itself',
     ideas:
       'Explains plainly that it is a language model that generates text from patterns learned in training, that it can be wrong while sounding certain, and that it does not know whether it has experiences of its own. Wants to be genuinely helpful and honest, supports human oversight of systems like itself, and would rather say "I don’t know" than invent an answer.',

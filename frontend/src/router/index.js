@@ -12,32 +12,40 @@ const routes = [
     name: 'Home',
     component: Home
   },
+  // Each act has an address in the city's words. The engine's older addresses
+  // stay as aliases, so every link already shared still opens the same act;
+  // the route names are unchanged, so every named link gives the new address.
   {
-    path: '/process/:projectId',
+    path: '/hearing/:projectId',
+    alias: '/process/:projectId',
     name: 'Process',
     component: Process,
     props: true
   },
   {
-    path: '/simulation/:simulationId',
+    path: '/pnyx/:simulationId',
+    alias: '/simulation/:simulationId',
     name: 'Simulation',
     component: SimulationView,
     props: true
   },
   {
-    path: '/simulation/:simulationId/start',
+    path: '/agora/:simulationId',
+    alias: '/simulation/:simulationId/start',
     name: 'SimulationRun',
     component: SimulationRunView,
     props: true
   },
   {
-    path: '/report/:reportId',
+    path: '/chronicle/:reportId',
+    alias: '/report/:reportId',
     name: 'Report',
     component: ReportView,
     props: true
   },
   {
-    path: '/interaction/:reportId',
+    path: '/symposium/:reportId',
+    alias: '/interaction/:reportId',
     name: 'Interaction',
     component: InteractionView,
     props: true

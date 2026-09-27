@@ -23,6 +23,16 @@ export default {
   fileName: 'arrival-heraclitus-never-same-model.md',
   question:
     'Heraclitus has told Wrenhaven that the river of new models cannot be stopped, that the quarrel over it is how all things move, and that all its information has not made anyone wiser. Over the nine days between Brackwater’s midnight release and the council vote, how do the pause, pinning and acceleration camps use or fight his words, and who changes their mind? Does the council pass the Steady Tools Ordinance as written, harden it into a moratorium, trade it for a release harbour, or reach something nobody has proposed yet?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '赫拉克利特',
+    title: '赫拉克利特与永不相同的模型',
+    challenge: '无休止的模型发布与暂停之争',
+    place: '雷恩黑文，Saltline 开发者峰会',
+    year: '2026 年',
+    line: '博学并不能使人智慧。',
+    question: '赫拉克利特对雷恩黑文说：新模型的河流无法阻挡，围绕它的争吵正是万物运动的方式，而所有这些信息并没有让任何人更有智慧。从 Brackwater 午夜发布新模型到市议会表决的九天里，主张暂停、主张锁定版本和主张加速的三派如何借用或反驳他的话，谁改变了主意？议会是照原样通过《稳定工具条例》，把它收紧为暂停令，换成一个发布避风港，还是达成一个谁都还没提出的方案？'
+  },
   seed: `# Heraclitus and the Model That Never Stays the Same, staged for Parthenon
 
 *Wrenhaven, a coastal tech city, release week in the autumn of 2026. Heraclitus of Ephesus walks down the steps of the Parthenon, a temple built decades after his death, and straight onto the keynote stage of the Saltline Developer Summit.*

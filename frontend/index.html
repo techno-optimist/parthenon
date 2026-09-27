@@ -12,10 +12,11 @@
         root.lang = locale
         // One night in Athens: every route is dark before first paint.
         root.classList.add('theme-night')
-        // Fetch the home hero plate early: the portrait crop on a phone, the
-        // wide still elsewhere (the same choice CinematicHero's <picture> makes).
+        // Fetch the home hero plate early: the upright crop on a phone or a
+        // tablet held upright, the wide still elsewhere (the same query
+        // CinematicHero's <picture> uses).
         if (location.pathname === '/') {
-          var portrait = window.matchMedia && window.matchMedia('(max-width: 699px)').matches
+          var portrait = window.matchMedia && window.matchMedia('(max-width: 699px), (orientation: portrait) and (max-width: 1100px)').matches
           var hero = document.createElement('link')
           hero.rel = 'preload'
           hero.as = 'image'
@@ -45,7 +46,7 @@
       })()
     </script>
     <link rel="icon" type="image/svg+xml" href="/parthenon.svg" />
-    <meta name="description" content="Parthenon: sit on the steps, listen to the philosophers, and let a swarm of citizens argue about what they said." />
+    <meta name="description" content="Parthenon: sit on the steps, listen to the philosophers, and let the city argue over what was said." />
     <title>Parthenon</title>
   </head>
   <body>

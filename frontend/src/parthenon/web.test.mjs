@@ -48,6 +48,8 @@ import {
   webInWords,
   findByName,
   nameKey,
+  focusView,
+  fullestFacts,
   R_MIN,
   R_MAX,
   TOP_LABELS,
@@ -552,4 +554,58 @@ test('an empty or missing graph is an empty sky', () => {
   const w = createWeb()
   syncWeb(w, buildWebModel(null))
   assert.equal(stepWeb(w), 0)
+})
+
+test('a chosen star keeps all its ties in sight above a sheet', () => {
+  // Ammolith, tied for and against to names at the top and the foot of the sky.
+  const chosen = { id: 'a', x: 0, y: 0, r: 12 }
+  const near = [
+    chosen,
+    { id: 'cold-bay', x: -60, y: -420, r: 6 },
+    { id: 'yes', x: 80, y: 430, r: 6 },
+    { id: 'sand', x: 260, y: -120, r: 10 },
+    { id: 'kiln', x: -280, y: -360, r: 5 },
+    { id: 'marina', x: -230, y: 300, r: 7 }
+  ]
+  const far = [{ id: 'x1', x: 380, y: 520, r: 4 }, { id: 'x2', x: -400, y: -520, r: 4 }]
+  const whole = { x0: 18, y0: 14, x1: 372, y1: 780 }
+  const all = fitView([...near, ...far], whole, { minK: 0.18, maxK: 2.4, stretch: 1.8 })
+  // The card takes the foot of the sky; the strip above it is 40% of its height.
+  const strip = { ...whole, y1: whole.y0 + Math.round((whole.y1 - whole.y0) * 0.4) }
+  const v = focusView(near, strip, { wholeK: all.k, wholeS: all.s, sheet: true })
+  for (const n of near) {
+    const [x, y] = toScreen(v, n.x, n.y)
+    assert.ok(x - n.r >= strip.x0 - 1 && x + n.r <= strip.x1 + 1, `${n.id} is inside the strip across`)
+    assert.ok(y - n.r >= strip.y0 - 1 && y + n.r <= strip.y1 + 1, `${n.id} is inside the strip down`)
+  }
+  assert.ok(v.s <= 1.2)
+  // Beside a rail the focus leans in and keeps the whole view's stretch.
+  const rail = focusView(near, { ...whole, x1: 372 - 240 }, { wholeK: all.k, wholeS: all.s })
+  assert.equal(rail.s, all.s)
+  assert.ok(rail.k >= all.k * 0.85 - 1e-9)
+})
+
+test('within one tie, a fact that says less than another is left out', () => {
+  assert.deepEqual(
+    fullestFacts(['Sand is the AI model operated by Ammolith Compute.', 'Sand is operated by Ammolith Compute.']),
+    ['Sand is the AI model operated by Ammolith Compute.']
+  )
+  assert.deepEqual(fullestFacts(['Crito is Socrates’ oldest friend.', 'Crito plans an escape.']).length, 2)
+  const model = buildWebModel({
+    nodes: [node('sand', 'Sand', 'Aisystem'), node('amm', 'Ammolith Compute', 'TechCompany')],
+    edges: [
+      edge('sand', 'amm', 'OPERATED_BY', 'Sand is the AI model operated by Ammolith Compute.'),
+      edge('sand', 'amm', 'OPERATED_BY', 'Sand is operated by Ammolith Compute.')
+    ]
+  })
+  const card = nodeDossier(model, 'sand')
+  assert.equal(card.facts.length, 1)
+  assert.equal(card.facts[0].text, 'Sand is the AI model operated by Ammolith Compute.')
+})
+
+test('the squares are named in the fact\'s own language, and chatter counted in threads', () => {
+  assert.equal(cityWords('On Twitter, Marina said: yes.'), 'In the Agora, Marina said: yes.')
+  assert.equal(cityWords('在 Twitter 上，玛丽娜说'), '在广场上，玛丽娜说')
+  const m = buildWebModel(athens())
+  assert.equal(m.chatterThreads, 3)
 })

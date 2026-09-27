@@ -7,20 +7,25 @@
 // every line starts with '- ', **bold** and *italic*), and user text is
 // neutralised so it cannot open headings or bullet blocks of its own.
 
+// `zh` holds what the builder shows in Chinese (read through localText); the
+// scroll is written from the English fields.
 export const FORMATS = [
-  { id: 'speech', label: 'A speech', blurb: 'One voice addresses the city.', min: 1, max: 1 },
-  { id: 'dialogue', label: 'A dialogue', blurb: 'Two minds question each other in public.', min: 2, max: 2 },
-  { id: 'panel', label: 'A symposium', blurb: 'A panel of voices takes turns on one question.', min: 2, max: 8 },
-  { id: 'trial', label: 'A trial', blurb: 'Accusers and defenders argue; a jury of citizens decides.', min: 2, max: 6 },
-  { id: 'assembly', label: 'An assembly', blurb: 'A proposal is put to the people and every voice may speak.', min: 1, max: 8 },
+  { id: 'speech', label: 'A speech', blurb: 'One voice addresses the city.', min: 1, max: 1, zh: { label: '一场演说', blurb: '一个声音向全城发言。' } },
+  { id: 'dialogue', label: 'A dialogue', blurb: 'Two minds question each other in public.', min: 2, max: 2, zh: { label: '一场对话', blurb: '两个头脑当众相互诘问。' } },
+  { id: 'panel', label: 'A symposium', blurb: 'A panel of voices takes turns on one question.', min: 2, max: 8, zh: { label: '一场研讨会', blurb: '几个声音轮流谈同一个问题。' } },
+  { id: 'trial', label: 'A trial', blurb: 'Accusers and defenders argue; a jury of citizens decides.', min: 2, max: 6, zh: { label: '一场审判', blurb: '控方与辩方争辩，由公民陪审团裁决。' } },
+  { id: 'assembly', label: 'An assembly', blurb: 'A proposal is put to the people and every voice may speak.', min: 1, max: 8, zh: { label: '一场公民大会', blurb: '一项提案交付人民，人人都可以发言。' } },
 ]
 
 export const ERAS = [
-  { id: 'ancient', label: 'Ancient Athens', setting: 'Athens, 399 BC, on the steps below the Parthenon' },
-  { id: 'now', label: 'Today, 2026', setting: 'A city square in 2026; the speakers have stepped off the Parthenon steps into the present' },
-  { id: 'future', label: 'The near future', setting: 'A city in 2040' },
-  { id: 'custom', label: 'Anywhere', setting: '' },
+  { id: 'ancient', label: 'Ancient Athens', setting: 'Athens, 399 BC, on the steps below the Parthenon', zh: { label: '古代雅典' } },
+  { id: 'now', label: 'Today, 2026', setting: 'A city square in 2026; the speakers have stepped off the Parthenon steps into the present', zh: { label: '今天，2026年' } },
+  { id: 'future', label: 'The near future', setting: 'A city in 2040', zh: { label: '不久的将来' } },
+  { id: 'custom', label: 'Anywhere', setting: '', zh: { label: '任何地方' } },
 ]
+
+const isZh = (locale) => String(locale || '').toLowerCase().startsWith('zh')
+const labelOf = (item, locale) => (isZh(locale) && item.zh && item.zh.label) || item.label
 
 // ---------------------------------------------------------------------------
 // Shapes the builder edits
@@ -74,12 +79,31 @@ export function speakerFromFigure(figure) {
 // ---------------------------------------------------------------------------
 // Checks
 
-// Blocking: the stage cannot run until these are fixed.
-export function stageProblems(stage) {
+// Blocking: the stage cannot run until these are fixed. Worded in the
+// visitor's language ('en' or 'zh').
+export function stageProblems(stage, locale = 'en') {
   const st = readStage(stage)
   const { format } = st
   const count = st.named.length
   const problems = []
+
+  if (isZh(locale)) {
+    const label = labelOf(format, locale)
+    if (count < format.min) {
+      if (format.min === 1) problems.push(`${label}需要一位有名字的发言者；目前还没有人有名字。`)
+      else {
+        const have = count === 0 ? '目前还没有人有名字' : `目前只有 ${count} 位有名字`
+        problems.push(`${label}需要${format.min === format.max ? '' : '至少'} ${format.min} 位有名字的发言者；${have}。`)
+      }
+    }
+    if (count > format.max) {
+      const alt = FORMATS.find((f) => f.id !== format.id && count >= f.min && count <= f.max)
+      const instead = alt ? `，或改为${labelOf(alt, locale)}` : ''
+      problems.push(`${label}只容得下 ${format.max} 位发言者，而不是 ${count} 位。请移除 ${count - format.max} 位${instead}。`)
+    }
+    if (!st.topic && !st.question) problems.push('说说这次集会讨论什么：给它一道难题或一个问题。')
+    return problems
+  }
 
   if (count < format.min) {
     if (format.min === 1) {
@@ -104,10 +128,23 @@ export function stageProblems(stage) {
   return problems
 }
 
-// Non-blocking: the stage runs, but these would make it better.
-export function stageHints(stage) {
+// Non-blocking: the stage runs, but these would make it better. In Chinese the
+// page may pass its own suggested question and a way to name each speaker
+// (roster figures have Chinese names the scroll does not use).
+export function stageHints(stage, locale = 'en', { suggestion = '', nameOf = null } = {}) {
   const st = readStage(stage)
   const hints = []
+
+  if (isZh(locale)) {
+    const name = (s) => (typeof nameOf === 'function' && nameOf(s)) || s.name
+    const join = (list) => (list.length <= 1 ? list[0] || '' : `${list.slice(0, -1).join('、')}和${list[list.length - 1]}`)
+    if (!st.audience.length) hints.push('台阶上还没有人群。求问神谕，或挑选一个群体；否则整座城市都会聆听。')
+    const silent = st.named.filter((s) => !s.words)
+    if (silent.length) hints.push(`${join(silent.map(name))}还没有开场白。神谕可以代为起草，否则市民们只能依据介绍来理解他们。`)
+    if (st.unnamed.length) hints.push(`${st.unnamed.length} 位没有名字的发言者将不会登台。`)
+    if (!st.question) hints.push(`还没有问题，所以城邦将被问到：${suggestion || suggestQuestion(stage)}`)
+    return hints
+  }
 
   if (!st.audience.length) {
     hints.push('No crowd on the steps yet. Ask the Oracle or pick a preset to add one; otherwise the city at large will listen.')
@@ -125,7 +162,7 @@ export function stageHints(stage) {
   }
 
   if (!st.question) {
-    hints.push(`No question yet, so Parthenon will ask: ${suggestQuestion(stage)}`)
+    hints.push(`No question yet, so the city will be asked: ${suggestion || suggestQuestion(stage)}`)
   }
 
   return hints
@@ -176,6 +213,19 @@ const NEXT_BY_FORMAT = {
   assembly: 'The assembly will vote at the end of the week.',
 }
 const NEXT_DEFAULT = 'Word spreads through the Agora and the Stoa over the following days.'
+const NEXT_ZH = {
+  trial: '陪审团退庭评议；三天后宣读判决。',
+  assembly: '公民大会将在本周末投票。',
+  default: '接下来的几天里，消息在广场和柱廊之间传开。',
+}
+
+// The line "What happens next" falls back to when it is left blank. The scroll
+// always carries the English line; the Chinese one is what the form shows.
+export function defaultNext(format, locale = 'en') {
+  const id = formatById(format).id
+  if (isZh(locale)) return NEXT_ZH[id] || NEXT_ZH.default
+  return NEXT_BY_FORMAT[id] || NEXT_DEFAULT
+}
 
 export function composeStageSeed(stage) {
   const st = readStage(stage)
@@ -270,6 +320,7 @@ function readSpeaker(sp) {
     voice: cleanLine(sp.voice, CAP.voice),
     words: cleanBlock(sp.words, CAP.words),
     figureId: sp.figureId != null && sp.figureId !== '' ? sp.figureId : null,
+    guestId: sp.guestId != null && sp.guestId !== '' ? sp.guestId : null,
   }
 }
 

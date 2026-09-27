@@ -88,16 +88,23 @@ export const keyRadius = (n) => n.r + 14
 
 const SQUARE_FACT = /^\s*(?:On|In)\s+(?:Twitter|X|Reddit|the Agora|the Stoa)\b/i
 
-// Facts arrive in the engine's words; the square has its own.
+const HAN = /[㐀-鿿]/
+
+// Facts arrive in the engine's words; the square has its own. The squares are
+// named in the fact's own language: an English fact keeps "the Agora" in the
+// Chinese city, a Chinese one says 广场.
 export const cityWords = (text) => {
   let s = stripIds(text)
   if (!s) return ''
+  const zh = HAN.test(s)
+  const agora = platformName('twitter', 'name', zh ? 'zh' : 'en')
+  const stoa = platformName('reddit', 'name', zh ? 'zh' : 'en')
   const handle = (h) => (/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(h) ? citizenName('', h) : h)
   s = s
-    .replace(/\bOn (Twitter|X)\b/g, `In ${platformName('twitter')}`)
-    .replace(/\bOn Reddit\b/g, `In ${platformName('reddit')}`)
-    .replace(/\bTwitter\b/g, platformName('twitter'))
-    .replace(/\bReddit\b/g, platformName('reddit'))
+    .replace(/\bOn (Twitter|X)\b/g, zh ? `在${agora}` : `In ${agora}`)
+    .replace(/\bOn Reddit\b/g, zh ? `在${stoa}` : `In ${stoa}`)
+    .replace(zh ? /\s*\bTwitter\b\s*/g : /\bTwitter\b/g, agora)
+    .replace(zh ? /\s*\bReddit\b\s*/g : /\bReddit\b/g, stoa)
     .replace(/\bsearched for the user [“"]([^”"]+)[”"]/gi, (m, h) => `asked after ${handle(h)}`)
     .replace(/\bfollowed the user [“"]([^”"]+)[”"]/gi, (m, h) => `followed ${handle(h)}`)
     .replace(/\bthe user [“"]([^”"]+)[”"]/gi, (m, h) => handle(h))
@@ -243,8 +250,28 @@ export function buildWebModel(data) {
     legend,
     signature,
     tieCount: links.filter((l) => l.structural > 0).length,
-    chatterCount: links.filter((l) => l.chatter > 0).length
+    chatterCount: links.filter((l) => l.chatter > 0).length,
+    // Threads of chatter, one for each thing said, nodded to or quoted: the
+    // unit the Hearing's ledger and status line count in.
+    chatterThreads: links.reduce((sum, l) => sum + (l.chatter || 0), 0)
   }
+}
+
+// The words of a sentence, for comparing what two facts say.
+const wordsOf = (text) => new Set(String(text || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [])
+const saysLess = (a, b) => {
+  const wa = wordsOf(a)
+  const wb = wordsOf(b)
+  if (!wa.size || wa.size >= wb.size) return false
+  for (const w of wa) if (!wb.has(w)) return false
+  return true
+}
+// Within one tie, a fact that only says part of what another fact says is
+// left out ("Sand is operated by Ammolith Compute." beside "Sand is the AI
+// model operated by Ammolith Compute."); the longer one is kept.
+export const fullestFacts = (texts) => {
+  const list = [...new Set((texts || []).filter(Boolean))]
+  return list.filter((t) => !list.some((other) => other !== t && saysLess(t, other)))
 }
 
 // Who a name is and what the scroll says of them: the card's contents.
@@ -264,7 +291,14 @@ export function nodeDossier(model, id) {
       const list = tie.chatter ? chatterFacts : facts
       const from = byId.get(tie.from)
       const to = byId.get(tie.to)
-      const texts = tie.facts.length ? tie.facts : [`${from ? from.name : ''} ${tie.word} ${to ? to.name : ''}.`.trim()]
+      const fromName = from ? from.name : ''
+      const toName = to ? to.name : ''
+      // A tie with no sentence of its own is said in the tie's language:
+      // Chinese runs its words together and ends with 。
+      const plain = HAN.test(tie.word)
+        ? `${fromName}${tie.word}${toName}。`
+        : `${fromName} ${tie.word} ${toName}.`.trim()
+      const texts = tie.facts.length ? fullestFacts(tie.facts) : [plain]
       for (const text of texts) {
         if (list.some((f) => f.text === text)) continue
         list.push({
@@ -1027,6 +1061,21 @@ export function fitView(nodes, box, { minK = 0.3, maxK = 2, labelsAt = null, str
   return { k, tx, ty, s }
 }
 
+/**
+ * The view that frames a chosen star's neighbourhood. It leans in from the
+ * whole view (wholeK, wholeS) but never far. Beside a rail it keeps the whole
+ * view's stretch. Above a sheet (a phone, a tablet, a narrow column) the strip
+ * of sky left is short, so the view may pull back further and the stretch
+ * relaxes: every tie of the chosen star stays in sight, for and against.
+ */
+export const focusView = (nodes, box, { wholeK = 1, wholeS = 1, sheet = false, labelsAt = null } = {}) =>
+  fitView(nodes, box, {
+    minK: wholeK * (sheet ? 0.45 : 0.85),
+    maxK: Math.min(2.6, wholeK * 1.4),
+    s: sheet ? Math.min(wholeS, 1.2) : wholeS,
+    labelsAt
+  })
+
 export const toScreen = (view, x, y) => [x * view.k + view.tx, y * view.k * stretchOf(view) + view.ty]
 export const toWorld = (view, sx, sy) => [(sx - view.tx) / view.k, (sy - view.ty) / (view.k * stretchOf(view))]
 
@@ -1132,8 +1181,12 @@ export function tidyArrivals(state, now) {
  * Move each star's and tie's emphasis toward the focus: the neighbourhood of
  * `center` stays lit, everything else fades. Returns true while still fading.
  */
-export function updateEmphasis(state, center, dt, snap = false) {
+export function updateEmphasis(state, center, dt, snap = false, { only = null } = {}) {
   const near = center ? neighbourhood(state, center) : null
+  // One kind of name lit from the legend (a type key; '' for things spoken of),
+  // the rest dimmed, while no one is chosen.
+  const kind = !near && only !== null && only !== undefined ? String(only) : null
+  const ofKind = (n) => kind === null || (n && (n.type || '') === kind)
   const rate = snap ? 1 : 1 - Math.exp(-dt / 130)
   let moving = false
   const ease = (obj, key, target) => {
@@ -1143,12 +1196,13 @@ export function updateEmphasis(state, center, dt, snap = false) {
     if (obj[key] !== target) moving = true
   }
   for (const n of state.nodes) {
-    ease(n, 'em', !near || near.has(n.id) ? 1 : DIM)
+    ease(n, 'em', (!near && ofKind(n)) || (near && near.has(n.id)) ? 1 : DIM)
     ease(n, 'hot', center === n.id ? 1 : 0)
   }
   for (const l of state.links) {
     const incident = !!center && (l.source === center || l.target === center)
-    ease(l, 'em', !near || incident ? 1 : LINK_DIM)
+    const lit = near ? incident : kind === null || ofKind(l.s) || ofKind(l.t)
+    ease(l, 'em', lit ? 1 : LINK_DIM)
     ease(l, 'hot', incident ? 1 : 0)
   }
   return moving

@@ -201,3 +201,18 @@ export const interviewAgents = (data) => {
 export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
+
+/**
+ * The gatherings on the shelf that belong to one scroll (project) or are one
+ * gathering, newest first as the shelf gives them. Reads the history once.
+ * @param {{ projectId?: string, simulationId?: string }} filter
+ * @returns {Promise<Array<Object>>} history rows (project_id, simulation_id,
+ *   current_round, total_rounds, runner_status, report_id, report_status, ...)
+ */
+export const findGatherings = async ({ projectId, simulationId } = {}) => {
+  const res = await getSimulationHistory(500)
+  const rows = Array.isArray(res?.data) ? res.data : []
+  return rows.filter((r) =>
+    r && (!projectId || r.project_id === projectId) && (!simulationId || r.simulation_id === simulationId)
+  )
+}

@@ -29,6 +29,10 @@
      components written against the marble theme keep working; at night it is gold. */
   --p-gold: #f0b660;
   --gold: #f0b660;
+  /* What is written on a gold field, and the gold a pressed button deepens to.
+     At night: ink on bright gold (8.6:1), brightening on hover. */
+  --p-on-gold: #1f1a16;
+  --p-gold-hover: #f6c77f;
   --p-terracotta: #f0b660;
   --p-terracotta-deep: #f6c77f;
   --p-terracotta-tint: rgba(240, 182, 96, 0.12);
@@ -72,12 +76,15 @@
   --p-way-h: 52px;
   --p-gutter: clamp(16px, 4vw, 48px);
 
-  /* Greek key (meander) band, tiled horizontally */
-  --p-meander: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 11h24M1 11V1h10v8H5V5h3' fill='none' stroke='%23F0B660' stroke-width='1.4'/%3E%3Cpath d='M13 11V1h10v8h-6V5h3' fill='none' stroke='%23F0B660' stroke-width='1.4'/%3E%3C/svg%3E");
-  --p-meander-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 11h24M1 11V1h10v8H5V5h3' fill='none' stroke='%23F2EDE4' stroke-opacity='.55' stroke-width='1.2'/%3E%3Cpath d='M13 11V1h10v8h-6V5h3' fill='none' stroke='%23F2EDE4' stroke-opacity='.55' stroke-width='1.2'/%3E%3C/svg%3E");
+  /* Greek key (meander): one continuous line that turns in and back out,
+     between two rails, each turn locking into the next. Tiled along x;
+     .p-meander sizes it to the band, so any height keeps the whole key. */
+  --p-meander: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='22' viewBox='0 0 20 22'%3E%3Cpath d='M0 .6h20M0 21.4h20' fill='none' stroke='%23F0B660' stroke-width='1.2'/%3E%3Cpath d='M-1 19h2V3h16v12H9v-4h4V7H5v12h16' fill='none' stroke='%23F0B660' stroke-width='1.3' stroke-linecap='square'/%3E%3C/svg%3E");
+  --p-meander-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='22' viewBox='0 0 20 22'%3E%3Cpath d='M0 .6h20M0 21.4h20' fill='none' stroke='%23F2EDE4' stroke-opacity='.55' stroke-width='1.2'/%3E%3Cpath d='M-1 19h2V3h16v12H9v-4h4V7H5v12h16' fill='none' stroke='%23F2EDE4' stroke-opacity='.55' stroke-width='1.3' stroke-linecap='square'/%3E%3C/svg%3E");
 
-  /* Faint marble veining for parchment and marble surfaces */
-  --p-marble-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='v'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .018' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .5 0 0 0 0 .42 0 0 0 -1.6 1.05'/%3E%3C/filter%3E%3Crect width='600' height='600' filter='url(%23v)' opacity='.16'/%3E%3C/svg%3E");
+  /* Faint marble veining for parchment and marble surfaces. The filter region
+     is the tile itself, so the stitched noise meets its own edges: no seams. */
+  --p-marble-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='v' x='0' y='0' width='600' height='600' filterUnits='userSpaceOnUse'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .018' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .5 0 0 0 0 .42 0 0 0 -1.6 1.05'/%3E%3C/filter%3E%3Crect width='600' height='600' filter='url(%23v)' opacity='.16'/%3E%3C/svg%3E");
 }
 
 /* Parchment and marble: the objects held up in the dark. Scope a document with
@@ -97,6 +104,10 @@
   --p-ink-4: #685e52;
   --p-gold: #7e5b1f; /* 5.8:1 on parchment; gold labels must read on paper too */
   --gold: #7e5b1f;
+  /* On paper the gold is dark bronze, so its letters turn to parchment
+     (5.8:1) and a pressed button deepens rather than brightens (8.2:1). */
+  --p-on-gold: #fbf8f2;
+  --p-gold-hover: #634616;
   --p-terracotta: #b4532a;
   --p-terracotta-deep: #8f3f1f;
   --p-terracotta-tint: #f3e1d5;
@@ -112,7 +123,7 @@
   --p-error-tint: #f4dcd6;
   --p-shadow-1: 0 1px 2px rgba(31, 26, 22, 0.12);
   --p-shadow-2: 0 18px 48px rgba(0, 0, 0, 0.35);
-  --p-meander: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 11h24M1 11V1h10v8H5V5h3' fill='none' stroke='%23B4532A' stroke-width='1.4'/%3E%3Cpath d='M13 11V1h10v8h-6V5h3' fill='none' stroke='%23B4532A' stroke-width='1.4'/%3E%3C/svg%3E");
+  --p-meander: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='22' viewBox='0 0 20 22'%3E%3Cpath d='M0 .6h20M0 21.4h20' fill='none' stroke='%23B4532A' stroke-width='1.2'/%3E%3Cpath d='M-1 19h2V3h16v12H9v-4h4V7H5v12h16' fill='none' stroke='%23B4532A' stroke-width='1.3' stroke-linecap='square'/%3E%3C/svg%3E");
   background-color: var(--p-surface);
   background-image: var(--p-marble-texture);
   color: var(--p-ink-2);
@@ -122,6 +133,29 @@ html,
 body {
   background: var(--p-bg);
   color: var(--p-ink-2);
+}
+
+/* In Chinese: Cinzel has no Han, so the inscription face falls to the Chinese
+   serif, tracked lightly (wide Latin tracking pulls characters apart). Han has
+   no italic either, and a slanted Han glyph is a forgery of one: the browser
+   is told not to fake it, so the ledes stand upright. */
+html:lang(zh) {
+  --p-font-inscription: 'Cinzel', 'Noto Serif SC', 'Songti SC', serif;
+  --track-inscription: 0.06em;
+  font-synthesis: weight small-caps;
+  font-synthesis-style: none;
+}
+
+html:lang(zh) .p-eyebrow {
+  font-family: var(--p-font-serif);
+  text-transform: none;
+}
+
+/* A heading given focus when a new act or page arrives needs no ring:
+   it is a place to start reading from, not a control. */
+h1[tabindex='-1']:focus,
+[data-route-focus]:focus {
+  outline: none;
 }
 
 html.theme-night,
@@ -161,7 +195,7 @@ html.theme-night body {
   border: 1px solid var(--p-gold);
   border-radius: var(--p-radius);
   background: var(--p-gold);
-  color: #1f1a16;
+  color: var(--p-on-gold);
   font-family: var(--p-font-body);
   font-size: var(--t-sm);
   font-weight: 600;
@@ -171,8 +205,8 @@ html.theme-night body {
 }
 
 .p-button:hover {
-  background: var(--p-terracotta-deep);
-  border-color: var(--p-terracotta-deep);
+  background: var(--p-gold-hover);
+  border-color: var(--p-gold-hover);
 }
 
 .p-button.secondary {
@@ -215,6 +249,13 @@ a.p-button {
   color: var(--p-ink-3);
 }
 
+/* On parchment a disabled button's pale field and hairline all but vanish into
+   the page (1.2:1): the stronger line keeps its shape in view. */
+:where(.p-paper) .p-button:disabled,
+:where(.p-paper) .p-button[aria-disabled='true'] {
+  border-color: var(--p-line-strong);
+}
+
 .p-button:focus-visible,
 button:focus-visible,
 a:focus-visible,
@@ -225,10 +266,11 @@ a:focus-visible,
 
 /* A strip of Greek key, used as a section divider */
 .p-meander {
-  height: 12px;
+  height: 16px;
   background-image: var(--p-meander);
   background-repeat: repeat-x;
   background-position: left center;
+  background-size: auto 100%;
   opacity: 0.85;
 }
 
@@ -282,7 +324,7 @@ a:focus-visible,
   bottom: 0;
   height: 6px;
   background-image: var(--p-meander);
-  background-size: 12px 6px;
+  background-size: auto 100%;
   background-repeat: repeat-x;
   opacity: 0.45;
   pointer-events: none;

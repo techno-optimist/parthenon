@@ -16,7 +16,22 @@
         <button v-if="paintersState === 'failed'" type="button" class="p-button ghost small" @click="paintAgain">
           {{ $t('parthenon.gathering.painters.again') }}
         </button>
+        <template v-if="paintersState === 'offer'">
+          <button type="button" class="p-button ghost small" :aria-describedby="`${uid}-paint-cost`" @click="paintAgain">
+            {{ $t('parthenon.gathering.painters.paint') }}
+          </button>
+          <span :id="`${uid}-paint-cost`" class="painters-cost">{{ $t('parthenon.gathering.painters.cost', { n: citizens.length }) }}</span>
+        </template>
       </div>
+
+      <!-- The long wait, in time, and leave to go. -->
+      <p v-if="waiting" class="wait-note">
+        <i18n-t keypath="parthenon.gathering.waitNote" tag="span" scope="global">
+          <template #shelf>
+            <router-link :to="{ name: 'Chronicles' }">{{ $t('parthenon.gathering.shelf') }}</router-link>
+          </template>
+        </i18n-t>
+      </p>
     </header>
 
     <!-- Trouble, in the city's voice, with the cause behind a disclosure. -->
@@ -126,8 +141,15 @@
       </button>
     </section>
 
+    <!-- A gathering already argued: what happened, not a choice that changes nothing. -->
+    <section v-if="arguedFact" class="block argued">
+      <span class="p-eyebrow">{{ $t('parthenon.gathering.argued.eyebrow') }}</span>
+      <h3 class="block-title">{{ arguedFact }}</h3>
+      <p class="prose muted">{{ arguedNote }}</p>
+    </section>
+
     <!-- How long the city talks: story-sized lengths, honest minutes. -->
-    <section v-if="simulationConfig" class="block length">
+    <section v-else-if="simulationConfig" class="block length">
       <span class="p-eyebrow">{{ $t('parthenon.gathering.length.eyebrow') }}</span>
       <h3 class="block-title" id="length-title">{{ lengthTitle }}</h3>
       <p class="prose muted" aria-live="polite">{{ lengthHint }}</p>
@@ -155,7 +177,19 @@
     <!-- The doors. -->
     <footer class="doors">
       <button type="button" class="p-button ghost" @click="$emit('go-back')">{{ $t('parthenon.gathering.back') }}</button>
-      <div class="door-main">
+      <div v-if="arguedFact" class="door-main">
+        <router-link
+          :to="{ name: 'SimulationRun', params: { simulationId } }"
+          class="p-button"
+          :class="{ secondary: hasChronicle }"
+        >{{ $t('parthenon.gathering.argued.toAgora') }}</router-link>
+        <router-link
+          v-if="hasChronicle"
+          :to="{ name: 'Report', params: { reportId: argued.reportId } }"
+          class="p-button"
+        >{{ $t('parthenon.gathering.argued.toChronicle') }}</router-link>
+      </div>
+      <div v-else class="door-main">
         <span v-if="troubleMessage" class="door-reason">{{ $t('parthenon.gathering.openTrouble') }}</span>
         <span v-else-if="phase < 4" class="door-reason">{{ $t('parthenon.gathering.openWait') }}</span>
         <button type="button" class="p-button" :disabled="phase < 4 || !!troubleMessage" @click="handleStartSimulation">{{ $t('parthenon.gathering.open') }}</button>
@@ -280,6 +314,7 @@ import {
   roleLabel as roleTitle,
   citizenName,
   stripIds,
+  spansHours,
   RUN_LENGTHS
 } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
@@ -293,8 +328,13 @@ const router = useRouter()
 const props = defineProps({
   simulationId: String,
   projectData: Object,
-  graphData: Object
+  graphData: Object,
+  // How the gathering has been argued, read by the act from its run and the
+  // shelf: { argued, live, runnerStatus, currentRound, totalRounds, reportId, reportStatus }
+  argued: { type: Object, default: null }
 })
+
+const uid = `gathering-${Math.random().toString(36).slice(2, 8)}`
 
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
 
@@ -648,7 +688,21 @@ const allArrived = computed(() => {
   return !!total && n >= total
 })
 const paintedGathering = computed(() => (allArrived.value && props.simulationId ? props.simulationId : null))
-const portraits = useCitizenPortraits(paintedGathering, { autoStart: true })
+
+// Painting costs the owner's subscription. It begins on its own only for a
+// crowd that arrived in this tab (summoned here, or arriving while the visitor
+// watched); a gathering opened from the shelf or a link shows its initials and
+// offers to paint, naming the cost. The mark survives a reload of this tab.
+const ARRIVED_KEY = (id) => `parthenon.arrivedHere.${id}`
+const readArrivedHere = (id) => {
+  try { return !!id && sessionStorage.getItem(ARRIVED_KEY(id)) === '1' } catch { return false }
+}
+const arrivedHere = ref(readArrivedHere(props.simulationId))
+const markArrivedHere = () => {
+  arrivedHere.value = true
+  try { sessionStorage.setItem(ARRIVED_KEY(props.simulationId), '1') } catch { /* this visit still knows */ }
+}
+const portraits = useCitizenPortraits(paintedGathering, { autoStart: () => arrivedHere.value })
 
 const citizens = computed(() =>
   citizenBase.value.map((c) => ({
@@ -687,6 +741,7 @@ const paintersState = computed(() => {
   if (status === 'running') return 'working'
   if (status === 'failed') return 'failed'
   if (status === 'completed' && sawPainters.value) return 'done'
+  if (status === 'none' && portraits.loaded.value && !arrivedHere.value) return 'offer'
   return ''
 })
 
@@ -704,13 +759,17 @@ const paintersLine = computed(() => {
       return done >= total
         ? t('parthenon.gathering.painters.done')
         : t('parthenon.gathering.painters.doneSome', { done, total })
+    case 'offer':
+      return t('parthenon.gathering.painters.offer')
     default:
       return ''
   }
 })
 
+// Asked for: the painters begin now (and this tab remembers it asked).
 const paintAgain = () => {
   sawPainters.value = true
+  markArrivedHere()
   portraits.start()
 }
 
@@ -724,7 +783,7 @@ const painterSummons = new Map() // gathering -> 'early' (call again when ready)
 watch(
   () => [paintedGathering.value, phase.value >= 4],
   async ([gathering, ready]) => {
-    if (!gathering) return
+    if (!gathering || !arrivedHere.value) return
     if (!painterSummons.has(gathering)) painterSummons.set(gathering, phase.value < 2 ? 'early' : 'done')
     if (!ready || painterSummons.get(gathering) !== 'early') return
     painterSummons.set(gathering, 'done')
@@ -745,8 +804,42 @@ const countLine = computed(() => {
   return t('parthenon.gathering.arrivedSome', { n })
 })
 
+// The long wait (the citizens arriving) names its time and gives leave to go.
+const waiting = computed(() => !troubleMessage.value && phase.value < 4 && phase.value >= 0 && !arguedFact.value)
+
+// --- A gathering already argued ----------------------------------------------
+
+const hasChronicle = computed(() => !!props.argued?.reportId && String(props.argued?.reportStatus || '').toLowerCase() !== 'failed')
+
+const arguedFact = computed(() => {
+  const a = props.argued
+  if (!a || !a.argued) return ''
+  const per = Number(simulationConfig.value?.time_config?.minutes_per_round) || 60
+  const rounds = Math.max(0, Number(a.totalRounds) || 0)
+  const at = Math.max(0, Number(a.currentRound) || 0)
+  const totalHours = (rounds * per) / 60
+  const currentHours = (Math.min(at, rounds || at) * per) / 60
+  const inDays = totalHours >= 48
+  const unit = inDays ? 24 : 1
+  const total = Math.max(1, Math.round(totalHours / unit))
+  let current = Math.max(1, inDays ? Math.floor(currentHours / unit) + (a.live ? 1 : 0) : Math.round(currentHours))
+  const over = (rounds > 0 && at >= rounds) || String(a.runnerStatus || '').toLowerCase() === 'completed'
+  const kind = a.live ? 'live' : over ? 'completed' : 'stopped'
+  // A run that stopped early never reads as if it went the distance.
+  if (kind === 'stopped' && current >= total) current = Math.max(1, total - 1)
+  current = Math.min(current, total)
+  return t(`parthenon.gathering.argued.${kind}${inDays ? 'Days' : 'Hours'}`, { current, total }, total)
+})
+
+const arguedNote = computed(() => {
+  if (!arguedFact.value) return ''
+  const chronicle = hasChronicle.value ? t('parthenon.gathering.argued.written') : t('parthenon.gathering.argued.notWritten')
+  return `${chronicle} ${t('parthenon.gathering.argued.fixed')}`
+})
+
 const stateLine = computed(() => {
   if (troubleMessage.value) return t('parthenon.gathering.stateTrouble')
+  if (phase.value >= 4 && arguedFact.value) return t('parthenon.gathering.argued.state')
   if (phase.value >= 4) return t('parthenon.gathering.hoursSet')
   if (phase.value >= 2) return t('parthenon.gathering.settingHours')
   if (!profiles.value.length && phase.value === 0) return t('parthenon.gathering.reading')
@@ -916,7 +1009,7 @@ const lengths = computed(() =>
     ...l,
     name: t(`parthenon.gathering.length.names.${l.id}`),
     hoursLabel: t('parthenon.gathering.length.hours', { hours: l.hours }),
-    minutesLabel: /hour/i.test(l.minutes)
+    minutesLabel: spansHours(l.minutes)
       ? t('parthenon.gathering.length.aboutHours', { minutes: l.minutes })
       : t('parthenon.gathering.length.about', { minutes: l.minutes }),
     beyond: !!autoGeneratedRounds.value && l.rounds > autoGeneratedRounds.value
@@ -1191,6 +1284,8 @@ const startPrepareSimulation = async () => {
         return
       }
 
+      // The crowd is arriving while the visitor watches: their faces follow on their own.
+      markArrivedHere()
       taskId.value = res.data.task_id
 
       if (res.data.expected_entities_count) {
@@ -1437,6 +1532,13 @@ onUnmounted(() => {
   font-family: var(--p-font-body);
 }
 
+/* Chinese is not set in capitals with inscription tracking. */
+.p-eyebrow:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 /* The summons */
 .summons {
   padding: 32px var(--p-gutter) 20px;
@@ -1522,6 +1624,31 @@ onUnmounted(() => {
   height: 100%;
   background: var(--p-gold);
   transition: width 0.8s ease;
+}
+
+.painters-cost {
+  font-family: var(--p-font-body);
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
+}
+
+.painters.is-offer { background: transparent; border-left-color: var(--p-ink-4); }
+.painters.is-offer .painters-mark { background: var(--p-ink-4); }
+
+.wait-note {
+  margin: 4px 0 0;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--p-ink-3);
+  max-width: 44em;
+}
+
+.wait-note a {
+  color: var(--p-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--p-gold);
+  text-underline-offset: 3px;
 }
 
 /* Trouble */

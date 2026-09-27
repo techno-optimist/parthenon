@@ -22,6 +22,16 @@ export default {
   fileName: 'arrival-diogenes-lamp-bots.md',
   question:
     'Diogenes has turned down Omnira’s sponsorship on a livestream, and the clip is everywhere, less than three weeks before the council votes on the Human Mark Ordinance. Over those weeks, who changes their mind about machine labels, verified-human badges and AI companions, and what happens at Omnira’s kiosk demonstration? Does the ordinance pass as written, pass amended (and with which parts), or fail, and do Hearthly subscribers keep, quit or change how they use their companions?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '第欧根尼',
+    title: '第欧根尼的灯：寻找一个人',
+    challenge: '机器人账号、合成网红与 AI 伴侣',
+    place: '卡里克湾，创始人广场与网上的信息流',
+    year: '2026 年',
+    line: '我在找一个人。',
+    question: '第欧根尼在直播中拒绝了 Omnira 的赞助，这段片段传遍各处，而距离市议会表决《真人标记条例》已不到三周。这几周里，谁在机器标签、「真人认证」徽章和 AI 伴侣的问题上改变了主意？Omnira 的自助机演示上发生了什么？条例是照原文通过、修改后通过（改了哪些部分），还是被否决？Hearthly 的订阅者会继续用、退订，还是改变使用 AI 伴侣的方式？'
+  },
   seed: `# Diogenes' Lamp: Searching for a Human, staged for Parthenon
 
 *Carrick Bay, late September 2026. Diogenes of Sinope stepped off the Parthenon steps into Founders Plaza at noon, his clay lamp already lit, and asked the first person he met whether she was real.*

@@ -1,13 +1,15 @@
 <template>
-  <ActShell :act="4" :status="shellStatus" :logs="systemLogs" :links="links">
+  <ActShell :act="4" :status="shellStatus" :status-text="shellStatusText" :logs="systemLogs" :links="links" :doc-title="docTitle" :reached="missing ? 0 : null" :name-heading="false">
     <Step4Report
       :reportId="currentReportId"
       :simulationId="simulationId"
       :report="reportData"
       :loadError="loadError"
+      :missing="missing"
       :plate="plate"
       @add-log="addLog"
       @update-status="updateStatus"
+      @update-title="docTitle = $event"
     />
   </ActShell>
 </template>
@@ -30,9 +32,11 @@ import { getProject } from '../api/graph'
 import { ACTS } from '../parthenon/vocabulary.js'
 import { speakers } from '../parthenon/speakers.js'
 import { arrivals } from '../parthenon/arrivals/index.js'
+import { localText } from '../parthenon/localText.js'
+import { speakerFaceUrl } from '../parthenon/portraits.js'
 
 const route = useRoute()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 defineProps({
   reportId: String
@@ -45,10 +49,16 @@ const seedFile = ref('')
 const seedKnown = ref(false) // the plate waits for the scroll's name, so it never flickers
 const reportData = ref(null)
 const loadError = ref('')
+// No Chronicle at this address: said plainly, with the way to the shelf.
+const missing = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
+// The Chronicle's own title, first in the browser tab: '<title> · The Chronicle · Parthenon'.
+const docTitle = ref('')
 
+const shellStatusText = computed(() => (missing.value ? t('parthenon.chronicle.notFoundStatus') : ''))
 const shellStatus = computed(() => {
+  if (missing.value) return 'ready'
   if (currentStatus.value === 'error') return 'error'
   if (currentStatus.value === 'completed') return 'done'
   return 'working'
@@ -95,14 +105,18 @@ const CHRONICLE_SCENE = ACTS[3].scene
 const plate = computed(() => {
   if (!seedKnown.value) return null
   const file = seedFile.value
+  const lang = locale.value
+  const zh = String(lang).startsWith('zh')
+  const place = (item) => [localText(item, 'place', lang), localText(item, 'year', lang)].filter(Boolean).join(zh ? '，' : ', ')
   const speaker = file ? speakers.find((s) => s.fileName === file) : null
   if (speaker) {
+    const work = localText(speaker, 'work', lang)
     return {
       kind: 'portrait',
-      src: `/media/portraits/${speaker.id}.jpg`,
-      name: speaker.name,
+      src: speakerFaceUrl(speaker.id), // the face of the figure on the steps, as in the margin
+      name: localText(speaker, 'name', lang),
       greek: speaker.greek,
-      caption: [speaker.work, [speaker.place, speaker.year].filter(Boolean).join(', ')].filter(Boolean).join(' · ')
+      caption: [zh && work ? `《${work}》` : work, place(speaker)].filter(Boolean).join(' · ')
     }
   }
   const arrival = file ? arrivals.find((a) => a.fileName === file) : null
@@ -110,9 +124,9 @@ const plate = computed(() => {
     return {
       kind: 'scene',
       src: `/media/scenes/arrival-${arrival.id}.jpg`,
-      name: arrival.title,
+      name: localText(arrival, 'title', lang) || localText(arrival, 'name', lang),
       greek: arrival.greek,
-      caption: [arrival.place, arrival.year].filter(Boolean).join(', ')
+      caption: place(arrival)
     }
   }
   return { kind: 'act', src: CHRONICLE_SCENE, name: '', greek: '', caption: '' }
@@ -168,9 +182,13 @@ const loadReportData = async () => {
       addLog(t('parthenon.chronicle.log.readFailed', { error: loadError.value }))
     }
   } catch (err) {
-    const notFound = err?.response?.status === 404
-    loadError.value = notFound ? t('parthenon.chronicle.notFound') : (err.message || t('common.unknownError'))
     seedKnown.value = true
+    if (err?.response?.status === 404) {
+      missing.value = true
+      addLog(t('parthenon.chronicle.notFound'))
+      return
+    }
+    loadError.value = err.message || t('common.unknownError')
     currentStatus.value = 'error'
     addLog(t('parthenon.chronicle.log.readFailed', { error: loadError.value }))
   }
@@ -179,6 +197,8 @@ const loadReportData = async () => {
 watch(() => route.params.reportId, (newId) => {
   if (newId && newId !== currentReportId.value) {
     currentReportId.value = newId
+    missing.value = false
+    docTitle.value = ''
     reportData.value = null
     simulationId.value = null
     projectId.value = null
@@ -191,3 +211,4 @@ watch(() => route.params.reportId, (newId) => {
 
 loadReportData()
 </script>
+

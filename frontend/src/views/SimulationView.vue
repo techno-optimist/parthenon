@@ -33,6 +33,7 @@
       :simulationId="currentSimulationId"
       :projectData="projectData"
       :graphData="graphData"
+      :argued="argued"
       @go-back="handleGoBack"
       @next-step="handleNextStep"
       @add-log="addLog"
@@ -52,8 +53,9 @@ import ActShell from '../components/ActShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { getProject, getGraphData } from '../api/graph'
-import { getSimulation, stopSimulation, getRunStatus } from '../api/simulation'
-import { RUN_LENGTHS, stripIds } from '../parthenon/vocabulary.js'
+import { getSimulation, stopSimulation, getRunStatus, findGatherings } from '../api/simulation'
+import { RUN_LENGTHS, stripIds, wayLinks, gatheringStanding } from '../parthenon/vocabulary.js'
+import { buildWebModel } from '../parthenon/web.js'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -71,8 +73,48 @@ const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
 
-// Where the Way can take the visitor back to.
-const links = computed(() => (projectId.value ? { 1: { name: 'Process', params: { projectId: projectId.value } } } : {}))
+// This gathering as the shelf knows it, and its run as the engine knows it.
+const shelfRow = ref(null)
+const runState = ref(null)
+
+// Every station this gathering has reached: back to the Hearing, and on to the
+// Agora, the Chronicle and the Symposium once they exist.
+const links = computed(() => {
+  const row = {
+    ...(shelfRow.value || {}),
+    simulation_id: currentSimulationId.value,
+    project_id: projectId.value || shelfRow.value?.project_id || '',
+    ...(runState.value ? { current_round: Math.max(Number(runState.value.current_round) || 0, Number(shelfRow.value?.current_round) || 0), runner_status: runState.value.runner_status || shelfRow.value?.runner_status } : {})
+  }
+  return wayLinks(row)
+})
+
+// How the gathering has been argued, for the stage: an argued gathering shows
+// what happened instead of a length that would change nothing.
+const argued = computed(() => {
+  const run = runState.value || {}
+  const row = shelfRow.value || {}
+  const s = gatheringStanding({ ...row, current_round: Math.max(Number(run.current_round) || 0, Number(row.current_round) || 0), runner_status: run.runner_status || row.runner_status, simulation_id: currentSimulationId.value })
+  if (!s.argued) return null
+  return {
+    argued: true,
+    live: LIVE_STATES.includes(String(run.runner_status || '').toLowerCase()),
+    runnerStatus: run.runner_status || row.runner_status || '',
+    currentRound: s.currentRound,
+    totalRounds: Number(run.total_rounds) || s.totalRounds,
+    reportId: row.report_id || '',
+    reportStatus: row.report_status || ''
+  }
+})
+
+const readShelf = async () => {
+  try {
+    const rows = await findGatherings({ simulationId: currentSimulationId.value })
+    shelfRow.value = rows[0] || null
+  } catch (err) {
+    // Without the shelf the Way still leads back to the Hearing.
+  }
+}
 
 const shellStatus = computed(() => {
   if (liveRun.value) return 'live'
@@ -128,6 +170,7 @@ const checkLiveRun = async () => {
   try {
     const res = await getRunStatus(currentSimulationId.value)
     const data = res?.success ? res.data : null
+    runState.value = data
     liveRun.value = data && LIVE_STATES.includes(data.runner_status) ? data : null
     if (liveRun.value) addLog(t('parthenon.gathering.ledger.liveFound'))
   } catch (err) {
@@ -170,6 +213,7 @@ const stopLiveRun = async () => {
     if (!res.success) throw new Error(res.error || t('common.unknownError'))
     addLog(t('parthenon.gathering.ledger.stopped'))
     liveRun.value = null
+    if (runState.value) runState.value = { ...runState.value, runner_status: 'stopped' }
   } catch (err) {
     closingLive.value = true
     addLog(t('parthenon.gathering.ledger.stopPending'))
@@ -179,6 +223,7 @@ const stopLiveRun = async () => {
     if (closed) {
       addLog(t('parthenon.gathering.ledger.stopped'))
       liveRun.value = null
+      if (runState.value) runState.value = { ...runState.value, runner_status: 'stopped' }
     } else {
       addLog(t('parthenon.gathering.ledger.stopFailed', { error: stripIds(err.message || t('common.unknownError')) }))
     }
@@ -220,10 +265,9 @@ const loadGraph = async (graphId) => {
     const res = await getGraphData(graphId)
     if (res.success) {
       graphData.value = res.data
-      addLog(t('parthenon.gathering.ledger.webRead', {
-        nodes: res.data?.node_count ?? res.data?.nodes?.length ?? 0,
-        edges: res.data?.edge_count ?? res.data?.edges?.length ?? 0
-      }))
+      // Counted as the Web itself counts: names without the squares, ties between two names once.
+      const m = buildWebModel(res.data)
+      addLog(t('parthenon.gathering.ledger.webRead', { nodes: m.nodes.length, edges: m.tieCount }))
     }
   } catch (err) {
     addLog(t('parthenon.gathering.ledger.webFailed', { error: err.message }))
@@ -240,6 +284,7 @@ const refreshGraph = () => {
 addLog(t('parthenon.gathering.ledger.opened'))
 
 onMounted(async () => {
+  readShelf()
   await checkLiveRun()
   loadSimulationData()
 })

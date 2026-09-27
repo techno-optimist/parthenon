@@ -5,7 +5,8 @@
     <header class="cf-head">
       <p class="cf-eyebrow">{{ $t('parthenon.film.eyebrow') }}</p>
       <h2 :id="ids.title" ref="headingEl" class="cf-title" tabindex="-1">{{ $t('parthenon.film.title') }}</h2>
-      <p class="cf-lede">{{ $t('parthenon.film.lede') }}</p>
+      <!-- How a film is made is said while one is being made, not over a finished film -->
+      <p v-if="view !== 'completed' || composing" class="cf-lede">{{ $t('parthenon.film.lede') }}</p>
     </header>
 
     <!-- Stage changes and the finished film, for screen readers -->
@@ -78,31 +79,167 @@
       </ol>
     </div>
 
-    <!-- The finished film -->
+    <!-- The finished film. It plays in the city's own chrome: a gold coin, a
+         thin gold line, the narrator's words under the picture. Pressing play
+         lets the page fall dark and lifts the frame into a theatre across the
+         screen; Esc, the leave button or the dark itself brings it back. The
+         browser's own controls stand in only until the player has woken. -->
     <template v-else-if="view === 'completed'">
       <figure class="cf-film">
-        <div class="cf-screen">
-          <video
-            :key="videoSrc"
-            class="cf-video"
-            controls
-            playsinline
-            preload="metadata"
-            crossorigin="anonymous"
-            :poster="posterSrc || undefined"
-            :aria-label="$t('parthenon.film.videoLabel', { title: filmTitle })"
-          >
-            <source :src="videoSrc" type="video/mp4" />
-            <track
-              v-if="captionsSrc"
-              kind="captions"
-              :srclang="captionsLang || undefined"
-              :label="captionsLabel || undefined"
-              :src="captionsSrc"
-              default
-            />
-            {{ $t('parthenon.film.noVideo') }}
-          </video>
+        <div class="cf-hold" :style="theatre ? { height: `${holdHeight}px` } : undefined">
+          <Teleport to="body" :disabled="!theatre">
+            <div
+              class="cf-stage"
+              :class="{ lifted: theatre, still: reducedMotion }"
+              :role="theatre ? 'dialog' : undefined"
+              :aria-modal="theatre ? 'true' : undefined"
+              :aria-label="theatre ? $t('parthenon.film.player.theatre') : undefined"
+              @click.self="leaveTheatre"
+            >
+              <div
+                ref="theatreEl"
+                class="cf-theatre"
+                :class="{ playing: playing, started, fullscreen: isFull, 'words-on': wordsOn }"
+                @keydown="onPlayerKey"
+              >
+                <div class="cf-screen" @click="togglePlay">
+                  <video
+                    ref="videoEl"
+                    :key="videoSrc"
+                    class="cf-video"
+                    :controls="!enhanced"
+                    playsinline
+                    preload="metadata"
+                    crossorigin="anonymous"
+                    :poster="posterSrc || undefined"
+                    :aria-label="$t('parthenon.film.videoLabel', { title: filmTitle })"
+                    @play="onFilmPlay"
+                    @playing="onFilmPlaying"
+                    @pause="onFilmPause"
+                    @ended="onFilmEnded"
+                    @emptied="onFilmRest"
+                    @loadedmetadata="onMeta"
+                    @durationchange="onMeta"
+                    @timeupdate="onTime"
+                    @volumechange="onVolume"
+                  >
+                    <source :src="videoSrc" type="video/mp4" />
+                    <track
+                      v-if="captionsSrc"
+                      ref="trackEl"
+                      kind="captions"
+                      :srclang="captionsLang || undefined"
+                      :label="captionsLabel || undefined"
+                      :src="captionsSrc"
+                      default
+                      @load="bindWords"
+                    />
+                    {{ $t('parthenon.film.noVideo') }}
+                  </video>
+                  <!-- Before the first frame: one gold coin over the poster -->
+                  <span v-if="enhanced && !started" class="cf-big-play" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" width="30" height="30"><path d="M6.5 3.8v12.4L16.5 10z" fill="currentColor" /></svg>
+                  </span>
+                  <!-- The narrator's words, set in the reading serif under the picture -->
+                  <p v-if="enhanced && wordsOn && cue" class="cf-words" :lang="cueLang" aria-hidden="true">{{ cue }}</p>
+                </div>
+
+                <div v-if="enhanced" class="cf-controls" role="group" :aria-label="$t('parthenon.film.player.label')">
+                  <button
+                    ref="playButton"
+                    type="button"
+                    class="cf-coin"
+                    :aria-label="playLabel"
+                    :title="playLabel"
+                    @click="togglePlay"
+                  >
+                    <svg v-if="playing" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                      <rect x="5" y="4" width="3.2" height="12" fill="currentColor" />
+                      <rect x="11.8" y="4" width="3.2" height="12" fill="currentColor" />
+                    </svg>
+                    <svg v-else-if="ended" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                      <path d="M4.2 10a5.8 5.8 0 1 0 1.9-4.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                      <path d="M3.4 3.2v3.9h3.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <svg v-else viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                      <path d="M6.5 3.8v12.4L16.5 10z" fill="currentColor" />
+                    </svg>
+                  </button>
+
+                  <span class="cf-time" aria-hidden="true">{{ clock(now) }}</span>
+                  <input
+                    class="cf-scrub"
+                    type="range"
+                    min="0"
+                    :max="length || 0"
+                    step="0.1"
+                    :value="now"
+                    :style="{ '--done': `${progress}%` }"
+                    :disabled="!length"
+                    :aria-label="$t('parthenon.film.player.seek')"
+                    :aria-valuetext="$t('parthenon.film.player.seekValue', { now: clock(now), total: clock(length) })"
+                    @input="onScrub"
+                  />
+                  <span class="cf-time cf-time--end" aria-hidden="true">{{ clock(length) }}</span>
+
+                  <span class="cf-tools">
+                    <button
+                      v-if="captionsSrc"
+                      type="button"
+                      class="cf-tool"
+                      :aria-pressed="wordsOn ? 'true' : 'false'"
+                      :aria-label="$t('parthenon.film.player.words')"
+                      :title="wordsOn ? $t('parthenon.film.player.wordsOff') : $t('parthenon.film.player.wordsOn')"
+                      @click="wordsOn = !wordsOn"
+                    >
+                      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                        <rect x="2.5" y="4.5" width="15" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+                        <path d="M5.5 9.2h5.4M12.4 9.2h2.1M5.5 12h2.4M9.4 12h5.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="cf-tool"
+                      :aria-label="muted ? $t('parthenon.film.player.unmute') : $t('parthenon.film.player.mute')"
+                      :title="muted ? $t('parthenon.film.player.unmute') : $t('parthenon.film.player.mute')"
+                      @click="toggleMute"
+                    >
+                      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                        <path d="M3 8h3l4-3.5v11L6 12H3z" fill="currentColor" />
+                        <path v-if="!muted" d="M13 7.2a4 4 0 0 1 0 5.6M15.2 5a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                        <path v-else d="M13.2 7.6l4.4 4.8M17.6 7.6l-4.4 4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                      </svg>
+                    </button>
+                    <button
+                      v-if="canFull"
+                      type="button"
+                      class="cf-tool"
+                      :aria-label="isFull ? $t('parthenon.film.player.leaveFull') : $t('parthenon.film.player.full')"
+                      :title="isFull ? $t('parthenon.film.player.leaveFull') : $t('parthenon.film.player.full')"
+                      @click="toggleFull"
+                    >
+                      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                        <path v-if="!isFull" d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                        <path v-else d="M7.5 3.5v4h-4M16.5 7.5h-4v-4M12.5 16.5v-4h4M3.5 12.5h4v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                    <button
+                      v-if="theatre"
+                      type="button"
+                      class="cf-tool cf-leave"
+                      :aria-label="$t('parthenon.film.player.leave')"
+                      :title="$t('parthenon.film.player.leave')"
+                      @click="leaveTheatre"
+                    >
+                      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                        <path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                      </svg>
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </Teleport>
         </div>
         <figcaption class="cf-caption">
           <h3 ref="filmTitleEl" class="cf-film-title" tabindex="-1">{{ filmTitle }}</h3>
@@ -128,17 +265,45 @@
         <p class="cf-failed-detail">{{ film.error || $t('parthenon.film.failedFallback') }}</p>
       </div>
 
-      <fieldset ref="voicesEl" class="cf-voices" :disabled="!canStart">
+      <!-- The narrators are voices: each can be heard before it is chosen. A Hear
+           button stands outside its radio's label, so hearing never chooses, and
+           it stays pressable while the choice itself waits for the Chronicle. -->
+      <fieldset ref="voicesEl" class="cf-voices" :class="{ 'is-disabled': !canStart }">
         <legend class="cf-label">{{ $t('parthenon.film.voiceLabel') }}</legend>
         <div class="cf-segmented">
-          <label v-for="v in FILM_VOICES" :key="v" class="cf-seg">
-            <input v-model="voice" type="radio" class="visually-hidden" :name="ids.voice" :value="v" />
-            <span class="cf-seg-face">
-              <span class="cf-seg-name">{{ $t(`parthenon.film.voices.${v}`) }}</span>
-              <span class="cf-seg-note">{{ $t(`parthenon.film.voiceNotes.${v}`) }}</span>
-            </span>
-          </label>
+          <div v-for="v in FILM_VOICES" :key="v" class="cf-seg-cell">
+            <label class="cf-seg">
+              <input v-model="voice" type="radio" class="visually-hidden" :name="ids.voice" :value="v" :disabled="!canStart" />
+              <span class="cf-seg-face">
+                <span class="cf-seg-name">{{ $t(`parthenon.film.voices.${v}`) }}</span>
+                <span class="cf-seg-note">{{ $t(`parthenon.film.voiceNotes.${v}`) }}</span>
+              </span>
+            </label>
+            <button
+              type="button"
+              class="cf-hear"
+              :aria-pressed="previewing === v ? 'true' : 'false'"
+              :aria-label="$t(`parthenon.film.hearVoice.${v}`)"
+              @click="preview(v)"
+            >
+              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                <path d="M3 8h3l4-3.5v11L6 12H3z" fill="currentColor" />
+                <path
+                  d="M13 7.2a4 4 0 0 1 0 5.6M15.2 5a7 7 0 0 1 0 10"
+                  class="cf-hear-waves"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span>{{ $t('parthenon.film.hear') }}</span>
+            </button>
+          </div>
         </div>
+        <p class="cf-sample" :class="{ 'is-on': !!previewing }">
+          <span v-if="previewing">{{ $t('parthenon.film.sampleLine') }}</span>
+        </p>
       </fieldset>
 
       <div class="cf-actions">
@@ -162,10 +327,11 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, reactive, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import i18n, { availableLocales } from '../i18n'
 import { FILM_VOICES, filmAssetUrl, getChronicleFilm, startChronicleFilm } from '../api/parthenon'
+import { sound, speak, stopSpeaking, voiceUrl, holdDuck } from '../parthenon/sound.js'
 
 const props = defineProps({
   reportId: String,
@@ -263,6 +429,7 @@ const failedEl = ref(null)
 const recheckButton = ref(null)
 const voicesEl = ref(null)
 const againButton = ref(null)
+const videoEl = ref(null)
 
 let pollTimer = null
 let generation = 0
@@ -527,10 +694,382 @@ watch(
   { immediate: true }
 )
 
+// Hearing the narrators. A press plays that narrator's sample line through the
+// city's one voice (it sounds whether or not Listen is on, since it was asked
+// for); a second press stops it. Previewing never changes the chosen narrator.
+const previewVoice = ref(null)
+const previewSrc = ref('')
+let previewSeq = 0
+const previewing = computed(() =>
+  previewSrc.value && sound.speaking === previewSrc.value ? previewVoice.value : null
+)
+
+const playSample = (v, src) => {
+  previewVoice.value = v
+  previewSrc.value = src
+  return speak(src, { always: true })
+}
+
+const stopPreview = () => {
+  previewSeq += 1
+  if (previewing.value) stopSpeaking()
+}
+
+const preview = async (v) => {
+  if (previewing.value === v) {
+    stopPreview()
+    return
+  }
+  const seq = ++previewSeq
+  // One voice at a time: the film rests while a narrator is heard.
+  const video = videoEl.value
+  if (video && !video.paused) video.pause()
+  const lang = String(i18n.global.locale.value || 'en')
+  const local = voiceUrl(`narrator-${v}`, lang)
+  const english = voiceUrl(`narrator-${v}`, 'en')
+  const listening = sound.enabled
+  const asked = Date.now()
+  const ok = await playSample(v, local)
+  // A narrator not yet recorded in this language is heard in English: only when
+  // the clip failed at once, not when it was stopped or another voice began.
+  if (
+    !ok && local !== english && !unmounted && seq === previewSeq &&
+    !sound.speaking && sound.enabled === listening && Date.now() - asked < 4000
+  ) {
+    await playSample(v, english)
+  }
+}
+
+// While the film plays, the night under the page dips for it.
+let releaseFilmDuck = null
+const onFilmRest = () => {
+  if (!releaseFilmDuck) return
+  const release = releaseFilmDuck
+  releaseFilmDuck = null
+  release()
+}
+
+// ---- The player ----
+// The city's own controls over the film. Until they wake (and wherever script
+// never runs) the browser's controls stand in.
+const reducedMotion = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const enhanced = ref(false)
+const theatreEl = ref(null)
+const trackEl = ref(null)
+const playButton = ref(null)
+const playing = ref(false)
+const started = ref(false)
+const ended = ref(false)
+const now = ref(0)
+const length = ref(0)
+const muted = ref(false)
+const wordsOn = ref(true)
+const cue = ref('')
+// The words are marked in their own language, whatever the page is read in.
+const cueLang = computed(() => (/[\u3400-\u9fff]/.test(cue.value) ? 'zh' : 'en'))
+const isFull = ref(false)
+const theatre = ref(false)
+const holdHeight = ref(0)
+// A visitor who left the theatre while the film played is not lifted again until they pause.
+let declined = false
+let frame = 0
+let endTimer = 0
+
+const canFull = typeof document !== 'undefined' &&
+  !!(document.fullscreenEnabled || document.webkitFullscreenEnabled || (typeof HTMLVideoElement !== 'undefined' && 'webkitEnterFullscreen' in HTMLVideoElement.prototype))
+
+const progress = computed(() => (length.value > 0 ? Math.min(100, (now.value / length.value) * 100) : 0))
+const playLabel = computed(() => {
+  if (playing.value) return t('parthenon.film.player.pause')
+  if (ended.value) return t('parthenon.film.player.replay')
+  return t('parthenon.film.player.play')
+})
+const clock = (seconds) => {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+// The line moves with the picture, not in the quarter-second steps of timeupdate.
+const tick = () => {
+  frame = 0
+  const v = videoEl.value
+  if (!v) return
+  now.value = v.currentTime || 0
+  if (!v.paused && !v.ended) frame = requestAnimationFrame(tick)
+}
+const stopTick = () => {
+  if (frame) cancelAnimationFrame(frame)
+  frame = 0
+}
+
+const onMeta = () => {
+  const v = videoEl.value
+  const d = v ? Number(v.duration) : 0
+  length.value = Number.isFinite(d) && d > 0 ? d : Number(film.duration) || 0
+  if (v) muted.value = !!v.muted
+  bindWords()
+}
+const onTime = () => {
+  if (!frame && videoEl.value) now.value = videoEl.value.currentTime || 0
+}
+const onVolume = () => {
+  if (videoEl.value) muted.value = !!videoEl.value.muted
+}
+
+const onFilmPlay = () => {
+  if (previewing.value) stopPreview()
+  playing.value = true
+  started.value = true
+  ended.value = false
+  if (endTimer) clearTimeout(endTimer)
+  endTimer = 0
+  stopTick()
+  frame = requestAnimationFrame(tick)
+  if (enhanced.value && !theatre.value && !declined && !isFull.value) enterTheatre()
+}
+const onFilmPlaying = () => {
+  if (!releaseFilmDuck) releaseFilmDuck = holdDuck()
+}
+const onFilmPause = () => {
+  playing.value = false
+  declined = false
+  stopTick()
+  if (videoEl.value) now.value = videoEl.value.currentTime || 0
+  onFilmRest()
+}
+// The last frame holds a moment in the dark, then the lights come up.
+const onFilmEnded = () => {
+  playing.value = false
+  ended.value = true
+  declined = false
+  stopTick()
+  now.value = length.value
+  onFilmRest()
+  if (theatre.value) endTimer = setTimeout(() => { endTimer = 0; leaveTheatre() }, reducedMotion ? 400 : 1600)
+}
+
+const togglePlay = () => {
+  const v = videoEl.value
+  if (!v || !enhanced.value) return
+  if (v.paused || v.ended) {
+    const p = v.play()
+    if (p && typeof p.catch === 'function') p.catch(() => {})
+  } else {
+    v.pause()
+  }
+}
+const onScrub = (e) => {
+  const v = videoEl.value
+  const to = Number(e.target.value)
+  if (!v || !Number.isFinite(to)) return
+  v.currentTime = to
+  now.value = to
+  if (ended.value && to < length.value) ended.value = false
+}
+const toggleMute = () => {
+  const v = videoEl.value
+  if (!v) return
+  v.muted = !v.muted
+  muted.value = v.muted
+}
+
+// The narrator's words: the captions track is read, not drawn by the
+// browser, and set under the picture in the city's type.
+let boundTrack = null
+const onCue = () => {
+  const tr = boundTrack
+  const active = tr && tr.activeCues ? Array.from(tr.activeCues) : []
+  cue.value = active.map((c) => String(c.text || '').replace(/<[^>]+>/g, '')).join(' ').trim()
+}
+const bindWords = () => {
+  const v = videoEl.value
+  if (!v || !enhanced.value || !v.textTracks || !v.textTracks.length) return
+  const tr = v.textTracks[0]
+  if (boundTrack !== tr) {
+    if (boundTrack) boundTrack.removeEventListener('cuechange', onCue)
+    boundTrack = tr
+    tr.addEventListener('cuechange', onCue)
+  }
+  // Hidden still fires its cues; the browser simply does not paint them.
+  if (tr.mode !== 'hidden') tr.mode = 'hidden'
+  onCue()
+}
+
+// ---- The theatre: the page falls dark and the frame is lifted across the screen ----
+let savedOverflow = ''
+const enterTheatre = async () => {
+  const el = theatreEl.value
+  if (!el || theatre.value) return
+  const hadFocus = el.contains(document.activeElement)
+  const first = el.getBoundingClientRect()
+  holdHeight.value = Math.round(el.getBoundingClientRect().height)
+  theatre.value = true
+  try {
+    savedOverflow = document.documentElement.style.overflow
+    document.documentElement.style.overflow = 'hidden'
+  } catch { /* nothing to lock */ }
+  await nextTick()
+  const moved = theatreEl.value
+  if (!moved) return
+  if (hadFocus) playButton.value?.focus({ preventScroll: true })
+  if (reducedMotion || typeof moved.animate !== 'function') return
+  const last = moved.getBoundingClientRect()
+  if (!last.width) return
+  moved.animate(
+    [
+      { transformOrigin: '0 0', transform: `translate(${first.left - last.left}px, ${first.top - last.top}px) scale(${first.width / last.width})` },
+      { transformOrigin: '0 0', transform: 'none' }
+    ],
+    { duration: 640, easing: 'cubic-bezier(0.2, 0.7, 0.15, 1)' }
+  )
+}
+const leaveTheatre = async () => {
+  if (!theatre.value) return
+  if (endTimer) clearTimeout(endTimer)
+  endTimer = 0
+  if (playing.value) declined = true
+  const el = theatreEl.value
+  const hadFocus = el && el.contains(document.activeElement)
+  const first = el ? el.getBoundingClientRect() : null
+  theatre.value = false
+  try { document.documentElement.style.overflow = savedOverflow } catch { /* nothing to restore */ }
+  await nextTick()
+  const moved = theatreEl.value
+  if (!moved) return
+  if (hadFocus) playButton.value?.focus({ preventScroll: true })
+  if (!first || reducedMotion || typeof moved.animate !== 'function') return
+  const last = moved.getBoundingClientRect()
+  if (!last.width) return
+  moved.animate(
+    [
+      { transformOrigin: '0 0', transform: `translate(${first.left - last.left}px, ${first.top - last.top}px) scale(${first.width / last.width})` },
+      { transformOrigin: '0 0', transform: 'none' }
+    ],
+    { duration: 480, easing: 'cubic-bezier(0.3, 0.6, 0.2, 1)' }
+  )
+}
+
+const fullElement = () => document.fullscreenElement || document.webkitFullscreenElement || null
+const onFullChange = () => {
+  isFull.value = !!fullElement() && fullElement() === theatreEl.value
+}
+const toggleFull = async () => {
+  const el = theatreEl.value
+  const v = videoEl.value
+  if (!el) return
+  try {
+    if (fullElement()) {
+      await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen?.())
+    } else if (el.requestFullscreen) {
+      await el.requestFullscreen()
+    } else if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen()
+    } else if (v && v.webkitEnterFullscreen) {
+      // A phone that only lets the video itself fill the screen, in its own chrome.
+      v.webkitEnterFullscreen()
+    }
+  } catch { /* the browser said no */ }
+}
+
+// Keys inside the player: Space or K plays and pauses, arrows step five
+// seconds, M silences, C shows the words, F fills the screen, Esc leaves.
+// Tab stays inside the theatre while it is up.
+const onPlayerKey = (e) => {
+  if (!enhanced.value) return
+  const onRange = e.target && e.target.classList && e.target.classList.contains('cf-scrub')
+  const onButton = e.target && e.target.tagName === 'BUTTON'
+  const key = e.key
+  if (key === 'Escape' && theatre.value && !isFull.value) {
+    e.preventDefault()
+    leaveTheatre()
+    return
+  }
+  if (key === 'Tab' && theatre.value) {
+    const items = Array.from(theatreEl.value?.querySelectorAll('button, input') || []).filter((el) => !el.disabled)
+    if (!items.length) return
+    const first = items[0]
+    const last = items[items.length - 1]
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+    return
+  }
+  if (e.altKey || e.ctrlKey || e.metaKey) return
+  if ((key === ' ' && !onButton && !onRange) || key === 'k' || key === 'K') {
+    e.preventDefault()
+    togglePlay()
+  } else if (!onRange && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+    const v = videoEl.value
+    if (!v) return
+    e.preventDefault()
+    v.currentTime = Math.max(0, Math.min(length.value || v.duration || 0, v.currentTime + (key === 'ArrowLeft' ? -5 : 5)))
+    now.value = v.currentTime
+  } else if (key === 'm' || key === 'M') {
+    toggleMute()
+  } else if ((key === 'c' || key === 'C') && captionsSrc.value) {
+    wordsOn.value = !wordsOn.value
+  } else if ((key === 'f' || key === 'F') && canFull) {
+    toggleFull()
+  }
+}
+
+// Esc anywhere leaves the theatre (focus may rest on the dark around the frame).
+const onDocKey = (e) => {
+  if (e.key === 'Escape' && theatre.value && !isFull.value) leaveTheatre()
+}
+
+onMounted(() => {
+  enhanced.value = true
+  document.addEventListener('fullscreenchange', onFullChange)
+  document.addEventListener('webkitfullscreenchange', onFullChange)
+  document.addEventListener('keydown', onDocKey)
+})
+
+// A new film (or none): the player starts from its first frame.
+watch(videoSrc, () => {
+  stopTick()
+  playing.value = false
+  started.value = false
+  ended.value = false
+  now.value = 0
+  cue.value = ''
+  if (boundTrack) boundTrack.removeEventListener('cuechange', onCue)
+  boundTrack = null
+  if (theatre.value) leaveTheatre()
+})
+
+watch(showSetup, (shown) => {
+  if (!shown) stopPreview()
+})
+watch(view, (next) => {
+  if (next !== 'completed') {
+    onFilmRest()
+    if (theatre.value) {
+      theatre.value = false
+      try { document.documentElement.style.overflow = savedOverflow } catch { /* nothing to restore */ }
+    }
+  }
+})
+
 onBeforeUnmount(() => {
   unmounted = true
   generation += 1
   clearPoll()
+  stopPreview()
+  onFilmRest()
+  stopTick()
+  if (endTimer) clearTimeout(endTimer)
+  if (boundTrack) boundTrack.removeEventListener('cuechange', onCue)
+  if (theatre.value) {
+    try { document.documentElement.style.overflow = savedOverflow } catch { /* nothing to restore */ }
+  }
+  document.removeEventListener('fullscreenchange', onFullChange)
+  document.removeEventListener('webkitfullscreenchange', onFullChange)
+  document.removeEventListener('keydown', onDocKey)
 })
 
 // Focus
@@ -620,6 +1159,9 @@ const startFilm = async () => {
 
 const composeAgain = async () => {
   startError.value = ''
+  // Filming again starts from the narrator the current film was read by.
+  if (FILM_VOICES.includes(film.voice)) voice.value = film.voice
+  if (theatre.value) await leaveTheatre()
   composing.value = true
   await nextTick()
   voicesEl.value?.querySelector('input:checked')?.focus()
@@ -714,6 +1256,17 @@ const onDownload = async (event) => {
   color: var(--p-gold);
 }
 
+/* Chinese in the inscriptions: the serif, upright, lightly tracked */
+.cf-eyebrow:lang(zh),
+.cf-label:lang(zh),
+.cf-working-label:lang(zh),
+.cf-shot-meta:lang(zh) {
+  font-family: var(--p-font-serif);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 .cf-title {
   margin-top: 10px;
   font-family: var(--p-font-display);
@@ -771,15 +1324,21 @@ const onDownload = async (event) => {
   border: 1px solid var(--cf-control-border);
 }
 
-.cf-seg {
-  position: relative;
+.cf-seg-cell {
+  display: flex;
   flex: 1 1 0;
+  flex-direction: column;
   min-width: 0;
-  cursor: pointer;
 }
 
-.cf-seg + .cf-seg {
+.cf-seg-cell + .cf-seg-cell {
   border-left: 1px solid var(--cf-control-border);
+}
+
+.cf-seg {
+  position: relative;
+  display: block;
+  cursor: pointer;
 }
 
 .cf-seg-face {
@@ -829,20 +1388,107 @@ const onDownload = async (event) => {
   outline-offset: 3px;
 }
 
-.cf-voices:disabled .cf-seg {
+.cf-voices.is-disabled .cf-seg {
   cursor: not-allowed;
 }
 
-.cf-voices:disabled .cf-seg-face {
+.cf-voices.is-disabled .cf-seg-face {
   background: var(--p-surface-2);
 }
 
-.cf-voices:disabled .cf-seg-name {
+.cf-voices.is-disabled .cf-seg-name {
   color: var(--p-ink-4);
 }
 
-.cf-voices:disabled .cf-seg input:checked + .cf-seg-face {
+.cf-voices.is-disabled .cf-seg input:checked + .cf-seg-face {
   background: var(--p-ink-3);
+}
+
+/* Hear: a small voice under each narrator, outside its radio */
+.cf-hear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 6px;
+  border: 0;
+  border-top: 1px solid var(--p-line);
+  background: transparent;
+  color: var(--p-ink-3);
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.cf-hear:hover {
+  color: var(--p-ink);
+  background: var(--p-surface-2);
+}
+
+.cf-hear:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--p-gold);
+  outline-offset: -2px;
+}
+
+.cf-hear[aria-pressed='true'] {
+  background: var(--p-terracotta-tint);
+  color: var(--p-gold);
+}
+
+.cf-hear-waves {
+  opacity: 0.45;
+}
+
+.cf-hear[aria-pressed='true'] .cf-hear-waves {
+  opacity: 1;
+  animation: cf-waves 1.1s ease-in-out infinite;
+}
+
+@keyframes cf-waves {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The line the narrators read, written out while it is heard */
+.cf-sample {
+  min-height: 1.4em;
+  max-width: 420px;
+  margin-top: 10px;
+  font-family: var(--p-font-serif);
+  font-size: var(--t-md);
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--p-ink-3);
+}
+
+/* Chinese has no italic and the inscription face has no Chinese: upright, in the serif. */
+.cf-sample:lang(zh) {
+  font-style: normal;
+}
+
+.cf-hear:lang(zh) {
+  font-family: var(--p-font-serif);
+  font-size: var(--t-sm, 13px);
+  letter-spacing: 0.08em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf-hear[aria-pressed='true'] .cf-hear-waves {
+    animation: none;
+  }
 }
 
 /* Actions */
@@ -1110,10 +1756,29 @@ a.p-button {
   margin: 24px 0 0;
 }
 
+/* ---- The player: a night box, the same inline on parchment and lifted in the dark ---- */
+.cf-stage {
+  --cf-gold: #f0b660;
+  --cf-ink: #f2ede4;
+  --cf-ink-2: #d8d2c7;
+  --cf-ink-3: #a7a197;
+  --cf-night: #07090c;
+}
+
+.cf-theatre {
+  position: relative;
+  font-style: normal;
+  background: var(--cf-night);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 24px 60px -30px rgba(10, 8, 4, 0.55);
+  color: var(--cf-ink);
+}
+
 .cf-screen {
+  position: relative;
   aspect-ratio: 16 / 9;
-  border: 1px solid var(--p-ink);
-  background: var(--p-ink);
+  overflow: hidden;
+  background: var(--cf-night);
+  cursor: pointer;
 }
 
 .cf-video {
@@ -1121,7 +1786,231 @@ a.p-button {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: var(--p-ink);
+  background: var(--cf-night);
+}
+
+/* Before the first frame: the poster, and one gold coin to begin */
+.cf-big-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  padding-left: 4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--cf-gold);
+  background: radial-gradient(circle, rgba(7, 9, 12, 0.72), rgba(7, 9, 12, 0.5));
+  box-shadow: 0 0 0 8px rgba(240, 182, 96, 0.12), 0 12px 40px rgba(0, 0, 0, 0.5);
+  color: var(--cf-gold);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.cf-screen:hover .cf-big-play {
+  transform: translate(-50%, -50%) scale(1.06);
+  box-shadow: 0 0 0 12px rgba(240, 182, 96, 0.16), 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* The narrator's words: the reading serif at the foot of the picture */
+.cf-words {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 44px 8% 16px;
+  background: linear-gradient(to top, rgba(7, 9, 12, 0.82), rgba(7, 9, 12, 0.5) 55%, rgba(7, 9, 12, 0));
+  font-family: var(--p-font-serif);
+  font-style: italic;
+  font-size: clamp(0.9375rem, 2.1cqi, 1.3125rem);
+  line-height: 1.4;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--cf-ink);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 14px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.cf-words:lang(zh) { font-style: normal; letter-spacing: 0.04em; }
+
+/* The controls: a gold coin, the time, a thin gold line, and the few tools */
+.cf-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 60px;
+  padding: 8px 12px 8px 10px;
+  border-top: 1px solid rgba(240, 182, 96, 0.16);
+  background: linear-gradient(180deg, #0c0f14, var(--cf-night));
+}
+
+.cf-coin {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--cf-gold);
+  border-radius: 50%;
+  background: rgba(240, 182, 96, 0.1);
+  color: var(--cf-gold);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cf-coin:hover {
+  background: var(--cf-gold);
+  color: #1f1a16;
+}
+
+.playing .cf-coin { box-shadow: 0 0 0 4px rgba(240, 182, 96, 0.1); }
+
+.cf-time {
+  flex: 0 0 auto;
+  min-width: 3.4em;
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--cf-ink-2);
+}
+
+.cf-time--end { color: var(--cf-ink-3); text-align: right; }
+
+/* The line: 1px of gold across, the part already seen drawn in full gold;
+   the hit area is 44px tall, the thumb a small sun. */
+.cf-scrub {
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.cf-scrub:disabled { cursor: default; opacity: 0.5; }
+
+.cf-scrub::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(90deg, var(--cf-gold) 0 var(--done, 0%), rgba(240, 182, 96, 0.26) var(--done, 0%) 100%);
+}
+
+.cf-scrub::-moz-range-track {
+  height: 2px;
+  background: rgba(240, 182, 96, 0.26);
+}
+
+.cf-scrub::-moz-range-progress {
+  height: 2px;
+  background: var(--cf-gold);
+}
+
+.cf-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--cf-gold);
+  box-shadow: 0 0 0 4px rgba(240, 182, 96, 0.18), 0 0 14px rgba(240, 182, 96, 0.55);
+}
+
+.cf-scrub::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--cf-gold);
+  box-shadow: 0 0 0 4px rgba(240, 182, 96, 0.18), 0 0 14px rgba(240, 182, 96, 0.55);
+}
+
+.cf-tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cf-tool {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--cf-ink-3);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.cf-tool:hover { color: var(--cf-ink); background: rgba(242, 237, 228, 0.06); }
+.cf-tool[aria-pressed='true'] { color: var(--cf-gold); }
+.cf-leave { margin-left: 4px; border: 1px solid rgba(242, 237, 228, 0.22); }
+
+.cf-coin:focus-visible,
+.cf-tool:focus-visible,
+.cf-scrub:focus-visible {
+  outline: 2px solid var(--cf-gold);
+  outline-offset: 2px;
+}
+
+/* ---- The theatre: the page falls to night, the frame is lifted across it ---- */
+.cf-stage.lifted {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(ellipse 70% 60% at 50% 45%, rgba(18, 14, 9, 0.95), rgba(3, 4, 6, 0.985));
+  animation: cf-lights-down 0.7s ease both;
+}
+
+.cf-stage.lifted .cf-theatre {
+  width: min(100%, calc((100vh - 170px) * 16 / 9));
+  box-shadow: 0 0 0 1px rgba(240, 182, 96, 0.14), 0 40px 120px rgba(0, 0, 0, 0.8);
+}
+
+/* In the dark the words are set a size up */
+.cf-stage.lifted .cf-words {
+  padding-bottom: 22px;
+  font-size: clamp(1rem, 1.5vw, 1.5rem);
+}
+
+@keyframes cf-lights-down {
+  from { background-color: transparent; opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cf-stage.still,
+.cf-stage.still .cf-big-play { animation: none; transition: none; }
+
+/* Filling the screen: the picture as large as it goes, the bar at its foot */
+.cf-theatre.fullscreen {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+}
+
+.cf-theatre.fullscreen .cf-screen {
+  flex: 1 1 auto;
+  aspect-ratio: auto;
+  min-height: 0;
 }
 
 .cf-caption {
@@ -1178,6 +2067,23 @@ a.p-button {
   margin-top: 20px;
 }
 
+/* A narrow column: the gold line takes a row of its own across the whole
+   width, the coin, the time and the tools sit under it. */
+@container (max-width: 460px) {
+  .cf-controls { flex-wrap: wrap; gap: 0 6px; padding: 0 8px 6px; }
+  .cf-scrub { order: -1; flex: 1 1 100%; height: 40px; }
+  .cf-time--end { margin-right: auto; text-align: left; }
+  .cf-time--end::before { content: '/\00a0'; }
+}
+
+@media (max-width: 520px) {
+  .cf-stage.lifted { padding: 12px; }
+  .cf-stage.lifted .cf-controls { flex-wrap: wrap; gap: 0 6px; padding: 0 8px 6px; }
+  .cf-stage.lifted .cf-scrub { order: -1; flex: 1 1 100%; height: 40px; }
+  .cf-stage.lifted .cf-time--end { margin-right: auto; text-align: left; }
+  .cf-stage.lifted .cf-time--end::before { content: '/\00a0'; }
+}
+
 @container (max-width: 420px) {
   .cf-title {
     font-size: var(--t-xl);
@@ -1185,6 +2091,11 @@ a.p-button {
 
   .cf-segmented {
     max-width: none;
+  }
+
+  /* The sample line may take two lines here; its room is kept so nothing jumps. */
+  .cf-sample {
+    min-height: 2.8em;
   }
 
   .cf-actions .p-button:not(.ghost) {

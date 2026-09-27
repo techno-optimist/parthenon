@@ -87,8 +87,10 @@
           :is="page ? 'button' : 'router-link'"
           v-bind="page ? { type: 'button' } : { to: gatheringLink(g.lead) }"
           class="tablet"
-          :class="{ live: g.live }"
+          :class="{ live: g.live, heard: g.heardOnly }"
           :data-group="g.key"
+          :aria-labelledby="tabletId(g, 'title')"
+          :aria-describedby="`${tabletId(g, 'meta')} ${tabletId(g, 'status')}`"
           v-on="page ? { click: () => openGroup(g) } : {}"
         >
           <span class="tablet-plate" :style="{ '--plate': g.tone }">
@@ -108,13 +110,13 @@
             </span>
           </span>
           <span class="tablet-body">
-            <span class="tablet-meta">
+            <span :id="tabletId(g, 'meta')" class="tablet-meta">
               <span v-if="g.lead.era" class="tablet-era">{{ g.lead.era }}</span>
               <time :datetime="g.lead.iso">{{ g.lead.date }}</time>
             </span>
-            <span class="tablet-title">{{ g.lead.title }}</span>
-            <span v-if="g.lead.question" class="tablet-question">{{ g.lead.question }}</span>
-            <span class="tablet-status" :class="g.lead.state">
+            <span :id="tabletId(g, 'title')" class="tablet-title" :lang="textLang(g.lead.title)">{{ g.lead.title }}</span>
+            <span v-if="g.lead.question" class="tablet-question" :lang="textLang(g.lead.question)" aria-hidden="true">{{ g.lead.question }}</span>
+            <span :id="tabletId(g, 'status')" class="tablet-status" :class="g.lead.state">
               <span class="dot" aria-hidden="true"></span>
               <span class="status-word">{{ g.lead.word }}</span>
               <span class="status-text">{{ g.lead.status }}</span>
@@ -163,7 +165,7 @@
                   <span v-if="night.era" class="tablet-era">{{ night.era }}</span>
                   <time :datetime="night.iso">{{ night.dateTime }}</time>
                 </p>
-                <h2 :id="panelTitleId" class="panel-title">{{ night.title }}</h2>
+                <h2 :id="panelTitleId" class="panel-title" :lang="textLang(night.title)">{{ night.title }}</h2>
                 <p class="tablet-status" :class="night.state">
                   <span class="dot" aria-hidden="true"></span>
                   <span class="status-word">{{ night.word }}</span>
@@ -175,7 +177,7 @@
             <div class="panel-body">
               <section v-if="night.question" class="panel-question">
                 <p class="p-eyebrow">{{ $t('parthenon.chronicles.question') }}</p>
-                <p class="panel-question-text">{{ night.question }}</p>
+                <p class="panel-question-text" :lang="textLang(night.question)">{{ night.question }}</p>
               </section>
 
               <section class="panel-strip" :aria-labelledby="stripTitleId">
@@ -275,10 +277,13 @@ import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import CitizenCoin from './CitizenCoin.vue'
 import { getSimulationHistory, getSimulationConfig } from '../api/simulation'
+import { listProjects } from '../api/graph'
 import { filmAssetUrl, getCitizenPortraits } from '../api/parthenon'
 import { speakers } from '../parthenon/speakers.js'
 import { arrivals } from '../parthenon/arrivals/index.js'
-import { ACTS, citizenName, isPlatformNode } from '../parthenon/vocabulary.js'
+import { localText } from '../parthenon/localText.js'
+import { speakerFace } from '../parthenon/portraits.js'
+import { ACTS, citizenName, isPlatformNode, textLang, smartQuotes } from '../parthenon/vocabulary.js'
 
 const props = defineProps({
   mode: { type: String, default: 'shelf' }, // shelf | page
@@ -298,25 +303,38 @@ const stripTitleId = `${uid}-strip`
 const nightsTitleId = `${uid}-nights`
 
 const projects = ref([])
+// Scrolls the court has heard whose citizens were never summoned: they stand
+// on the shelf too, so a gathering left during the Hearing is not lost.
+const heardScrolls = ref([])
 const loading = ref(true)
+const tabletId = (g, part) => `${uid}-t-${String(g.key).replace(/[^A-Za-z0-9_-]/g, '')}-${part}`
 const failed = ref(false)
 
 // Warm darks for a plate before its image arrives, or when it has none.
 const TONES = ['#2b2019', '#1e2431', '#2d2126', '#1f2a27', '#332616', '#252030', '#2a2418', '#1c2632']
 
 // ---- Dates ----
+// The Chronicle's own dates: "25 September 2026", 2026年9月25日.
+const dateTag = () => (String(locale.value).startsWith('zh') ? 'zh-CN' : 'en-GB')
 const formatWith = (options, value) => {
   if (!value) return ''
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return String(value).slice(0, 10)
   try {
-    return new Intl.DateTimeFormat(locale.value, options).format(d)
+    return new Intl.DateTimeFormat(dateTag(), options).format(d)
   } catch {
     return d.toLocaleDateString()
   }
 }
 const formatDate = (value) => formatWith({ day: 'numeric', month: 'long', year: 'numeric' }, value)
-const formatTime = (value) => formatWith({ hour: 'numeric', minute: '2-digit' }, value)
+// The part of the day, not the clock: a night on the steps is remembered as an afternoon.
+const partOfDay = (value) => {
+  const d = new Date(value)
+  if (!value || Number.isNaN(d.getTime())) return ''
+  const h = d.getHours()
+  const part = h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night'
+  return t(`parthenon.chronicles.partOfDay.${part}`)
+}
 
 // A title from the question when the Chronicle has none: the first clause,
 // cut at a comma or a period, never longer than about seventy letters.
@@ -415,6 +433,7 @@ const nightOf = (p) => {
   const seed = p.files?.[0]?.filename || ''
   const speaker = speakers.find((s) => s.fileName === seed)
   const arrival = arrivals.find((a) => a.fileName === seed)
+  const lang = locale.value
   const question = String(p.question || p.simulation_requirement || '').trim()
   const poster = film ? filmAssetUrl(p.film?.poster_url) : ''
   const stageImage = arrival ? `/media/scenes/arrival-${arrival.id}.jpg` : speaker ? `/media/portraits/${speaker.id}.jpg` : ''
@@ -425,10 +444,10 @@ const nightOf = (p) => {
     projectId: p.project_id || '',
     simulationId: p.simulation_id || '',
     reportId,
-    title: p.report_title || arrival?.title || (speaker ? `${speaker.name}, ${speaker.work}` : titleFromQuestion(question)),
-    stageName: [arrival?.title, speaker?.name, speaker?.work].filter(Boolean).join(' '),
+    title: printed(p.report_title) || stageTitle(speaker, arrival, lang) || titleFromQuestion(question),
+    stageName: [arrival?.title, arrival?.zh?.title, speaker?.name, speaker?.work, speaker?.zh?.name, speaker?.zh?.work].filter(Boolean).join(' '),
     question,
-    era: speaker?.year || arrival?.year || '',
+    era: localText(speaker, 'year', lang) || localText(arrival, 'year', lang) || '',
     letter: speaker?.letter || arrival?.letter || (question.charAt(0) || 'Σ').toUpperCase(),
     image: poster || stageImage,
     stageImage,
@@ -445,13 +464,78 @@ const nightOf = (p) => {
     iso,
     latest: String(p.updated_at || iso || ''),
     date: formatDate(iso),
-    dateTime: t('parthenon.chronicles.nightOn', { date: formatDate(iso), time: formatTime(iso) }),
+    dateTime: t('parthenon.chronicles.nightOn', { date: formatDate(iso), time: partOfDay(iso) }),
     status: parts.join(String(locale.value).startsWith('zh') ? '，' : ', '),
     runSentence,
     state,
     word,
     // The night that stands for its stage: live, then written, then argued, then newest.
     rank: live || paused || writing ? 4 : reportId ? 3 : span.begun ? 2 : 1
+  }
+}
+
+// The Scribe's title, set as a printer would (curly quotes in English).
+const printed = (title) => {
+  const text = String(title || '').trim()
+  return text && textLang(text) === 'en' ? smartQuotes(text) : text
+}
+
+// A stage's title in the visitor's language: the arrival's, or the speaker's work.
+const stageTitle = (speaker, arrival, lang) => {
+  if (arrival) return localText(arrival, 'title', lang) || localText(arrival, 'name', lang)
+  if (!speaker) return ''
+  const name = localText(speaker, 'name', lang)
+  const work = localText(speaker, 'work', lang)
+  if (!work) return name
+  return String(lang).startsWith('zh') ? `${name}《${work}》` : `${name}, ${work}`
+}
+
+// ---- A scroll heard, its citizens never summoned ----
+// It stands as a tablet of its own, opening the Hearing, where the door to
+// summon them waits.
+const HEARD = ['graph_building', 'graph_completed']
+const heardOf = (p) => {
+  const seed = p.files?.[0]?.filename || ''
+  const speaker = speakers.find((s) => s.fileName === seed)
+  const arrival = arrivals.find((a) => a.fileName === seed)
+  const lang = locale.value
+  const question = String(p.simulation_requirement || '').trim()
+  const stageImage = arrival ? `/media/scenes/arrival-${arrival.id}.jpg` : speaker ? `/media/portraits/${speaker.id}.jpg` : ''
+  const iso = p.created_at || ''
+  const building = p.status === 'graph_building'
+  const status = t(building ? 'parthenon.chronicles.status.hearing' : 'parthenon.chronicles.status.heardOnly')
+  return {
+    id: p.project_id,
+    projectId: p.project_id,
+    simulationId: '',
+    reportId: '',
+    title: stageTitle(speaker, arrival, lang) || titleFromQuestion(question),
+    stageName: [arrival?.title, arrival?.zh?.title, speaker?.name, speaker?.work, speaker?.zh?.name, speaker?.zh?.work].filter(Boolean).join(' '),
+    question,
+    era: localText(speaker, 'year', lang) || localText(arrival, 'year', lang) || '',
+    letter: speaker?.letter || arrival?.letter || (question.charAt(0) || 'Σ').toUpperCase(),
+    image: stageImage,
+    stageImage,
+    poster: '',
+    film: false,
+    filmRunning: false,
+    citizens: 0,
+    live: false,
+    writing: false,
+    reportDone: false,
+    reportTrouble: false,
+    span: { current: 0, day: 0, total: 0, over: false, inDays: false, begun: false },
+    unit: 'Hours',
+    iso,
+    latest: String(p.updated_at || iso || ''),
+    date: formatDate(iso),
+    dateTime: t('parthenon.chronicles.nightOn', { date: formatDate(iso), time: partOfDay(iso) }),
+    status,
+    runSentence: status,
+    state: building ? 'live' : 'idle',
+    word: t(`parthenon.chronicles.word.${building ? 'live' : 'heard'}`),
+    heardOnly: true,
+    rank: 0
   }
 }
 
@@ -464,6 +548,10 @@ const groups = computed(() => {
     if (!byStage.has(key)) byStage.set(key, [])
     byStage.get(key).push(nightOf(p))
   }
+  for (const p of heardScrolls.value) {
+    if (!p?.project_id || byStage.has(p.project_id) || !HEARD.includes(p.status)) continue
+    byStage.set(p.project_id, [heardOf(p)])
+  }
   const list = [...byStage.entries()].map(([key, nights]) => {
     nights.sort((a, b) => b.iso.localeCompare(a.iso))
     const lead = [...nights].sort((a, b) => b.rank - a.rank || b.iso.localeCompare(a.iso))[0]
@@ -473,6 +561,7 @@ const groups = computed(() => {
       lead,
       nights,
       latest,
+      heardOnly: !!lead.heardOnly,
       live: nights.some((n) => n.state === 'live'),
       written: nights.some((n) => n.reportDone),
       filmed: nights.some((n) => n.film),
@@ -532,7 +621,7 @@ const clearFind = () => {
 }
 
 const summary = computed(() => {
-  const nights = groups.value.flatMap((g) => g.nights)
+  const nights = groups.value.flatMap((g) => g.nights).filter((n) => !n.heardOnly)
   const live = nights.filter((n) => n.live).length
   const written = nights.filter((n) => n.reportDone).length
   const films = nights.filter((n) => n.film).length
@@ -560,7 +649,7 @@ const plateImage = (n) => {
 // ---- Links ----
 // The permanent link opens the furthest act reached; a Chronicle id when
 // there is one, since it names the gathering and its Chronicle both.
-const gatheringLink = (n) => ({ name: 'Gathering', params: { id: n.reportId || n.simulationId } })
+const gatheringLink = (n) => ({ name: 'Gathering', params: { id: n.reportId || n.simulationId || n.projectId } })
 
 // ---- The panel (the Chronicles page) ----
 // The open gathering lives in the address (?g=<night>), so a link can open it
@@ -757,7 +846,8 @@ const loadCrowd = async (simId) => {
     people = (res?.data?.portraits || []).map((p) => ({
       name: citizenName(p.name),
       type: p.entity_type || '',
-      portrait: p.status === 'done' && p.url ? filmAssetUrl(p.url) : ''
+      // The philosophers keep the one face they have everywhere.
+      portrait: speakerFace(p.name) || (p.status === 'done' && p.url ? filmAssetUrl(p.url) : '')
     }))
   } catch {
     people = []
@@ -810,11 +900,16 @@ const loadHistory = async () => {
   inflight = (async () => {
     try {
       loading.value = true
-      const response = await getSimulationHistory(page.value ? 500 : 60)
+      const [response, heard] = await Promise.all([
+        getSimulationHistory(page.value ? 500 : 60),
+        // The court's own list; a shelf without it still shows every gathering.
+        listProjects().catch(() => null)
+      ])
       if (response?.success) {
         projects.value = Array.isArray(response.data) ? response.data : []
         failed.value = false
       }
+      if (heard?.success && Array.isArray(heard.data)) heardScrolls.value = heard.data
     } catch (error) {
       failed.value = true
     } finally {
@@ -1371,6 +1466,21 @@ onUnmounted(() => {
   opacity: 0;
 }
 
+/* Chinese is not set in capitals with inscription tracking. */
+.tablet-film:lang(zh),
+.tablet-lit:lang(zh),
+.tablet-nights:lang(zh),
+.tablet-meta:lang(zh),
+.status-word:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.tablet.heard .tablet-plate img {
+  filter: saturate(0.55) brightness(0.8);
+}
+
 .panel-banner {
   position: relative;
   display: flex;
@@ -1443,6 +1553,21 @@ onUnmounted(() => {
   gap: 10px;
   width: 100%;
   padding: 28px 32px 24px;
+}
+
+/* The date and era over a bright sky keep a dark halo, as the title does. */
+.banner-copy .tablet-meta {
+  align-self: flex-start;
+  padding: 3px 8px;
+  margin-left: -8px;
+  background: rgba(11, 14, 19, 0.62);
+  color: var(--p-ink-2);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.banner-copy .panel-title,
+.banner-copy .tablet-status {
+  text-shadow: 0 1px 12px rgba(11, 14, 19, 0.85), 0 1px 2px rgba(11, 14, 19, 0.9);
 }
 
 .panel-title {

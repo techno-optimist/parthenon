@@ -16,6 +16,16 @@ export const speakers = [
     fileName: 'socrates-the-apology.md',
     question:
       'The jury has sentenced Socrates to death, and the sacred ship to Delos gives Athens thirty days before the hemlock. How does the city talk about it during that month? Who defends him, who celebrates, and does anyone change their mind? Should Crito’s escape plan succeed, and what does Athens decide about free questioning?',
+    // The same card in Chinese (read through localText.js). The seed stays English.
+    zh: {
+      name: '苏格拉底',
+      epithet: '雅典的牛虻',
+      work: '申辩篇',
+      place: '民众法庭',
+      year: '公元前 399 年',
+      line: '未经审视的人生不值得过。',
+      question: '陪审团已判苏格拉底死刑，而开往提洛岛的圣船让雅典在饮下毒芹汁之前还有三十天。这一个月里，城邦如何谈论此事？谁为他辩护，谁拍手称快，又有谁改变了主意？克力同的越狱计划应当成功吗？对于自由发问，雅典最终作何决定？'
+    },
     seed: `# The Apology of Socrates, retold for Parthenon
 
 *Athens, spring of 399 BC. The People's Court beside the Agora. A jury of 501 citizens chosen by lot.*
@@ -80,6 +90,16 @@ A sacred ship has just left for the festival at Delos. No execution may take pla
     fileName: 'plato-the-cave.md',
     question:
       'Plato has told the allegory of the cave at the Academy, and the story is spreading through Athens. How do Athenians argue about it? Who sees themselves as the prisoners, who as the freed man, and who as the ones carrying the puppets? Does the city warm to the idea that philosophers should rule, or turn against the Academy?',
+    // The same card in Chinese (read through localText.js). The seed stays English.
+    zh: {
+      name: '柏拉图',
+      epithet: '学园之主',
+      work: '洞穴之喻',
+      place: '阿卡德米学园',
+      year: '约公元前 375 年',
+      line: '教育，是引导灵魂转向光明的技艺。',
+      question: '柏拉图在学园讲了洞穴之喻，这个故事正在雅典传开。雅典人如何争论它？谁把自己看作囚徒，谁看作挣脱锁链的人，谁又看作举着偶像走过火前的人？城邦会渐渐接受哲人应当治国的想法，还是转而反对学园？'
+    },
     seed: `# The Cave, retold for Parthenon
 
 *Athens, around 375 BC. The grove of the hero Akademos outside the city walls, where Plato teaches. The story comes from the seventh book of the Republic, told in Socrates' voice to Plato's brother Glaucon.*
@@ -136,6 +156,16 @@ The story leaves the grove and moves through the city: retold in the barbershops
     fileName: 'aristotle-the-golden-mean.md',
     question:
       'Aristotle’s lecture on happiness and the golden mean is spreading beyond the Lyceum. Do Athenians embrace moderation and habit as the road to a good life, or resent a Macedon-connected foreigner lecturing them on virtue? Which habits does the city actually decide to change, and who pushes back?',
+    // The same card in Chinese (read through localText.js). The seed stays English.
+    zh: {
+      name: '亚里士多德',
+      epithet: '逍遥学派',
+      work: '中道',
+      place: '吕克昂学园',
+      year: '约公元前 330 年',
+      line: '德性是两种恶之间的中道。',
+      question: '亚里士多德关于幸福与中道的讲演，正从吕克昂传向城中。雅典人会把节制与习惯当作通往美好生活的道路，还是反感一个与马其顿有瓜葛的外邦人来教他们何为德性？城邦真正决定改变哪些习惯，又是谁在反对？'
+    },
     seed: `# The Golden Mean, retold for Parthenon
 
 *Athens, around 330 BC. The Lyceum, a gymnasium east of the city walls sacred to Apollo Lykeios. Aristotle lectures while walking the covered colonnade, so his students are called the Peripatetics, "the walkers". Athens has lost its independence to Macedon. Aristotle, born in Stagira and once tutor to Alexander, lives here as a resident foreigner without a citizen's rights.*
@@ -186,6 +216,16 @@ Copies of the lecture notes pass from hand to hand. Alexander is campaigning far
     fileName: 'heraclitus-the-river.md',
     question:
       'Heraclitus’ riddles about flux, fire and strife have reached Athens on Ionian ships. Does the city take comfort or fright from the idea that nothing stays the same? How do traders, priests, generals and politicians use his sayings or fight them, and what does Athens decide about change?',
+    // The same card in Chinese (read through localText.js). The seed stays English.
+    zh: {
+      name: '赫拉克利特',
+      epithet: '晦涩者',
+      work: '河流',
+      place: '以弗所，随船传入雅典',
+      year: '约公元前 500 年',
+      line: '踏入同一条河流的人，不断遇到新的水流。',
+      question: '赫拉克利特关于流变、火与斗争的谜语，随伊奥尼亚的船只传到了雅典。万物皆流的想法，让城邦感到安慰还是恐惧？商人、祭司、将军和政客如何借用或反驳他的话？对于变化，雅典最终作何决定？'
+    },
     seed: `# The River, retold for Parthenon
 
 *Around 500 BC, Ephesus on the Ionian coast. Heraclitus, of the old royal family, gave up his hereditary title to his brother and withdrew to the temple of Artemis, where he left a book of riddles. People called him "the Obscure" and "the weeping philosopher". Generations later his sayings arrive in Athens with Ionian traders, and people argue over them on the steps.*
@@ -254,6 +294,16 @@ A copy of his book is read aloud in the Stoa every afternoon. Some say the city 
     fileName: 'diogenes-the-dog-in-the-agora.md',
     question:
       'Diogenes has spent a week heckling Athens from his jar. Does the Agora turn against his shamelessness, or do young Athenians start giving away their possessions and speaking their minds to the powerful? What does the city decide it actually needs?',
+    // The same card in Chinese (read through localText.js). The seed stays English.
+    zh: {
+      name: '第欧根尼',
+      epithet: '犬儒',
+      work: '广场上的犬',
+      place: '广场',
+      year: '约公元前 340 年',
+      line: '站开一点，别挡住我的阳光。',
+      question: '第欧根尼在他的大瓮里对雅典冷嘲热讽了整整一周。广场会群起反对他的无耻，还是年轻的雅典人开始散尽家财，当面对权贵直言？城邦最后认定，自己真正需要的是什么？'
+    },
     seed: `# The Dog in the Agora, retold for Parthenon
 
 *Athens, around 340 BC. Diogenes of Sinope, exiled from his home city for defacing its coinage, lives in a large clay storage jar near the Metroon in the Agora. People call him "the Dog" (kyon), which is where the word Cynic comes from. He owns a cloak, a staff and a bag.*
@@ -313,6 +363,16 @@ A few young Athenians have begun imitating him: sleeping in the Stoa, begging fo
     fileName: 'epicurus-the-garden.md',
     question:
       'Epicurus has opened his Garden to women and slaves and teaches that death is nothing to fear and that a simple, pleasant life among friends is the goal. How does Athens react: scandal, relief or quiet conversion? Do the priests, the Stoics and the rich push back, and what does the city decide about pleasure and fear?',
+    // The same card in Chinese (read through localText.js). The seed stays English.
+    zh: {
+      name: '伊壁鸠鲁',
+      epithet: '花园之主',
+      work: '花园',
+      place: '花园',
+      year: '约公元前 300 年',
+      line: '死亡与我们无关。',
+      question: '伊壁鸠鲁向女人和奴隶敞开了他的花园，教导说死亡不足畏惧，与朋友一起过简朴而愉快的生活才是目的。雅典如何反应：是丑闻、释然，还是悄悄皈依？祭司、斯多亚派和富人会不会反击？对于快乐与恐惧，城邦最终作何决定？'
+    },
     seed: `# The Garden, retold for Parthenon
 
 *Athens, around 300 BC. Epicurus of Samos has bought a house with a garden just outside the Dipylon Gate. Over the gate, the story goes, is written: "Stranger, here you will do well to stay; here the highest good is pleasure." Unlike the other schools, the Garden admits women, among them the courtesan Leontion, and enslaved people such as Mys.*

@@ -14,6 +14,7 @@ import {
   suggestQuestion,
   slugify,
   composeStageSeed,
+  defaultNext,
 } from './composeStage.js'
 
 // Same rules as the scroll renderer in views/Home.vue, so the tests see what the page sees.
@@ -438,4 +439,34 @@ test('composeStageSeed never throws on missing or odd fields', () => {
     assert.ok(out.question.length > 0)
   }
   assert.ok(composeStageSeed({ speakers: [{ name: 42 }] }).markdown.includes('- **42**.'))
+})
+
+test('the form speaks Chinese: formats, ages, problems, hints and the next line', () => {
+  for (const f of FORMATS) assert.ok(f.zh && f.zh.label && f.zh.blurb, f.id)
+  for (const e of ERAS) assert.ok(e.zh && e.zh.label, e.id)
+
+  const bare = { ...emptyStage(), format: 'dialogue', speakers: [], topic: '', question: '' }
+  const en = stageProblems(bare)
+  const zh = stageProblems(bare, 'zh')
+  assert.equal(zh.length, en.length)
+  assert.ok(zh.every((p) => /[\u4e00-\u9fff]/.test(p) && !/[a-z]{3,}/i.test(p)), zh.join(' | '))
+  assert.match(zh[0], /^一场对话需要 2 位/)
+
+  const three = ['A', 'B', 'C'].map((name) => emptySpeaker({ name, words: 'Hello.' }))
+  const over = stageProblems({ ...emptyStage(), format: 'dialogue', speakers: three, topic: 'x' }, 'zh')
+  assert.equal(over.length, 1)
+  assert.match(over[0], /一场对话只容得下 2 位发言者，而不是 3 位。请移除 1 位，或改为一场研讨会。/)
+
+  const silent = { ...emptyStage(), speakers: [emptySpeaker({ name: 'Socrates', figureId: 'socrates' })], audience: [], question: '' }
+  const hints = stageHints(silent, 'zh', { suggestion: '雅典如何抉择？', nameOf: (s) => (s.figureId === 'socrates' ? '苏格拉底' : s.name) })
+  assert.ok(hints.some((h) => h.startsWith('苏格拉底还没有开场白')))
+  assert.ok(hints.some((h) => h === '还没有问题，所以城邦将被问到：雅典如何抉择？'))
+  assert.ok(stageHints(silent).some((h) => h.startsWith('No question yet, so the city will be asked: ')))
+  assert.ok(!stageHints(silent).some((h) => /Parthenon/.test(h)), 'the city, not the product, asks')
+
+  assert.equal(defaultNext('trial'), 'The jury retires to deliberate; the verdict will be read in three days.')
+  assert.equal(defaultNext('panel'), 'Word spreads through the Agora and the Stoa over the following days.')
+  assert.match(defaultNext('assembly', 'zh'), /公民大会/)
+  assert.match(defaultNext('nonsense', 'zh'), /消息/)
+  for (const text of [...zh, ...over, ...hints, defaultNext('trial', 'zh')]) assert.ok(!/[\u2014\u2013]/.test(text), text)
 })

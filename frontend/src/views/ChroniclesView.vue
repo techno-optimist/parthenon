@@ -143,6 +143,17 @@ import ParthenonBrand from '../components/ParthenonBrand.vue'
   color: var(--p-gold);
 }
 
+/* Chinese is not set in capitals with inscription tracking. */
+.cp-link:lang(zh),
+.p-eyebrow span:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* Every target a thumb can reach, wide enough to take one. */
+.cp-link { min-width: 44px; justify-content: center; }
+
 /* The threshold */
 .cp-threshold {
   position: relative;

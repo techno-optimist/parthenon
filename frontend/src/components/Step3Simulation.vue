@@ -10,10 +10,10 @@
       <div class="clock">
         <p id="agora-clock" class="clock-line">
           <span class="clock-round">{{ clockRound }}</span>
-          <span class="clock-sep" aria-hidden="true">·</span>
+          <span class="clock-sep"><span aria-hidden="true">·</span><span class="sr-only">{{ comma }}</span></span>
           <span class="clock-said">{{ clockSaid }}</span>
           <!-- The day and the hour are written on the square itself, and read here once. -->
-          <span v-if="mode !== 'idle' && mode !== 'loading'" class="sr-only">, {{ clockDay }}</span>
+          <span v-if="mode !== 'idle' && mode !== 'loading'" class="sr-only">{{ comma }}{{ clockDay }}</span>
         </p>
         <!-- One polite voice per act: it speaks when the round turns, not on every poll. -->
         <p class="sr-only" aria-live="polite">{{ announcement }}</p>
@@ -42,17 +42,6 @@
             <span v-if="!canStop" id="stop-hint" class="control-hint">{{ $t('agora.live.stopWhen', { unit: unit.low }) }}</span>
           </span>
           <button type="button" class="p-button secondary" @click="leaveRunning">{{ $t('agora.live.leave') }}</button>
-          <button
-            v-if="!reduced"
-            type="button"
-            class="listen"
-            :aria-pressed="listen ? 'true' : 'false'"
-            :title="$t('agora.listen.title')"
-            @click="toggleListen"
-          >
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 8h3l4-3.5v11L6 12H3z" fill="currentColor" /><path v-if="listen" d="M13 7.2a4 4 0 0 1 0 5.6M15.2 5a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
-            <span>{{ $t('agora.listen.label') }}</span>
-          </button>
         </template>
       </div>
 
@@ -101,17 +90,6 @@
             @click="replay.speed = s"
           >{{ $t('agora.replay.speed', { n: s }) }}</button>
         </div>
-        <button
-          v-if="canReplay && !reduced"
-          type="button"
-          class="listen"
-          :aria-pressed="listen ? 'true' : 'false'"
-          :title="$t('agora.listen.title')"
-          @click="toggleListen"
-        >
-          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 8h3l4-3.5v11L6 12H3z" fill="currentColor" /><path v-if="listen" d="M13 7.2a4 4 0 0 1 0 5.6M15.2 5a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
-          <span>{{ $t('agora.listen.label') }}</span>
-        </button>
         <button v-if="replayActive" type="button" class="p-button ghost small whole" @click="endReplay">{{ $t('agora.replay.whole') }}</button>
       </div>
       <div
@@ -186,7 +164,7 @@
       :reading="mode === 'done' || mode === 'error' ? reading : null"
       :minutes-per-round="minutesPerRound"
       @settle="onSettle"
-      @pin="pinnedAgent = $event"
+      @pin="onPin"
       @reread="emit('reread')"
     >
       <template #overlay>
@@ -221,7 +199,7 @@
     </section>
 
     <!-- Loading beat -->
-    <p v-else-if="mode === 'loading'" class="quiet-note">{{ $t('common.loading') }}</p>
+    <p v-else-if="mode === 'loading'" class="quiet-note">{{ $t('agora.idle.loading') }}</p>
 
     <!-- The record: the argument, round by round, the Agora beside the Stoa -->
     <div v-else ref="recordEl" class="record">
@@ -273,10 +251,10 @@
                       {{ e.verbLine }}<span v-if="e.alsoStoa" class="also"> · {{ $t('agora.empty.alsoStoa') }}</span>
                     </span>
                   </span>
-                  <p class="words">{{ e.text }}</p>
+                  <p class="words" :lang="langOf(e.text)">{{ e.text }}</p>
                   <blockquote v-if="e.quoted" class="quoted">
                     <span class="quoted-who">{{ e.quotedWho }}</span>
-                    <span class="quoted-text">{{ e.quoted }}</span>
+                    <span class="quoted-text" :lang="langOf(e.quoted)">{{ e.quoted }}</span>
                   </blockquote>
                 </template>
                 <template v-else>
@@ -307,10 +285,10 @@
                     <span class="name">{{ e.name }}</span>
                     <span class="verb">{{ e.verbLine }}</span>
                   </span>
-                  <p class="words">{{ e.text }}</p>
+                  <p class="words" :lang="langOf(e.text)">{{ e.text }}</p>
                   <blockquote v-if="e.quoted" class="quoted">
                     <span class="quoted-who">{{ e.quotedWho }}</span>
-                    <span class="quoted-text">{{ e.quoted }}</span>
+                    <span class="quoted-text" :lang="langOf(e.quoted)">{{ e.quoted }}</span>
                   </blockquote>
                 </template>
                 <template v-else>
@@ -355,9 +333,11 @@ import {
   entityTypeName,
   roleColorVar,
   stripIds,
-  RUN_LENGTHS
+  RUN_LENGTHS,
+  spansHours
 } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
+import { sound } from '../parthenon/sound.js'
 import {
   beatOf,
   indexPosts,
@@ -393,8 +373,10 @@ const props = defineProps({
 })
 
 // beat: each move of the square as it is staged, { from, to, kind, key } by
-// name, for the Web beside it. reread: ask the Scribe to read the stances again.
-const emit = defineEmits(['add-log', 'update-status', 'finished', 'beat', 'reread'])
+// name, for the Web beside it. hold: the name of the citizen held up in the
+// square ('' when let go), so their star is lit in the Web too. reread: ask
+// the Scribe to read the stances again.
+const emit = defineEmits(['add-log', 'update-status', 'finished', 'beat', 'hold', 'reread'])
 
 // ---- State ----
 const mode = ref('loading') // loading | idle | live | done | error
@@ -426,24 +408,18 @@ const onNarrowScreen = (e) => { narrowScreen.value = e.matches }
 let belowSeq = 0
 const belowId = `agora-below-${++belowSeq}-${Math.random().toString(36).slice(2, 7)}`
 
-// The murmur of the square: off until asked for, remembered for this visitor.
-const LISTEN_KEY = 'parthenon.agora.listen'
-const readListen = () => {
-  try {
-    return window.localStorage.getItem(LISTEN_KEY) === '1'
-  } catch (err) {
-    return false
-  }
-}
-const listen = ref(!reduced && typeof window !== 'undefined' && readListen())
-const toggleListen = () => {
-  listen.value = !listen.value
-  try {
-    window.localStorage.setItem(LISTEN_KEY, listen.value ? '1' : '0')
-  } catch (err) {
-    // A private window keeps no memory; the choice holds for this visit.
-  }
-}
+// The murmur of the square is heard through the one Listen switch the whole
+// city shares, in the act's header: off until asked for, remembered for this
+// visitor, and silent at the start of a reduced-motion visit
+// (parthenon/sound.js keeps those rules). One control, in one place.
+const listen = computed(() => sound.enabled)
+
+// The citizens' own words carry their language, so a Chinese page reading
+// English speech (or the reverse) is voiced and set in the right one.
+const HAN = /[\u3400-\u9fff]/
+const langOf = (text) => (HAN.test(String(text || '')) ? 'zh' : 'en')
+// The pause a listener hears between the clock's parts, in the page's own punctuation.
+const comma = computed(() => (String(locale.value || '').startsWith('zh') ? '，' : ', '))
 
 // A citizen held up in the square: their lines are lit in the record.
 const pinnedAgent = ref(null)
@@ -549,7 +525,20 @@ const clockRound = computed(() => {
   return unitAt(shownRound.value, totalRounds.value)
 })
 const clockDay = computed(() => dayOf(mode.value === 'idle' || mode.value === 'loading' ? 0 : shownRound.value))
-const clockSaid = computed(() => t('agora.clock.said', speechCount.value))
+// The headline counts a line as said the moment its speaker takes the floor,
+// ribbon and all; the record below still releases it when the ribbon settles.
+const saidSoFar = computed(() => {
+  if (!replayActive.value) return speechCount.value
+  const cursor = replay.cursor
+  const rel = releases.value
+  let n = 0
+  for (const r of allRounds.value) {
+    for (const e of r.agora) if (e.kind === 'speech' && rel.get(e) <= cursor) n++
+    for (const e of r.stoa) if (e.kind === 'speech' && rel.get(e) <= cursor) n++
+  }
+  return n
+})
+const clockSaid = computed(() => t('agora.clock.said', saidSoFar.value))
 const sunPercent = computed(() => {
   const total = totalRounds.value || 1
   const n = mode.value === 'done' || mode.value === 'error' ? scrubRound.value : currentRound.value
@@ -826,13 +815,13 @@ const costLine = computed(() => {
   const known = RUN_LENGTHS.find((l) => l.rounds === planned)
   let time
   if (known) {
-    time = /hour/i.test(known.minutes) ? known.minutes : t('agora.idle.timeMinutes', { m: known.minutes })
+    time = spansHours(known.minutes) ? known.minutes : t('agora.idle.timeMinutes', { m: known.minutes })
   } else {
     const low = Math.max(1, Math.round((planned * 40) / 60))
     const high = Math.max(low + 1, Math.round(planned))
     time = high >= 90
-      ? t('agora.idle.timeHours', { h: `${Math.max(1, Math.floor(low / 60))} to ${Math.ceil(high / 60)}` })
-      : t('agora.idle.timeMinutes', { m: `${low} to ${high}` })
+      ? t('agora.idle.timeHours', { h: t('agora.idle.range', { low: Math.max(1, Math.floor(low / 60)), high: Math.ceil(high / 60) }) })
+      : t('agora.idle.timeMinutes', { m: t('agora.idle.range', { low, high }) })
   }
   // '12 hours of the city's time, 12 hours' would say it twice.
   if (hours < 24 && unitKey.value === 'hour') return t('agora.idle.costShort', { span, time })
@@ -951,6 +940,12 @@ const pulseWeb = (beat) => {
   const from = nameOfId(beat.from)
   if (!from) return
   emit('beat', { from, to: beat.to != null ? nameOfId(beat.to) || null : null, kind: beat.kind, key: beat.id })
+}
+
+// A citizen held up in the square is held up in the Web beside it as well.
+const onPin = (id) => {
+  pinnedAgent.value = id ?? null
+  emit('hold', id === null || id === undefined ? '' : nameOfId(id))
 }
 
 // ---- Playing the argument back ----
@@ -1426,9 +1421,11 @@ const handleStopAndWrite = async () => {
   }
 }
 
+// The argument goes on without the visitor: they are taken to the shelf,
+// where this gathering stands open and lit, and can come back to it.
 const leaveRunning = () => {
   addLog(t('agora.log.leave'))
-  router.push('/')
+  router.push({ name: 'Chronicles', query: props.simulationId ? { g: props.simulationId } : {} })
 }
 
 // ---- The Chronicle ----
@@ -1550,11 +1547,12 @@ watch(currentRound, (n, was) => {
 .clock-said { white-space: nowrap; }
 
 /* The sun over the square: a rule, and a gold dot that crosses it. The strip
-   is 32px tall so a thumb on a phone finds the scrubber. */
+   is 44px tall so a thumb on a phone finds the scrubber; the rule is drawn
+   through its middle. */
 .sun {
   position: relative;
-  height: 32px;
-  margin-top: 6px;
+  height: 44px;
+  margin-top: 0;
 }
 
 /* Play, the scrubber, the pace: one row under the clock, the band's full width */
@@ -1567,7 +1565,7 @@ watch(currentRound, (n, was) => {
   margin: 0 0 10px;
 }
 
-.sun.sun-row { display: block; margin: 0 0 8px; }
+.sun.sun-row { display: block; height: 32px; margin: 0 0 8px; }
 
 .sun-row .sun {
   flex: 1 1 220px;
@@ -1659,8 +1657,9 @@ watch(currentRound, (n, was) => {
 .sun-range {
   appearance: none;
   -webkit-appearance: none;
+  display: block;
   width: 100%;
-  height: 32px;
+  height: 44px;
   margin: 0;
   background: transparent;
   cursor: pointer;
@@ -1682,17 +1681,17 @@ watch(currentRound, (n, was) => {
 .sun-range::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 28px;
-  height: 28px;
-  margin-top: -14px;
+  width: 44px;
+  height: 44px;
+  margin-top: -22px;
   border-radius: 50%;
   background: transparent;
   border: 0;
 }
 
 .sun-range::-moz-range-thumb {
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: transparent;
   border: 0;
@@ -1700,26 +1699,6 @@ watch(currentRound, (n, was) => {
 
 .sun-range:focus-visible { outline: 2px solid var(--p-gold); outline-offset: 2px; }
 
-/* The murmur: a quiet toggle beside the pace */
-.listen {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--p-control-border);
-  background: transparent;
-  color: var(--p-ink-3);
-  font-family: var(--p-font-body);
-  font-size: var(--t-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.listen:hover { color: var(--p-ink); }
-.listen[aria-pressed='true'] { background: var(--p-terracotta-tint); color: var(--p-gold); border-color: var(--p-gold); }
-.listen:focus-visible,
 .speed:focus-visible,
 .replay-toggle:focus-visible { outline: 2px solid var(--p-gold); outline-offset: 2px; }
 

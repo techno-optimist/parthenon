@@ -1,5 +1,5 @@
 <template>
-  <ActShell bare :act="3" :status="shellStatus" :status-text="shellStatusText" :logs="systemLogs" :links="links" :lede="$t('agora.lede')">
+  <ActShell bare web-default="closed" :act="3" :status="shellStatus" :status-text="shellStatusText" :logs="systemLogs" :links="links" :lede="$t('agora.lede')">
     <template #web>
       <GraphPanel
         :graphData="graphData"
@@ -8,6 +8,7 @@
         :isSimulating="isSimulating"
         :simulationId="currentSimulationId"
         :pulse="webPulse"
+        :hold="heldName"
         @refresh="refreshGraph"
       />
     </template>
@@ -27,6 +28,7 @@
       @update-status="updateStatus"
       @finished="onFinished"
       @beat="webPulse = $event"
+      @hold="heldName = $event || ''"
       @reread="readStances"
     />
   </ActShell>
@@ -83,6 +85,8 @@ const isSimulating = computed(() => shellStatus.value === 'live')
 
 // Each move the square stages, by name: the Web blooms the speaker's star.
 const webPulse = ref(null)
+// A citizen held in the square is lit in the Web beside it, by name.
+const heldName = ref('')
 
 // Which Athens the square is painted as: a speaker's scroll from the steps
 // stands in 399 BC, an Arrival stands today.
@@ -95,11 +99,19 @@ const era = computed(() => {
   return gatheringEra({ files: p.files || [], requirement: p.simulation_requirement || '', summary: p.analysis_summary || '' }, SCROLLS)
 })
 
-// Stations that can be revisited from the Way
-const links = computed(() => ({
-  1: projectData.value?.project_id ? { name: 'Process', params: { projectId: projectData.value.project_id } } : null,
-  2: { name: 'Simulation', params: { simulationId: currentSimulationId.value } }
-}))
+// Stations that can be revisited from the Way: every one this gathering has
+// reached, the Chronicle and the Symposium included once they exist.
+const links = computed(() => {
+  const out = {
+    1: projectData.value?.project_id ? { name: 'Process', params: { projectId: projectData.value.project_id } } : null,
+    2: { name: 'Simulation', params: { simulationId: currentSimulationId.value } }
+  }
+  if (reportId.value) {
+    out[4] = { name: 'Report', params: { reportId: reportId.value } }
+    if (reportStatus.value === 'completed') out[5] = { name: 'Interaction', params: { reportId: reportId.value } }
+  }
+  return out
+})
 
 // ---- The ledger ----
 const addLog = (message) => {

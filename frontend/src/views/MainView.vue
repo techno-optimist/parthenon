@@ -1,10 +1,11 @@
 <template>
-  <ActShell :act="1" :status="shellStatus" :logs="systemLogs" :links="{}">
+  <ActShell :act="1" :status="shellStatus" :status-text="shellStatusText" :logs="systemLogs" :links="links">
     <template #web>
       <GraphPanel
         :graphData="graphData"
         :loading="graphLoading"
         :currentPhase="currentPhase"
+        :hold="heldName"
         @refresh="refreshGraph"
       />
     </template>
@@ -17,9 +18,18 @@
       :seedText="seedText"
       :seedName="seedName"
       :source="scrollSource"
+      :host="host"
       :error="error"
       :noScroll="noScroll"
+      :notFound="notFound"
+      :recovery="recovery"
+      :gatherings="gatherings"
+      :gatheringsRead="gatheringsRead"
+      :autoSummon="autoSummon"
       @log="addLog"
+      @rehand="rehand"
+      @summoned="onSummoned"
+      @hold="heldName = $event"
     />
   </ActShell>
 </template>
@@ -35,20 +45,26 @@ import ActShell from '../components/ActShell.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
-import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
-import { speakers } from '../parthenon/speakers.js'
-import { arrivals } from '../parthenon/arrivals/index.js'
-import { stripIds, isPlatformNode, isActivityTie } from '../parthenon/vocabulary.js'
+import { findGatherings } from '../api/simulation'
+import pendingUpload, { getPendingUpload, clearPendingUpload, setPendingUpload } from '../store/pendingUpload'
+import { speakers, speakerSeedFile } from '../parthenon/speakers.js'
+import { arrivals, arrivalSeedFile } from '../parthenon/arrivals/index.js'
+import { localText } from '../parthenon/localText.js'
+import { speakerFaceUrl } from '../parthenon/portraits.js'
+import { stripIds, bestGathering, wayLinks } from '../parthenon/vocabulary.js'
+import { buildWebModel } from '../parthenon/web.js'
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // The court's state
 const currentProjectId = ref(route.params.projectId)
 const graphLoading = ref(false)
 const error = ref('')
 const noScroll = ref(false)
+// An address with no scroll behind it (a mistyped or forgotten link).
+const notFound = ref(false)
 const projectData = ref(null)
 const graphData = ref(null)
 const currentPhase = ref(-1) // -1: handed over, 0: being read, 1: taken in, 2: known
@@ -63,11 +79,64 @@ let pollTimer = null
 let graphPollTimer = null
 
 const shellStatus = computed(() => {
+  if (notFound.value) return 'ready'
   if (error.value) return 'error'
   if (noScroll.value) return 'ready'
   if (currentPhase.value >= 2) return 'done'
   return 'working'
 })
+const shellStatusText = computed(() => (notFound.value ? t('parthenon.hearing.notFoundStatus') : ''))
+
+// A name held in the Hearing's list lights its star in the Web beside it.
+const heldName = ref('')
+
+// ---- The gatherings this scroll has already called ----
+// A revisited Hearing leads back to them (the Way's later stations and the
+// door out of the court) instead of summoning a new crowd by default.
+const gatherings = ref([])
+const gatheringsRead = ref(false)
+let gatheringsFor = ''
+const readGatherings = async () => {
+  const id = currentProjectId.value
+  if (!id || id === 'new') return
+  gatheringsFor = id
+  try {
+    const rows = await findGatherings({ projectId: id })
+    if (gatheringsFor !== id) return
+    gatherings.value = rows
+  } catch (err) {
+    // The shelf is quiet: the court offers to summon, as before.
+  } finally {
+    if (gatheringsFor === id) gatheringsRead.value = true
+  }
+}
+
+const links = computed(() => {
+  const id = currentProjectId.value && currentProjectId.value !== 'new' ? currentProjectId.value : ''
+  return wayLinks(bestGathering(gatherings.value), { projectId: id })
+})
+
+// ---- Let Athens speak, carried through ----
+// A Hearing begun from the steps in this tab summons the citizens on its own
+// once the court has finished, so the visitor is carried into the Gathering.
+// The mark survives a reload of this tab; a Hearing revisited later (or with
+// gatherings of its own already) never summons by itself.
+const FROM_STEPS_KEY = 'parthenon.hearing.fromSteps'
+const startedHere = ref(false)
+const markFromSteps = (id) => {
+  startedHere.value = true
+  try { sessionStorage.setItem(FROM_STEPS_KEY, id) } catch (e) { /* this visit still carries it */ }
+}
+const readFromSteps = (id) => {
+  try { return !!id && sessionStorage.getItem(FROM_STEPS_KEY) === id } catch (e) { return false }
+}
+const onSummoned = () => {
+  startedHere.value = false
+  try { sessionStorage.removeItem(FROM_STEPS_KEY) } catch (e) { /* nothing kept */ }
+}
+const autoSummon = computed(() =>
+  startedHere.value && gatheringsRead.value && !gatherings.value.length && currentPhase.value >= 2 && !error.value
+)
 
 // --- The ledger -------------------------------------------------------------
 
@@ -138,18 +207,119 @@ const recoverScroll = () => {
 }
 
 // Where the scroll came from, in words: the speaker and their work, the
-// arrival's title, a stage the visitor built, or the visitor's own scroll.
-// The file's name never reaches the page.
+// arrival's title, a stage the visitor built, or the visitor's own scroll, in
+// the visitor's language. The file's name never reaches the page.
 const scrollSource = computed(() => {
   const file = seedName.value
   if (!file) return null
+  const lang = locale.value
   const speaker = speakers.find((s) => s.fileName === file)
-  if (speaker) return { kind: 'speaker', name: speaker.name, work: speaker.work || '' }
+  if (speaker) return { kind: 'speaker', name: localText(speaker, 'name', lang), work: localText(speaker, 'work', lang) }
   const arrival = arrivals.find((a) => a.fileName === file)
-  if (arrival) return { kind: 'arrival', title: arrival.title || arrival.name || '' }
+  if (arrival) return { kind: 'arrival', title: localText(arrival, 'title', lang) || localText(arrival, 'name', lang) }
   if (/^stage-/i.test(file)) return { kind: 'stage' }
   return { kind: 'own' }
 })
+
+// The philosopher who took the steps keeps the floor at the Hearing.
+const host = computed(() => {
+  const file = seedName.value
+  const speaker = file ? speakers.find((s) => s.fileName === file) : null
+  if (!speaker) return null
+  const lang = locale.value
+  return {
+    id: speaker.id,
+    name: localText(speaker, 'name', lang),
+    greek: speaker.greek,
+    line: localText(speaker, 'line', lang),
+    portrait: speakerFaceUrl(speaker.id) // the face of the figure on the steps
+  }
+})
+
+// ---- A scroll handed over and lost to a reload ----
+// The first reading can outlast a phone's patience: switching apps often
+// reloads the tab before the court has named the scroll. What was handed over
+// is kept in this tab so the court can be given it again: a prepared scroll
+// by its name, the visitor's own text or built stage whole. A PDF must be
+// chosen again.
+const PENDING_KEY = 'parthenon.hearing.pending'
+const PENDING_FOR_MS = 12 * 60 * 60 * 1000
+const recovery = ref(null) // { question, files: [{ name, kind }], ready }
+
+const preparedFile = (name) => {
+  const speaker = speakers.find((s) => s.fileName === name)
+  if (speaker) return speakerSeedFile(speaker)
+  const arrival = arrivals.find((a) => a.fileName === name)
+  return arrival ? arrivalSeedFile(arrival) : null
+}
+
+const keepPending = async (pending) => {
+  const files = []
+  for (const f of pending.files) {
+    if (preparedScroll(f.name)) {
+      files.push({ name: f.name, kind: 'prepared' })
+      continue
+    }
+    let text = ''
+    if (isTextFile(f) && typeof f.text === 'function') {
+      try { text = await f.text() } catch (e) { text = '' }
+    }
+    files.push(text ? { name: f.name, kind: 'text', type: f.type || 'text/markdown', text } : { name: f.name, kind: 'other' })
+  }
+  const record = {
+    files,
+    question: pending.simulationRequirement || '',
+    maxRounds: Number(route.query.maxRounds) || Number(pendingUpload.maxRounds) || null,
+    at: Date.now()
+  }
+  try {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify(record))
+  } catch (e) {
+    // Too large to keep, or storage refused: without it only the question is kept.
+    try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ ...record, files: files.map(({ text, ...rest }) => ({ ...rest, kind: rest.kind === 'text' ? 'other' : rest.kind })) })) } catch (e2) { /* nothing kept */ }
+  }
+}
+
+const forgetPending = () => {
+  try { sessionStorage.removeItem(PENDING_KEY) } catch (e) { /* nothing kept */ }
+}
+
+const readKeptPending = () => {
+  try {
+    const record = JSON.parse(sessionStorage.getItem(PENDING_KEY) || 'null')
+    if (!record || !Array.isArray(record.files) || !record.files.length) return null
+    if (Date.now() - Number(record.at || 0) > PENDING_FOR_MS) return null
+    return record
+  } catch (e) {
+    return null
+  }
+}
+
+let keptRecord = null
+const offerRecovery = () => {
+  keptRecord = readKeptPending()
+  if (!keptRecord) return
+  recovery.value = {
+    question: keptRecord.question,
+    files: keptRecord.files.map((f) => ({ name: f.name, kind: f.kind })),
+    ready: keptRecord.files.every((f) => f.kind === 'prepared' || (f.kind === 'text' && f.text))
+  }
+}
+
+// Hand the kept scroll to the court again, as the steps would have.
+const rehand = async () => {
+  const record = keptRecord || readKeptPending()
+  if (!record) return
+  const files = record.files
+    .map((f) => (f.kind === 'prepared' ? preparedFile(f.name) : f.kind === 'text' && f.text ? new File([f.text], f.name, { type: f.type || 'text/markdown' }) : null))
+    .filter(Boolean)
+  if (!files.length || files.length !== record.files.length) return
+  setPendingUpload(files, record.question || '')
+  if (record.maxRounds) pendingUpload.maxRounds = record.maxRounds
+  recovery.value = null
+  noScroll.value = false
+  await handleNewProject()
+}
 
 // --- The court --------------------------------------------------------------
 
@@ -166,6 +336,7 @@ const handleNewProject = async () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
     noScroll.value = true
+    offerRecovery()
     return
   }
 
@@ -173,6 +344,7 @@ const handleNewProject = async () => {
     currentPhase.value = 0
     seedName.value = pending.files[0]?.name || ''
     seedText.value = await readPendingScroll(pending.files)
+    await keepPending(pending)
     addLog(t('parthenon.hearing.ledger.handed'))
 
     const formData = new FormData()
@@ -182,11 +354,14 @@ const handleNewProject = async () => {
     const res = await generateOntology(formData)
     if (res.success) {
       clearPendingUpload()
+      forgetPending()
       currentProjectId.value = res.data.project_id
       projectData.value = res.data
       rememberScroll(res.data.project_id, seedText.value)
+      markFromSteps(res.data.project_id)
+      gatheringsRead.value = true // a scroll heard for the first time has called no one yet
 
-      router.replace({ name: 'Process', params: { projectId: res.data.project_id } })
+      router.replace({ name: 'Process', params: { projectId: res.data.project_id }, query: route.query })
       addLog(t('parthenon.hearing.ledger.read'))
       await startBuildGraph()
     } else {
@@ -200,6 +375,8 @@ const handleNewProject = async () => {
 }
 
 const loadProject = async () => {
+  startedHere.value = readFromSteps(currentProjectId.value)
+  readGatherings()
   try {
     const res = await getProject(currentProjectId.value)
     if (res.success) {
@@ -224,6 +401,11 @@ const loadProject = async () => {
       addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
     }
   } catch (err) {
+    if (err?.response?.status === 404) {
+      notFound.value = true
+      addLog(t('parthenon.hearing.notFound'))
+      return
+    }
     error.value = err.message
     addLog(t('parthenon.hearing.ledger.trouble', { error: error.value }))
   }
@@ -281,27 +463,14 @@ const startGraphPolling = () => {
   graphPollTimer = setInterval(fetchGraphData, 10000)
 }
 
-// The count the Web itself draws, so the status line, the ledger and the Web
-// panel never disagree: the platform nodes are the squares, not names; a tie
-// to nothing or to oneself is dropped; parallel ties between the same two
-// names are one tie; and the square's own chatter (who spoke, nodded, quoted)
-// is counted apart from the shape of the city.
+// The count the Web itself draws, from the Web's own reading, so the status
+// line, the ledger and the Web panel never disagree: the platform nodes are
+// the squares, not names; a tie to nothing or to oneself is dropped; parallel
+// ties between the same two names are one tie; and the square's own chatter
+// (who spoke, nodded, quoted) is counted apart, one thread for each.
 const countWeb = (data) => {
-  const nodes = (Array.isArray(data?.nodes) ? data.nodes : []).filter((n) => n && n.uuid && !isPlatformNode(n.name))
-  const ids = new Set(nodes.map((n) => n.uuid))
-  const pairs = new Set()
-  let chatter = 0
-  for (const e of Array.isArray(data?.edges) ? data.edges : []) {
-    const a = e?.source_node_uuid
-    const b = e?.target_node_uuid
-    if (!ids.has(a) || !ids.has(b) || a === b) continue
-    if (isActivityTie(e.name || e.fact_type || 'RELATES_TO')) {
-      chatter++
-      continue
-    }
-    pairs.add(a < b ? `${a}|${b}` : `${b}|${a}`)
-  }
-  return { names: nodes.length, ties: pairs.size, chatter }
+  const m = buildWebModel(data)
+  return { names: m.nodes.length, ties: m.tieCount, chatter: m.chatterThreads }
 }
 
 const webCounts = computed(() => countWeb(graphData.value))

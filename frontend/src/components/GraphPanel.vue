@@ -135,9 +135,11 @@
           type="button"
           class="star-key"
           :style="keyStyle(n)"
+          :tabindex="n.id === rovingKeyId ? 0 : -1"
           :aria-label="n.role ? `${n.name}, ${n.role}` : n.name"
           :aria-pressed="focusId === n.id ? 'true' : 'false'"
           @click="onKeyChoose(n.id, $event)"
+          @keydown="onKeyWalk($event, n.id)"
           @focus="onKeyFocus(n.id)"
           @blur="onKeyBlur(n.id)"
         ></button>
@@ -179,14 +181,14 @@
           <ul v-if="dossier.facts.length" class="card-facts" role="list">
             <li v-for="f in dossier.facts" :key="f.key" class="fact" :class="f.stance && `is-${f.stance}`">
               <span class="fact-mark" :style="{ background: f.stance ? undefined : familyColorVar(f.otherFamily) }" aria-hidden="true"></span>
-              <p>{{ f.text }}</p>
+              <p :lang="textLang(f.text)">{{ f.text }}</p>
             </li>
           </ul>
           <p v-else class="card-none">{{ $t('parthenon.web.noFacts') }}</p>
 
           <template v-if="dossier.node.summary">
             <h4 class="card-section p-eyebrow">{{ $t('parthenon.web.whoTheyAre') }}</h4>
-            <p :id="summaryId" class="card-bio" :class="{ clamped: longSummary && !summaryOpen }">{{ dossier.node.summary }}</p>
+            <p :id="summaryId" class="card-bio" :class="{ clamped: longSummary && !summaryOpen }" :lang="textLang(dossier.node.summary)">{{ dossier.node.summary }}</p>
             <button
               v-if="longSummary"
               type="button"
@@ -202,7 +204,7 @@
             <ul class="card-facts chatter" role="list">
               <li v-for="f in dossier.chatterFacts.slice(0, CHATTER_FACTS)" :key="f.key" class="fact">
                 <span class="fact-mark" aria-hidden="true"></span>
-                <p>{{ f.text }}</p>
+                <p :lang="textLang(f.text)">{{ f.text }}</p>
               </li>
             </ul>
             <p v-if="dossier.chatterFacts.length > CHATTER_FACTS" class="card-more">{{ $t('parthenon.web.andMore', { n: dossier.chatterFacts.length - CHATTER_FACTS }) }}</p>
@@ -280,13 +282,33 @@
           <span class="p-eyebrow">{{ $t('parthenon.web.whoIsHere') }}</span>
           <span class="chev" aria-hidden="true"></span>
         </button>
-        <ul v-show="legendOpen" class="legend-items" role="list">
-          <li v-for="entry in legend" :key="entry.key || '_'" class="legend-item">
-            <span class="legend-dot" :style="{ background: familyColorVar(entry.family) }" aria-hidden="true"></span>
-            <span class="legend-label">{{ entry.label || $t('parthenon.web.things') }}</span>
-            <span class="legend-count">{{ entry.count }}</span>
-          </li>
-        </ul>
+        <div v-show="legendOpen" class="legend-body">
+          <ul class="legend-items" role="list" :aria-label="$t('parthenon.web.legendKinds')">
+            <li v-for="(entry, i) in legend" :key="entry.key || '_'">
+              <button
+                :ref="(el) => setKindEl(i, el)"
+                type="button"
+                class="legend-item"
+                :class="{ on: legendOnly === entry.key, dim: legendOnly !== null && legendOnly !== entry.key }"
+                :tabindex="i === rovingKind ? 0 : -1"
+                :aria-pressed="legendOnly === entry.key ? 'true' : 'false'"
+                @click="toggleKind(entry.key)"
+                @keydown="onKindWalk($event, i)"
+                @focus="rovingKind = i"
+              >
+                <span class="legend-dot" :style="{ background: familyColorVar(entry.family) }" aria-hidden="true"></span>
+                <span class="legend-label">{{ entry.label || $t('parthenon.web.things') }}</span>
+                <span class="legend-count">{{ entry.count }}</span>
+              </button>
+            </li>
+          </ul>
+          <p class="legend-threads">
+            <span class="thread-sample"><svg viewBox="0 0 24 6" width="24" height="6" aria-hidden="true"><path d="M1 3h22" class="ts-tie" /></svg>{{ $t('parthenon.web.threads.tie') }}</span>
+            <span class="thread-sample"><svg viewBox="0 0 24 6" width="24" height="6" aria-hidden="true"><path d="M1 3h22" class="ts-allied" /></svg>{{ $t('parthenon.web.threads.allied') }}</span>
+            <span class="thread-sample"><svg viewBox="0 0 24 6" width="24" height="6" aria-hidden="true"><path d="M1 3h22" class="ts-odds" /></svg>{{ $t('parthenon.web.threads.atOdds') }}</span>
+            <span v-if="showChatter" class="thread-sample"><svg viewBox="0 0 24 6" width="24" height="6" aria-hidden="true"><path d="M1 3h22" class="ts-chatter" /></svg>{{ $t('parthenon.web.threads.chatter') }}</span>
+          </p>
+        </div>
       </div>
     </div>
   </div>
@@ -307,10 +329,11 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, inject } fr
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import CitizenCoin from './CitizenCoin.vue'
-import { ROLE_COLOR_VAR } from '../parthenon/vocabulary.js'
+import { ROLE_COLOR_VAR, textLang } from '../parthenon/vocabulary.js'
 import { useCitizenPortraits } from '../parthenon/portraits.js'
 import {
   buildWebModel,
+  focusView,
   nodeDossier,
   searchNodes,
   webInWords,
@@ -361,7 +384,11 @@ const props = defineProps({
   // A beat in the square: { from: name, to: name or null, key }. Each new
   // object blooms the speaker's star and lights the thread to whoever they
   // addressed, so the sky answers the square beside it.
-  pulse: { type: Object, default: null }
+  pulse: { type: Object, default: null },
+  // A name held elsewhere in the act (a citizen held in the square, a name
+  // opened in the Hearing's list): its star is lit with its ties and face,
+  // and its name printed, without opening the card.
+  hold: { type: String, default: '' }
 })
 
 const emit = defineEmits(['refresh'])
@@ -441,10 +468,9 @@ const subline = computed(() => {
   const m = model.value
   if (!m.nodes.length) return t('parthenon.web.empty')
   if (showChatter.value) {
-    const ties = m.links.length
-    return isNarrow.value
-      ? t('parthenon.web.countShortChatter', { names: m.nodes.length, ties })
-      : t('parthenon.web.countChatter', { names: m.nodes.length, ties })
+    // The same units as the Hearing's lede and ledger: ties, then threads of chatter.
+    const counts = { names: m.nodes.length, ties: m.tieCount, chatter: m.chatterThreads }
+    return isNarrow.value ? t('parthenon.web.countShortChatter', counts) : t('parthenon.web.countChatter', counts)
   }
   return t(isNarrow.value ? 'parthenon.web.countShort' : 'parthenon.web.count', { names: m.nodes.length, ties: m.tieCount })
 })
@@ -465,6 +491,97 @@ const keyStyle = (n) => {
   const d = `${Math.round(keyRadius(n) * 2)}px`
   return { width: d, height: d }
 }
+
+// The keys are one stop for the keyboard: the chosen name's key (or the one
+// last reached, or the best-tied) takes Tab; arrows walk the sky from there.
+const lastKeyId = ref(null)
+const rovingKeyId = computed(() => {
+  const ids = keyNodes.value.map((n) => n.id)
+  if (focusId.value && ids.includes(focusId.value)) return focusId.value
+  if (lastKeyId.value && ids.includes(lastKeyId.value)) return lastKeyId.value
+  return ids[0] || null
+})
+
+// The nearest key in the direction pressed; by rank when none lies that way.
+const keyToward = (fromId, dir) => {
+  const list = keyNodes.value
+  const at = list.findIndex((n) => n.id === fromId)
+  if (dir === 'first') return list[0]?.id || null
+  if (dir === 'last') return list[list.length - 1]?.id || null
+  const a = web.byId.get(fromId)
+  let best = null
+  let bestScore = Infinity
+  if (a && Number.isFinite(a.sx)) {
+    for (const n of list) {
+      if (n.id === fromId) continue
+      const b = web.byId.get(n.id)
+      if (!b || !Number.isFinite(b.sx)) continue
+      const dx = b.sx - a.sx
+      const dy = b.sy - a.sy
+      const along = dir === 'right' ? dx : dir === 'left' ? -dx : dir === 'down' ? dy : -dy
+      const across = dir === 'right' || dir === 'left' ? Math.abs(dy) : Math.abs(dx)
+      if (along <= 4) continue
+      const score = along + across * 2
+      if (score < bestScore) {
+        bestScore = score
+        best = n.id
+      }
+    }
+  }
+  if (best) return best
+  const step = dir === 'right' || dir === 'down' ? 1 : -1
+  const next = list[(Math.max(0, at) + step + list.length) % list.length]
+  return next ? next.id : null
+}
+
+const WALK = { ArrowRight: 'right', ArrowLeft: 'left', ArrowDown: 'down', ArrowUp: 'up', Home: 'first', End: 'last' }
+const onKeyWalk = (event, id) => {
+  const dir = WALK[event.key]
+  if (!dir || event.altKey || event.metaKey || event.ctrlKey) return
+  event.preventDefault()
+  const next = keyToward(id, dir)
+  if (!next) return
+  lastKeyId.value = next
+  nextTick(() => keyEls.get(next)?.focus({ preventScroll: true }))
+}
+
+// A name held elsewhere in the act, found in the sky.
+const heldId = computed(() => {
+  const name = String(props.hold || '').trim()
+  if (!name) return null
+  return findByName(model.value.nodes, name)?.id || null
+})
+
+// The legend lights one kind of name at a time; it is one stop for the
+// keyboard, arrows walk the kinds.
+const legendOnly = ref(null)
+const rovingKind = ref(0)
+const kindEls = new Map()
+const setKindEl = (i, el) => {
+  if (el) kindEls.set(i, el)
+  else kindEls.delete(i)
+}
+const toggleKind = (key) => {
+  legendOnly.value = legendOnly.value === key ? null : key
+  wake()
+}
+const onKindWalk = (event, i) => {
+  const n = legend.value.length
+  if (!n) return
+  let next = null
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (i + 1) % n
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (i - 1 + n) % n
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = n - 1
+  if (next === null) return
+  event.preventDefault()
+  rovingKind.value = next
+  nextTick(() => kindEls.get(next)?.focus())
+}
+watch(legend, (list) => {
+  if (legendOnly.value !== null && !list.some((e) => e.key === legendOnly.value)) legendOnly.value = null
+  if (rovingKind.value >= list.length) rovingKind.value = 0
+})
 
 const dossier = computed(() => (focusId.value ? nodeDossier(model.value, focusId.value) : null))
 const panelOpen = computed(() => !!dossier.value || (listOpen.value && hasSky.value))
@@ -552,6 +669,7 @@ let still = false
 let settle = null // a layout being found a slice at a time
 let ambientUntil = 0
 let faceSet = new Set()
+let flashNamed = new Set() // speakers whose names are printed while their beat shows
 let returnEl = null
 let motionQuery = null
 let resizeObserver = null
@@ -791,10 +909,12 @@ const computeTarget = () => {
     const near = neighbourhood(web, focusId.value)
     const nodes = web.nodes.filter((n) => near.has(n.id))
     const only = new Set([chosen.id])
-    const v = fitView(nodes, box, {
-      minK: wholeK * 0.85,
-      maxK: Math.min(2.6, wholeK * 1.4),
-      s: wholeS,
+    // Above a sheet the strip of sky is short: the view may pull back further
+    // and draw the stretch in, so the ties for and against stay in sight.
+    const v = focusView(nodes, box, {
+      wholeK,
+      wholeS,
+      sheet: cardMode.value === 'sheet',
       labelsAt: (k, s) => labelsForFit(nodes, k, s, only, true)
     })
     const [sx, sy] = toScreen(v, chosen.x, chosen.y)
@@ -820,7 +940,7 @@ const retarget = ({ snap = false } = {}) => {
 // ---------------------------------------------------------------------------
 // Names and faces on screen
 
-const centerId = () => hoverId.value || keyFocusId.value || focusId.value
+const centerId = () => hoverId.value || keyFocusId.value || focusId.value || heldId.value
 
 // Each star's drawn ties, indexed once per pass over the names.
 const drawnTies = () => {
@@ -860,6 +980,7 @@ const facesWanted = () => {
   want(hoverId.value)
   want(keyFocusId.value)
   want(focusId.value)
+  want(heldId.value)
   if (wholeK && view.k > wholeK * 1.4) {
     let shown = 0
     const ranked = [...web.nodes].sort((a, b) => a.rank - b.rank)
@@ -903,13 +1024,22 @@ const computeLabels = () => {
   }
   push(web.byId.get(focusId.value), true)
   push(web.byId.get(center), true)
+  push(web.byId.get(heldId.value), true)
+  // Whoever speaks in the square is named while their star blooms.
+  flashNamed = new Set()
+  for (const f of web.flashes || []) {
+    if (!f?.from) continue
+    flashNamed.add(f.from)
+    push(web.byId.get(f.from), true)
+  }
   if (near) {
     for (const n of web.nodes.filter((m) => near.has(m.id)).sort((a, b) => a.rank - b.rank)) push(n, false)
   }
   const ranked = [...web.nodes].sort((a, b) => a.rank - b.rank)
   for (const n of ranked) if (n.top) push(n, false)
-  // With room to spare, every name that fits (up to a sky's worth of them).
-  if (roomy()) {
+  // With room to spare (a sheet, a narrow column, or a tall sky), every name
+  // that fits, up to a sky's worth of them; a name that would collide is left out.
+  if (roomy() || height - hiddenBelow.value >= 560) {
     for (const n of ranked) {
       if (items.length >= ROOMY_LABELS) break
       push(n, false)
@@ -1059,7 +1189,7 @@ const frame = () => {
     }
     if (web.alpha === 0) savePositions()
   }
-  if (updateEmphasis(web, centerId(), dt, still)) moving = true
+  if (updateEmphasis(web, centerId(), dt, still, { only: legendOnly.value })) moving = true
   if (updateFaces(web, facesWanted(), dt, still)) moving = true
   if (easeView(view, target, dt, still || snapNext)) moving = true
   snapNext = false
@@ -1074,10 +1204,12 @@ const frame = () => {
     dirty = moving
   }
   const flashing = tidyFlashes(web, now)
+  // A beat that has passed takes its speaker's name with it.
+  if (flashNamed.size && [...flashNamed].some((id) => !(web.flashes || []).some((f) => f.from === id))) dirty = true
   compose(now)
 
   if (moving || dirty) schedule()
-  else if (flashing) schedule(still ? flashLeft(web, now) + 16 : OVERLAY_MS)
+  else if (flashing) schedule(still ? Math.min(flashLeft(web, now) + 16, 1200) : OVERLAY_MS)
   else if (!still && now < ambientUntil) schedule(AMBIENT_MS)
 }
 
@@ -1268,6 +1400,7 @@ const fitAll = () => {
 
 const onKeyFocus = (id) => {
   keyFocusId.value = id
+  lastKeyId.value = id
   wake()
 }
 
@@ -1277,6 +1410,8 @@ const onKeyBlur = (id) => {
 }
 
 const openList = async () => {
+  // The list shows at once: a card held open lets go first.
+  if (focusId.value) clearFocus()
   listOpen.value = true
   await nextTick()
   listHeadEl.value?.focus({ preventScroll: true })
@@ -1338,7 +1473,10 @@ const onPulse = (beat) => {
   const from = findByName(web.nodes, beat.from)
   if (!from) return
   const to = beat.to ? findByName(web.nodes, beat.to) : null
-  if (flashBeat(web, from.id, to ? to.id : null, performance.now())) nudge()
+  if (!flashBeat(web, from.id, to ? to.id : null, performance.now())) return
+  // A speaker whose name is not yet printed is named for the length of the beat.
+  if (labels.has(from.id)) nudge()
+  else wake()
 }
 watch(() => props.pulse, onPulse)
 defineExpose({ pulse: onPulse })
@@ -1501,6 +1639,9 @@ watch(
     nextTick(render)
   }
 )
+
+// A name held elsewhere lights its star (and its ties and face) at once.
+watch(heldId, () => wake())
 
 watch(showChatter, (on) => {
   setChatterVisible(web, on)
@@ -1996,6 +2137,7 @@ onBeforeUnmount(() => {
 .list-toggle:focus {
   clip-path: none;
   width: auto;
+  min-width: 44px;
   height: auto;
   overflow: visible;
 }
@@ -2090,20 +2232,84 @@ onBeforeUnmount(() => {
 .legend-items {
   list-style: none;
   margin: 0;
-  padding: 0 12px 10px;
+  padding: 0 8px 4px;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px 14px;
-  max-width: 360px;
+  gap: 0 4px;
+  max-width: 380px;
 }
 
+/* A toggle is a target: 40px tall on every screen, as a thumb needs. */
 .legend-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 40px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--p-radius);
+  font: inherit;
   font-size: var(--t-xs);
   color: var(--p-ink-2);
   white-space: nowrap;
+  cursor: pointer;
+  transition: opacity 0.2s ease, border-color 0.2s ease;
+}
+
+.legend-item:hover,
+.legend-item.on {
+  border-color: var(--p-line-strong);
+}
+
+.legend-item.on {
+  color: var(--p-ink);
+}
+
+.legend-item.dim {
+  opacity: 0.5;
+}
+
+.legend-item:focus-visible {
+  outline: 2px solid var(--p-gold);
+  outline-offset: 1px;
+}
+
+/* How the threads read: a tie, allied, at odds, and the chatter's stitches */
+.legend-threads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 6px 14px 10px;
+  border-top: 1px solid var(--p-line);
+  font-size: var(--t-xs);
+  color: var(--p-ink-3);
+}
+
+.thread-sample {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.thread-sample path {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.ts-tie { stroke: var(--p-gold); opacity: 0.7; }
+.ts-allied { stroke: var(--p-olive); }
+.ts-odds { stroke: var(--p-error); }
+.ts-chatter { stroke: var(--p-gold); stroke-dasharray: 1.5 3.5; opacity: 0.85; }
+
+/* Chinese is not set in capitals with inscription tracking. */
+.graph-panel .p-eyebrow:lang(zh) {
+  font-family: var(--p-font-serif);
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .legend-dot {
@@ -2148,7 +2354,8 @@ onBeforeUnmount(() => {
 .web-list.as-sheet {
   left: 0;
   right: 0;
-  max-height: 58%;
+  /* The card's body scrolls; the sky above keeps room for the chosen name's ties. */
+  max-height: 46%;
   animation-name: sheet-in;
 }
 

@@ -13,6 +13,16 @@ export default {
   fileName: 'arrival-epicurus-garden-griefbots.md',
   question:
     'Epicurus has told Linden Hill, in new words, that a friend who cannot leave has never chosen you and, in old ones from his Letter to Menoeceus, that the future is neither wholly ours nor wholly not ours. In the fourteen days before the board votes on Aftersong’s Legacy Room gift, who in the Agora and the Stoa keeps, cancels or starts a griefbot or companion, does doom anxiety ease or spread, and does the board take the gift?',
+  // The same card in Chinese (read through localText.js). The seed stays English.
+  zh: {
+    name: '伊壁鸠鲁',
+    title: '伊壁鸠鲁与哀思机器人',
+    challenge: '哀思机器人、AI 伴侣与 AI 末日焦虑',
+    place: '阿什福德，林登山安宁疗护院花园',
+    year: '2026 年',
+    line: '未来既不完全属于我们，也不完全不属于我们。',
+    question: '伊壁鸠鲁用新的话告诉林登山：一个不能离开的朋友，从来没有选择过你；又用他《致美诺寇的信》里的旧话说：未来既不完全属于我们，也不完全不属于我们。在董事会就 Aftersong 捐赠的「遗念室」表决之前的十四天里，广场和柱廊上谁保留、取消或开始使用哀思机器人或 AI 伴侣？对末日的焦虑是缓解了，还是蔓延了？董事会会接受这份捐赠吗？'
+  },
   seed: `# Epicurus and the Griefbots, staged for Parthenon
 
 *Ashford, autumn 2026. The garden of Linden Hill Hospice at dusk, chairs among the rosemary for a community evening. Three days ago Epicurus stepped off the Parthenon steps into this garden and asked for bread and water.*

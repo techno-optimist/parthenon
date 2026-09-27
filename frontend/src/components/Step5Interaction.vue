@@ -1,11 +1,18 @@
 <template>
-  <section ref="rootRef" class="symposium" :class="{ 'crowd-mode': mode === 'crowd', asleep: cityState === 'asleep' }">
+  <section ref="rootRef" class="symposium" :class="{ 'crowd-mode': mode === 'crowd', asleep: cityState === 'asleep', missing: chronicleMissing }">
     <!-- The room's caption. -->
     <header class="room-head">
       <span class="p-eyebrow">{{ t('step5.symposium.room') }}</span>
       <h2 class="room-title">{{ t('step5.symposium.whoIsHere') }}</h2>
     </header>
 
+    <!-- An address with no Chronicle behind it: no room is laid, and nothing can be asked. -->
+    <div v-if="chronicleMissing" class="room-missing" role="status">
+      <p class="missing-line">{{ t('parthenon.chronicle.notFound') }}</p>
+      <router-link class="p-button secondary" :to="{ name: 'Chronicles' }">{{ t('parthenon.chronicles.seeAll') }}</router-link>
+    </div>
+
+    <template v-else>
     <!-- The room itself, the painted andron in lamplight: the Scribe at the head of the table, the
          citizens on the couches, those who stood for on one side and those who stood against on the
          other. On phones the couches become one strip of faces to swipe through. -->
@@ -63,7 +70,7 @@
                   />
                   <span v-if="citizen.stance" class="coin-pip" aria-hidden="true"></span>
                 </span>
-                <span :id="`seat-${citizen.idx}-name`" class="seat-name">{{ citizen.name }}</span>
+                <span :id="`seat-${citizen.idx}-name`" class="seat-name" :title="citizen.name">{{ citizen.name }}</span>
                 <span :id="`seat-${citizen.idx}-note`" class="seat-note lit">{{ seatNote(citizen) }}</span>
                 <span :id="`seat-${citizen.idx}-desc`" class="sr-only">{{ seatDescription(citizen) }}</span>
               </button>
@@ -71,6 +78,27 @@
           </ul>
         </div>
       </div>
+
+      <!-- The one who took the floor on the steps keeps a seat of honour beside the Scribe. -->
+      <section v-if="honour" class="honour" aria-labelledby="honour-floor">
+        <span class="honour-coin">
+          <CitizenCoin :name="honour.letter || honour.name" :portrait="honour.face" color="var(--p-gold)" size="lg" />
+        </span>
+        <div class="honour-copy">
+          <p id="honour-floor" class="honour-floor">{{ t('step5.symposium.honour.floor', { name: honour.name }) }}</p>
+          <blockquote v-if="honour.line" class="honour-line" :lang="langOf(honour.line)">{{ honour.line }}</blockquote>
+          <button type="button" class="honour-hear" :class="{ speaking: honourSpeaking }" @click="hearHonour">
+            <svg v-if="honourSpeaking" viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
+              <rect x="5" y="5" width="10" height="10" rx="1" fill="currentColor" />
+            </svg>
+            <svg v-else viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M3.5 8v4h3l4 3.5v-11L6.5 8z" stroke-linejoin="round" />
+              <path d="M13.5 7.2a4 4 0 0 1 0 5.6M15.6 5a7 7 0 0 1 0 10" stroke-linecap="round" />
+            </svg>
+            <span>{{ honourSpeaking ? t('step5.symposium.hearing.stop') : t('parthenon.hearing.host.hear') }}</span>
+          </button>
+        </div>
+      </section>
 
       <!-- What the couches stood for or against: the question put to the city, once. -->
       <div v-if="matter" class="room-matter">
@@ -130,13 +158,13 @@
               <span class="stance-pip" aria-hidden="true"></span>{{ companion.stance.text }}
             </p>
             <blockquote v-if="companion && companion.quote" class="band-quote">
-              <p>{{ companion.quote.text }}</p>
+              <p :lang="langOf(companion.quote.text)">{{ companion.quote.text }}</p>
               <cite>{{ t(`step5.symposium.saidIn.${companion.quote.place}`) }}</cite>
             </blockquote>
             <p v-else-if="companion" class="band-line">{{ companion.line }}</p>
             <div v-else class="band-saw">
               <span class="saw-label">{{ t('step5.symposium.scribeSaw') }}</span>
-              <p class="band-line">{{ scribeSawFull }}</p>
+              <p class="band-line" :lang="langOf(scribeSawFull)">{{ scribeSawFull }}</p>
             </div>
           </div>
         </div>
@@ -199,7 +227,7 @@
                 </template>
                 <p v-if="hearNote.key === `chat-${idx}`" :id="`hear-note-chat-${idx}`" class="voicing-note">{{ hearNote.text }}</p>
               </div>
-              <div class="answered-text" v-html="renderMarkdown(msg.content)"></div>
+              <div class="answered-text" :lang="langOf(msg.content)" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </template>
         </li>
@@ -257,7 +285,7 @@
             :placeholder="chatTarget === 'report_agent' ? t('step5.symposium.placeholderScribe') : t('step5.symposium.placeholder')"
             rows="1"
             :disabled="isChatInputDisabled"
-            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.exact="onAskEnter"
             @input="growInput"
           ></textarea>
           <button
@@ -408,7 +436,7 @@
             </div>
             <p v-if="activeAnswer.role" class="q-role">{{ activeAnswer.role }}</p>
             <p v-if="activeAnswer.stance" class="stance" :class="`is-${activeAnswer.stance.key}`"><span class="stance-pip" aria-hidden="true"></span>{{ activeAnswer.stance.text }}</p>
-            <div class="answered-text" v-html="renderMarkdown(activeAnswer.answer)"></div>
+            <div class="answered-text" :lang="langOf(activeAnswer.answer)" v-html="renderMarkdown(activeAnswer.answer)"></div>
           </div>
         </article>
 
@@ -425,12 +453,14 @@
             <div class="answered-body">
               <span class="line-meta"><span class="line-who">{{ r.name }}</span></span>
               <p v-if="r.role" class="q-role">{{ r.role }}</p>
-              <div class="answered-text" v-html="renderMarkdown(r.answer)"></div>
+              <div class="answered-text" :lang="langOf(r.answer)" v-html="renderMarkdown(r.answer)"></div>
             </div>
           </li>
         </ul>
       </section>
     </div>
+
+    </template>
 
     <!-- The voice the answers are heard in: silent until a hear button is pressed. -->
     <audio ref="voiceRef" class="voice-audio" preload="auto"></audio>
@@ -496,14 +526,20 @@ import CitizenCoin from './CitizenCoin.vue'
 import { chatWithReport, getReport, getAgentLog } from '../api/report'
 import {
   interviewAgents,
+  getSimulation,
   getSimulationProfilesRealtime,
   getEnvStatus,
   getSimulationConfig,
   getSimulationPosts
 } from '../api/simulation'
+import { getProject } from '../api/graph'
 import { citizenName, entityTypeName, roleFamily, roleLabel, roleColorVar, ROLE_COLOR_VAR, voiceOf as voiceForType } from '../parthenon/vocabulary.js'
-import { useCitizenPortraits } from '../parthenon/portraits.js'
+import { speakerFace, useCitizenPortraits } from '../parthenon/portraits.js'
 import { speakWords, filmAssetUrl, getCitizenStances } from '../api/parthenon'
+import { holdDuck, sound, speak, stopSpeaking, voiceUrl } from '../parthenon/sound.js'
+import { speakers } from '../parthenon/speakers.js'
+import { arrivals } from '../parthenon/arrivals/index.js'
+import { localText } from '../parthenon/localText.js'
 
 const { t, tm, locale } = useI18n()
 
@@ -522,6 +558,14 @@ const selectedAgentIndex = ref(null)
 // Whether the citizens can be questioned: they are present only while the city is awake.
 const cityState = ref('unknown') // unknown | awake | asleep
 const cityAwake = computed(() => cityState.value !== 'asleep')
+// No Chronicle at this address: the room is not laid and nothing can be asked.
+const chronicleMissing = ref(false)
+const isMissing = (err) => err?.response?.status === 404 || /not found|不存在/i.test(String(err?.message || err || ''))
+
+// Words carry their own language: English speech on a Chinese page (or the
+// reverse) is marked, so it is voiced and set as what it is.
+const HAN = /[\u3400-\u9fff]/
+const langOf = (text) => (HAN.test(String(text || '')) ? 'zh' : 'en')
 
 // Chat state
 const chatInput = ref('')
@@ -592,6 +636,59 @@ const tableRef = ref(null)
 
 // The Scribe's own face, painted once by the same painters as the citizens.
 const SCRIBE_PORTRAIT = '/media/symposium/scribe.jpg'
+
+// ---- The seat of honour ----
+// The philosopher (or the Arrival) who took the floor on the steps sits
+// beside the Scribe: their face, their line, and the line in their own voice.
+// Found as the Hearing finds its host: by the gathering's first scroll.
+const seedFile = ref('')
+const loadSeed = async (simId) => {
+  seedFile.value = ''
+  if (!simId) return
+  try {
+    const sim = await getSimulation(simId)
+    const projectId = sim?.data?.project_id
+    if (!projectId || simId !== props.simulationId) return
+    const project = await getProject(projectId)
+    if (simId !== props.simulationId) return
+    seedFile.value = project?.data?.files?.[0]?.filename || ''
+  } catch {
+    // Without the scroll's name the Scribe sits alone at the head.
+  }
+}
+watch(() => props.simulationId, loadSeed, { immediate: true })
+
+const honour = computed(() => {
+  const file = seedFile.value
+  if (!file || chronicleMissing.value) return null
+  const speaker = speakers.find((s) => s.fileName === file)
+  const arrival = speaker ? null : arrivals.find((a) => a.fileName === file)
+  const item = speaker || arrival
+  if (!item) return null
+  const lang = locale.value
+  return {
+    voice: speaker ? `speaker-${item.id}` : `arrival-${item.id}`,
+    name: localText(item, 'name', lang),
+    letter: item.letter || '',
+    face: speakerFace(item.name) || '',
+    line: localText(item, 'line', lang)
+  }
+})
+const honourUrl = computed(() => (honour.value ? voiceUrl(honour.value.voice, locale.value) : ''))
+const honourSpeaking = computed(() => !!honourUrl.value && sound.speaking === honourUrl.value)
+// Heard when asked, whether or not Listen is on; asked again, it stops.
+const hearHonour = () => {
+  if (!honourUrl.value) return
+  if (honourSpeaking.value) {
+    stopSpeaking()
+    return
+  }
+  if (speakingKey.value) stopHearing(false)
+  speak(honourUrl.value, { always: true })
+}
+onBeforeUnmount(() => {
+  if (honourSpeaking.value) stopSpeaking()
+})
 
 const socraticPrompts = computed(() => tm('step5.socraticPrompts'))
 
@@ -1130,6 +1227,24 @@ const nowSpeaking = (token) => {
   hearAnnouncement.value = t('step5.symposium.hearing.speaking')
 }
 
+// While a voice is heard (a recording or the browser's own), the night under
+// the act dips. The hold is taken when the voice sounds and let go when it
+// ends, is stopped, breaks off or the room is left.
+let releaseDuck = null
+const letGoDuck = () => {
+  if (!releaseDuck) return
+  const release = releaseDuck
+  releaseDuck = null
+  release()
+}
+watch(hearPhase, (phase) => {
+  if (phase === 'speaking') {
+    if (!releaseDuck) releaseDuck = holdDuck()
+  } else {
+    letGoDuck()
+  }
+}, { flush: 'sync' })
+
 // The browser's own voice, as before the city had voices of its own.
 const readInBrowser = (key, words, token) => {
   if (!canSpeak) {
@@ -1223,6 +1338,8 @@ const hear = (key, content, speaker = { voice: 'scribe' }) => {
     return
   }
   stopHearing(false)
+  // One voice at a time: the line from the seat of honour gives way.
+  if (honourSpeaking.value) stopSpeaking()
   hearNote.value = { key: null, text: '' }
   const words = plainWords(content)
   if (!words) return
@@ -1265,9 +1382,17 @@ const insertSocraticPrompt = (q) => {
   })
 }
 
+// Enter asks; Shift+Enter breaks the line. While an input method is still
+// composing (pinyin, kana), Enter belongs to it and never sends a half-written question.
+const onAskEnter = (e) => {
+  if (e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  sendMessage()
+}
+
 // Asking
 const sendMessage = async () => {
-  if (!chatInput.value.trim() || isChatInputDisabled.value) return
+  if (chronicleMissing.value || !chatInput.value.trim() || isChatInputDisabled.value) return
 
   const message = chatInput.value.trim()
   chatInput.value = ''
@@ -1649,6 +1774,7 @@ const readTheCrowd = async (questionText, list) => {
 // The Chronicle
 const loadReportData = async () => {
   if (!props.reportId) return
+  chronicleMissing.value = false
   try {
     const reportRes = await getReport(props.reportId)
     if (reportRes.success && reportRes.data) {
@@ -1667,11 +1793,19 @@ const loadReportData = async () => {
         reportOutline.value = { ...reportOutline.value, summary: record.outline.summary }
       }
       if (reportOutline.value) addLog(t('step5.symposium.ledger.chronicle'))
+    } else if (isMissing(reportRes.error)) {
+      chronicleMissing.value = true
+      addLog(t('parthenon.chronicle.notFound'))
     } else {
       addLog(t('step5.symposium.ledger.chronicleMissing', { error: reportRes.error || t('common.unknownError') }))
     }
   } catch (err) {
-    addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
+    if (isMissing(err)) {
+      chronicleMissing.value = true
+      addLog(t('parthenon.chronicle.notFound'))
+    } else {
+      addLog(t('step5.symposium.ledger.chronicleMissing', { error: err.message }))
+    }
   }
 }
 
@@ -1837,6 +1971,7 @@ onBeforeUnmount(() => {
   clearInterval(cityTimer)
   readingToken++
   stopHearing()
+  letGoDuck()
   if (chronicleOpen.value) {
     try { document.body.style.overflow = previousOverflow } catch { /* nothing to restore */ }
   }
@@ -1912,6 +2047,30 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
 
 /* The room's caption */
 .room-head { grid-area: head; min-width: 0; }
+
+/* No Chronicle at this address: one line and the way to the shelf */
+.room-missing {
+  grid-area: stage;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  margin-top: 28px;
+  padding: 28px 0 8px;
+  border-top: 1px solid var(--p-line);
+}
+
+.missing-line {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-style: italic;
+  font-size: var(--t-xl);
+  line-height: 1.25;
+  color: var(--p-ink-2);
+}
+
+.missing-line:lang(zh) { font-family: var(--p-font-serif); font-style: normal; }
+.room-missing .p-button { min-height: 44px; }
 
 .room-title {
   margin: 6px 0 4px;
@@ -2019,11 +2178,12 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   grid-template-areas:
     'left hint   right'
     'left head   right'
+    'left honour right'
     'left matter right'
     'left mid    right'
     'left foot   right'
     'left rest   right';
-  grid-template-rows: auto auto auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto auto auto 1fr;
   column-gap: clamp(20px, 3.4vw, 56px);
   margin: 30px calc(-1 * var(--p-gutter)) 0;
   padding: 48px var(--p-gutter) 56px;
@@ -2182,8 +2342,9 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   color: var(--p-ink);
   text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85);
   overflow-wrap: anywhere;
+  text-wrap: balance;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   transition: color 0.2s ease;
@@ -2194,7 +2355,8 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
 .seat-note {
   min-height: 1em;
   font-family: var(--p-font-inscription);
-  font-size: 0.6875rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
   letter-spacing: var(--track-inscription);
   text-transform: uppercase;
   line-height: 1.2;
@@ -2233,7 +2395,8 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   gap: 8px;
   margin-bottom: 12px;
   font-family: var(--p-font-inscription);
-  font-size: 0.6875rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
   letter-spacing: var(--track-inscription);
   text-transform: uppercase;
   color: var(--p-ink-2);
@@ -2331,6 +2494,99 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
 
 .matter-text::before { content: '\201C'; }
 .matter-text::after { content: '\201D'; }
+
+/* The seat of honour: who had the floor on the steps, just below the Scribe,
+   in the same lamplight, with their line and their voice. */
+.honour {
+  grid-area: honour;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  max-width: 32em;
+  margin-top: 16px;
+  padding: 10px 14px 8px 10px;
+  border-left: 2px solid var(--p-gold);
+  background: linear-gradient(90deg, rgba(240, 182, 96, 0.1), rgba(240, 182, 96, 0.03) 70%, transparent);
+  animation: honour-in 0.6s ease both;
+  min-width: 0;
+}
+
+@keyframes honour-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.honour-coin {
+  display: inline-flex;
+  border-radius: var(--p-radius-coin);
+}
+
+.honour-coin .citizen-coin {
+  width: 64px;
+  height: 64px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--p-gold) 28%, transparent), 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.honour-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.honour-floor {
+  margin: 0;
+  font-family: var(--p-font-inscription);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: var(--track-inscription);
+  text-transform: uppercase;
+  line-height: 1.3;
+  color: var(--p-gold);
+}
+
+.honour-line {
+  margin: 0;
+  font-family: var(--p-font-display);
+  font-style: italic;
+  font-size: var(--t-md);
+  line-height: 1.35;
+  color: var(--p-ink);
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.9);
+  text-wrap: pretty;
+}
+
+.honour-line::before { content: '\201C'; }
+.honour-line::after { content: '\201D'; }
+.honour-line:lang(zh) { font-family: var(--p-font-serif); font-style: normal; }
+.honour-line:lang(zh)::before { content: '\300C'; }
+.honour-line:lang(zh)::after { content: '\300D'; }
+
+.honour-hear {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin-left: -8px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: var(--p-ink-3);
+  font-family: var(--p-font-body);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.honour-hear:hover,
+.honour-hear:focus-visible,
+.honour-hear.speaking {
+  color: var(--p-ink);
+}
+
+.honour-hear.speaking svg { color: var(--p-gold); }
 
 /* The table */
 .table {
@@ -2430,7 +2686,8 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
 
 .saw-label {
   font-family: var(--p-font-inscription);
-  font-size: 0.6875rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
   letter-spacing: var(--track-inscription);
   text-transform: uppercase;
   color: var(--p-ink-3);
@@ -2965,10 +3222,25 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   gap: 8px;
   margin-bottom: 8px;
   font-family: var(--p-font-inscription);
-  font-size: 0.6875rem;
+  font-size: var(--t-xs);
+  font-weight: 600;
   letter-spacing: var(--track-inscription);
   text-transform: uppercase;
   color: var(--p-ink-3);
+}
+
+/* Chinese in the room's inscriptions: no capitals to set, no Cinzel to set
+   them in; the serif, upright, a size up and lightly tracked. */
+.room-hint:lang(zh),
+.seat-note:lang(zh),
+.wing-label:lang(zh),
+.saw-label:lang(zh),
+.honour-floor:lang(zh),
+.q-group-label:lang(zh) {
+  font-family: var(--p-font-serif);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .q-group-n {
@@ -3339,8 +3611,17 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
 
   .matter-text { font-size: var(--t-md); text-wrap: pretty; }
 
+  .honour {
+    align-self: stretch;
+    justify-self: auto;
+    max-width: none;
+    margin: 12px var(--p-gutter) 0;
+    gap: 12px;
+  }
+  .honour-coin .citizen-coin { width: 56px; height: 56px; }
+
   .room-state { margin-top: 14px; max-width: none; text-align: left; }
-  .room-state .city-state { justify-content: flex-start; }
+  .room-state .city-state { justify-content: flex-start; text-align: left; margin-left: 0; }
   .room-state .painters { margin-left: 19px; }
   .room-actions { width: 100%; margin-top: 14px; }
   .room-actions .p-button { flex: 1 1 auto; min-width: 0; }
@@ -3405,6 +3686,7 @@ watch(() => (activeAnswer.value ? activeAnswer.value.agent_id : null), (id) => {
   .q-face,
   .q-waiting-faces li { animation: none; opacity: 1; transform: none; }
   .city-state.is-awake .city-lamp { animation: none; }
+  .honour { animation: none; }
   .seat-enter-active { transition: none; }
   .seat-enter-from { opacity: 1; transform: none; }
   .drawer-enter-active,

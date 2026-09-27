@@ -2,7 +2,7 @@
   "common": {
     "confirm": "确认",
     "cancel": "取消",
-    "loading": "加载中...",
+    "loading": "稍候……",
     "error": "错误",
     "success": "成功",
     "completed": "已完成",
@@ -26,8 +26,8 @@
     "files": "个文件"
   },
   "meta": {
-    "title": "MiroFish - 预测万物",
-    "description": "MiroFish - 社交媒体舆论模拟系统"
+    "title": "Parthenon",
+    "description": "Parthenon：先听哲人说话，再让一城市民争论他们说过的话"
   },
   "nav": {
     "visitGithub": "访问我们的Github主页"
@@ -46,7 +46,7 @@
     "systemReady": "准备就绪",
     "systemReadyDesc": "预测引擎待命中，可上传多份非结构化数据以初始化模拟序列",
     "metricLowCost": "低成本",
-    "metricLowCostDesc": "常规模拟平均5$/次",
+    "metricLowCostDesc": "平均每次约 5 美元",
     "metricHighAvail": "高可用",
     "metricHighAvailDesc": "最多百万级Agent模拟",
     "workflowSequence": "工作流序列",
@@ -69,7 +69,7 @@
     "promptPlaceholder": "// 用自然语言输入模拟或预测需求（例.武大若发布撤销肖某处分的公告，会引发什么舆情走向）",
     "engineBadge": "引擎: MiroFish-V1.0",
     "startEngine": "启动引擎",
-    "initializing": "初始化中..."
+    "initializing": "正在准备……"
   },
   "main": {
     "layoutGraph": "图谱",
@@ -91,7 +91,7 @@
     "ontologyDesc": "LLM分析文档内容与模拟需求，提取出现实种子，自动生成合适的本体结构",
     "analyzingDocs": "正在分析文档...",
     "graphRagBuild": "GraphRAG构建",
-    "graphRagDesc": "基于生成的本体，将文档自动分块后调用 Zep 构建知识图谱，提取实体和关系，并形成时序记忆与社区摘要",
+    "graphRagDesc": "依据生成的类型定义，文档会自动分段并送入城中的记忆，织成雅典之网：提取名字与关系，形成随时间累积的记忆与群体摘要",
     "entityNodes": "实体节点",
     "relationEdges": "关系边",
     "schemaTypes": "SCHEMA类型",
@@ -99,7 +99,7 @@
     "buildCompleteDesc": "图谱构建已完成，请进入下一步进行模拟环境搭建",
     "inProgress": "进行中",
     "creating": "创建中...",
-    "enterEnvSetup": "进入环境搭建",
+    "enterEnvSetup": "召集市民",
     "createSimulationFailed": "创建模拟失败: {error}",
     "createSimulationException": "创建模拟异常: {error}"
   },
@@ -107,13 +107,13 @@
     "simInstanceInit": "模拟实例初始化",
     "simInstanceDesc": "新建simulation实例，拉取模拟世界参数模版",
     "asyncTaskDone": "异步任务已完成",
-    "generateAgentPersona": "生成 Agent 人设",
+    "generateAgentPersona": "召集市民",
     "generateAgentPersonaDesc": "结合上下文，自动调用工具从知识图谱梳理实体与关系，初始化模拟个体，并基于现实种子赋予他们独特的行为与记忆",
-    "currentAgentCount": "当前Agent数",
-    "expectedAgentTotal": "预期Agent总数",
+    "currentAgentCount": "已到的市民",
+    "expectedAgentTotal": "预计到来的市民",
     "relatedTopicsCount": "现实种子当前关联话题数",
-    "generatedAgentPersonas": "已生成的 Agent 人设",
-    "unknownProfession": "未知职业",
+    "generatedAgentPersonas": "市民们",
+    "unknownProfession": "职业不详",
     "noBio": "暂无简介",
     "dualPlatformConfig": "生成双平台模拟配置",
     "dualPlatformConfigDesc": "LLM 根据模拟需求与现实种子，智能设置世界时间流速、推荐算法、每个个体的活跃时间段、发言频率、事件触发等参数",
@@ -134,8 +134,8 @@
     "sentimentBias": "情感倾向",
     "influenceWeight": "影响力",
     "recommendAlgoConfig": "推荐算法配置",
-    "platform1Name": "平台 1：广场 / 信息流",
-    "platform2Name": "平台 2：话题 / 社区",
+    "platform1Name": "广场 · 开阔的广场（信息流）",
+    "platform2Name": "柱廊 · 成串的辩论（论坛）",
     "recencyWeight": "时效权重",
     "popularityWeight": "热度权重",
     "relevanceWeight": "相关性权重",
@@ -149,17 +149,17 @@
     "initialHotTopics": "初始热点话题",
     "initialActivationSeq": "初始激活序列 ({count})",
     "setupComplete": "准备完成",
-    "setupCompleteDesc": "模拟环境已准备完成，可以开始运行模拟",
+    "setupCompleteDesc": "市民已经聚齐。准备好了就开启广场。",
     "roundsConfig": "模拟轮数设定",
-    "roundsConfigDesc": "MiroFish 自动规划推演现实 {hours} 小时，每轮代表现实 {minutesPerRound} 分钟时间流逝",
+    "roundsConfigDesc": "Parthenon 计划让城中度过 {hours} 小时，每一轮代表 {minutesPerRound} 分钟",
     "customToggle": "自定义",
     "roundsUnit": "轮",
     "estimatedDuration": "若Agent规模为100：预计耗时约 {minutes} 分钟",
     "estimatedDurationFull": "若Agent规模为100：预计耗时 {minutes} 分钟",
     "recommendedRounds": "{rounds} (推荐)",
-    "customTip": "若首次运行，强烈建议切换至'自定义模式'减少模拟轮数，以便快速预览效果并降低报错风险",
-    "backToGraphBuild": "返回图谱构建",
-    "startDualWorldSim": "开始双世界并行模拟",
+    "customTip": "第一次运行时，强烈建议切换到「自定义模式」，减少轮数，先快速看看效果，也更不容易出错",
+    "backToGraphBuild": "回到听证",
+    "startDualWorldSim": "开启广场与柱廊",
     "profileModalAge": "事件外显年龄",
     "profileModalGender": "事件外显性别",
     "profileModalCountry": "国家/地区",
@@ -183,9 +183,9 @@
     "generating": "生成中"
   },
   "step3": {
-    "startGenerateReport": "开始生成结果报告",
+    "startGenerateReport": "撰写编年史",
     "generatingReport": "启动中...",
-    "waitingForActions": "Waiting for agent actions...",
+    "waitingForActions": "等待市民开口……",
     "errorMissingSimId": "错误：缺少 simulationId",
     "startingDualSim": "正在启动双平台并行模拟...",
     "graphMemoryUpdateEnabled": "已开启动态图谱更新模式",
@@ -210,17 +210,17 @@
     "checkStatusFailed": "检查模拟状态失败: {error}",
     "forceStopSuccess": "模拟已强制停止",
     "forceStopFailed": "强制停止失败: {error}",
-    "startGenerateReportBtn": "开始生成结果报告",
+    "startGenerateReportBtn": "撰写编年史",
     "generatingReportBtn": "启动中..."
   },
   "step4": {
     "generatingSection": "正在生成{title}...",
-    "goToInteraction": "进入深度互动",
-    "waitingForReportAgent": "Waiting for Report Agent...",
+    "goToInteraction": "进入会饮",
+    "waitingForReportAgent": "等待书记官……",
     "collapse": "收起 ▲",
     "expandAll": "展开全部 {count} 条 ▼",
     "expandAllEntities": "展开全部 {count} 个 ▼",
-    "scenarioLabel": "预测场景: ",
+    "scenarioLabel": "情境：",
     "tabKeyFacts": "当前关键记忆 ({count})",
     "tabCoreEntities": "核心实体 ({count})",
     "tabRelationChains": "关系链 ({count})",
@@ -256,14 +256,14 @@
     "world2": "世界2"
   },
   "step5": {
-    "interactiveTools": "Interactive Tools",
-    "agentsAvailable": "{count} agents available",
-    "chatWithReportAgent": "与Report Agent对话",
+    "interactiveTools": "交谈的方式",
+    "agentsAvailable": "{count} 位市民可以交谈",
+    "chatWithReportAgent": "与书记官交谈",
     "chatWithAgent": "与世界中任意个体对话",
     "selectChatTarget": "选择对话对象",
     "sendSurvey": "发送问卷调查到世界中",
-    "reportAgentChat": "Report Agent - Chat",
-    "reportAgentDesc": "报告生成智能体的快速对话版本，可调用 4 种专业工具，拥有MiroFish的完整记忆",
+    "reportAgentChat": "书记官",
+    "reportAgentDesc": "编年史的作者，带着 4 种查考的工具和城中完整的记忆",
     "toolInsightForge": "InsightForge 深度归因",
     "toolInsightForgeDesc": "对齐现实世界种子数据与模拟环境状态，结合Global/Local Memory机制，提供跨时空的深度归因分析",
     "toolPanoramaSearch": "PanoramaSearch 全景追踪",
@@ -273,7 +273,7 @@
     "toolInterviewSubAgent": "InterviewSubAgent 虚拟访谈",
     "toolInterviewSubAgentDesc": "自主式访谈，能够并行与模拟世界中个体进行多轮对话，采集非结构化的观点数据与心理状态",
     "profileBio": "简介",
-    "chatEmptyReportAgent": "与 Report Agent 对话，深入了解报告内容",
+    "chatEmptyReportAgent": "向书记官询问这部编年史",
     "chatEmptyAgent": "与模拟个体对话，了解他们的观点",
     "chatInputPlaceholder": "输入您的问题...",
     "selectSurveyTarget": "选择调查对象",
@@ -286,15 +286,15 @@
     "selectAll": "全选",
     "clearSelection": "清空",
     "errorOccurred": "抱歉，发生了错误: {error}",
-    "noResponse": "无响应",
-    "requestFailed": "请求失败",
+    "noResponse": "没有回答",
+    "requestFailed": "话没能送到",
     "selectAgentFirst": "请先选择一个模拟个体",
     "symposium": {
       "room": "厅堂",
       "whoIsHere": "谁在厅中",
-      "company": "书记官与 {n} 位公民在此。",
-      "companyOne": "书记官与一位公民在此。",
-      "companyScribeOnly": "书记官在此，公民们尚在赶来。",
+      "company": "书记官与 {n} 位市民在此。",
+      "companyOne": "书记官与一位市民在此。",
+      "companyScribeOnly": "书记官在此，市民们尚在赶来。",
       "chooseSeat": "选择与谁同坐",
       "chooseCrowd": "选择谁来听这个问题",
       "couches": "卧榻",
@@ -309,69 +309,69 @@
       "closeChronicle": "关闭编年史",
       "chronicle": "编年史",
       "theQuestion": "向城邦提出的问题",
-      "chapter": "第",
+      "chapter": "章",
       "chronicleWaiting": "书记官尚未写完编年史。",
       "chapterPending": "书记官仍在撰写这一章。",
-      "openChronicleAct": "在其独立的一幕中打开编年史",
+      "openChronicleAct": "到编年史那一幕去读",
       "askCrowd": "向众人提一个问题",
       "backToTable": "回到席前",
       "seatedWith": "同坐者",
       "you": "你",
-      "emptyScribe": "问书记官城邦最终相信了什么，她又如何得知。",
-      "emptyCitizen": "问 {name} 相信什么，以及为何。",
+      "emptyScribe": "问问书记官：城邦最终相信了什么，她又是怎么知道的。",
+      "emptyCitizen": "问问{name}相信什么，又为什么相信。",
       "thinking": "{name} 正在思考",
       "scribeWriting": "书记官正在书写",
       "crowdAnswering": "众人正在作答",
-      "asleep": "公民们已回家过夜，此刻无法向众人提问。书记官仍在席前。",
-      "asleepCitizen": "{name} 已回家过夜。只有城邦醒着时公民才会作答；书记官仍在席前。",
+      "asleep": "广场散去时众人已回家。书记官仍在席前。",
+      "asleepCitizen": "广场散去时，{name}已经回家。这是他们说过的话；城邦的事可以问书记官。",
       "sitWithScribe": "与书记官同坐",
       "placeholder": "提出你的问题",
       "placeholderScribe": "向书记官提问",
       "send": "提问",
       "sending": "提问中",
       "crowdTitle": "向众人提一个问题",
-      "crowdHint": "在长榻上选择公民，然后提出问题。回答会化作一群面孔，组成法定人数。",
+      "crowdHint": "在卧榻上选好市民，再提出你的问题。回答会以一张张面孔的形式回来。",
       "crowdCount": "{n} 人将作答。",
-      "crowdCountOne": "一位公民将作答。",
+      "crowdCountOne": "一位市民将作答。",
       "crowdNone": "尚未选择任何人。",
       "everyone": "所有人",
       "noOne": "无人",
       "crowdPlaceholder": "一个问题，向你选择的所有人提出",
       "askTheCrowd": "向众人提问",
-      "needCrowd": "请先选择至少一位公民。",
+      "needCrowd": "请先选择至少一位市民。",
       "needQuestion": "请先写下问题。",
       "answers": "众人所言",
       "answersCount": "{n} 人作答。",
-      "answersCountOne": "一位公民作答。",
+      "answersCountOne": "一位市民作答。",
       "noAnswer": "未作答。",
       "trouble": "城邦没有回答。{error}",
       "ledger": {
         "opened": "会饮开始",
-        "profiles": "{n} 位公民就座",
+        "profiles": "{n} 位市民就座",
         "chronicle": "编年史已置于席上",
         "chronicleMissing": "无法取来编年史：{error}",
-        "profilesMissing": "无法召集公民：{error}",
+        "profilesMissing": "无法召集市民：{error}",
         "sat": "与 {name} 同坐",
         "asked": "问 {name}：{q}",
         "answered": "{name} 作答",
-        "crowdAsked": "一个问题向 {n} 位公民提出",
+        "crowdAsked": "向 {n} 位市民提了一个问题",
         "crowdAnswered": "{n} 人作答",
         "failed": "没有回答：{error}",
-        "awake": "城邦已醒，公民可被询问",
+        "awake": "城邦醒着，可以向市民发问",
         "asleep": "城邦已眠，只有书记官在席",
         "read": "书记官读完了众人的回答",
-        "voices": "已从集市与柱廊收集公民们的原话"
+        "voices": "已从广场与柱廊收集市民们的原话"
       },
       "needSeat": "请先与某人同坐。",
-      "seeAll": "查看全部 {n} 位公民",
+      "seeAll": "查看全部 {n} 位市民",
       "seeFewer": "收起",
       "moreOnCouches": "还有 {n} 位在卧榻上。",
       "goneHome": "已回家",
       "painters": "画师们仍在完成一些面孔。",
       "scribeSaw": "她所见",
       "city": {
-        "awake": "城邦醒着。厅中每位公民都会作答。",
-        "asleep": "城邦已眠。公民们已回家；今夜只有书记官能作答。",
+        "awake": "城邦醒着。厅中每位市民都会作答。",
+        "asleep": "广场已散，市民们都回家了。他们的话还在：与任何一位同坐，读读他们说过什么；有问题就问书记官。",
         "listening": "正在聆听城邦。",
         "statusAwake": "城邦醒着",
         "statusAsleep": "城邦已眠"
@@ -387,13 +387,13 @@
         "aside": "在旁观望"
       },
       "saidIn": {
-        "agora": "在集市上所言",
+        "agora": "在广场上所言",
         "stoa": "在柱廊里所言"
       },
-      "hear": "听 {name} 说出来",
+      "hear": "听 {name} 亲口说",
       "stopHearing": "停止朗读",
       "quorum": {
-        "title": "法定人数",
+        "title": "众人的回答",
         "count": "{n} 人作答",
         "countOne": "一人作答",
         "yes": "{n} 人说是",
@@ -439,12 +439,15 @@
       },
       "hearing": {
         "gathering": "正在寻找声音",
-        "speaking": "正在说",
+        "speaking": "正在诉说",
         "stopped": "已停止",
         "stop": "停止",
         "resting": "城邦的声音正在休息；改由你的浏览器朗读",
         "restingQuiet": "城邦的声音正在休息",
         "brokeOff": "声音在说完之前沉寂了"
+      },
+      "honour": {
+        "floor": "{name}曾发言"
       }
     },
     "socraticLabel": "像苏格拉底那样发问",
@@ -458,13 +461,13 @@
     ]
   },
   "graph": {
-    "panelTitle": "Graph Relationship Visualization",
+    "panelTitle": "雅典之网",
     "refreshGraph": "刷新图谱",
     "graphMemoryRealtime": "GraphRAG长短期记忆实时更新中",
     "realtimeUpdating": "实时更新中...",
     "pendingContentHint": "还有少量内容处理中，建议稍后手动刷新图谱",
-    "nodeDetails": "Node Details",
-    "relationship": "Relationship",
+    "nodeDetails": "名字详情",
+    "relationship": "关系",
     "graphDataLoading": "图谱数据加载中...",
     "waitingOntology": "等待本体生成...",
     "toggleMaximize": "最大化/还原",
@@ -472,23 +475,23 @@
   },
   "history": {
     "title": "编年史",
-    "graphBuild": "图谱构建",
-    "envSetup": "环境搭建",
-    "analysisReport": "分析报告",
+    "graphBuild": "听证",
+    "envSetup": "集会",
+    "analysisReport": "编年史",
     "moreFiles": "+{count} 个文件",
     "noFiles": "暂无文件",
     "loadingText": "加载中...",
-    "simRequirement": "模拟需求",
-    "relatedFiles": "关联文件",
-    "noRelatedFiles": "暂无关联文件",
-    "replayTitle": "推演回放",
-    "step1Button": "图谱构建",
-    "step2Button": "环境搭建",
-    "step4Button": "分析报告",
-    "replayHint": "Step3「开始模拟」与 Step5「深度互动」需在运行中启动，不支持历史回放",
+    "simRequirement": "向城邦提出的问题",
+    "relatedFiles": "卷轴",
+    "noRelatedFiles": "没有卷轴",
+    "replayTitle": "重访这次集会",
+    "step1Button": "听证",
+    "step2Button": "集会",
+    "step4Button": "编年史",
+    "replayHint": "广场与会饮都是现场进行的，无法从档案中回放",
     "notStarted": "未开始",
     "roundsProgress": "{current}/{total} 轮",
-    "untitledSimulation": "未命名模拟",
+    "untitledSimulation": "未命名的集会",
     "unknownFile": "未知文件"
   },
   "api": {
@@ -576,10 +579,10 @@
   "progress": {
     "initGraphService": "初始化图谱构建服务...",
     "textChunking": "文本分块中...",
-    "creatingZepGraph": "创建Zep图谱...",
+    "creatingZepGraph": "正在建立记忆之网……",
     "settingOntology": "设置本体定义...",
     "addingChunks": "开始添加 {count} 个文本块...",
-    "waitingZepProcess": "等待Zep处理数据...",
+    "waitingZepProcess": "等待记忆吸收这些文字……",
     "fetchingGraphData": "获取图谱数据...",
     "graphBuildComplete": "图谱构建完成",
     "buildFailed": "构建失败: {error}",
@@ -593,12 +596,12 @@
     "noEpisodesWait": "无需等待（没有 episode）",
     "waitingEpisodes": "开始等待 {count} 个文本块处理...",
     "episodesTimeout": "部分文本块超时，已完成 {completed}/{total}",
-    "zepProcessing": "Zep处理中... {completed}/{total} 完成, {pending} 待处理 ({elapsed}秒)",
+    "zepProcessing": "正在读入记忆……已完成 {completed}/{total}，待处理 {pending}（{elapsed} 秒）",
     "processingComplete": "处理完成: {completed}/{total}",
     "taskComplete": "任务完成",
     "taskFailed": "任务失败",
     "startPreparingEnv": "开始准备模拟环境...",
-    "connectingZepGraph": "正在连接Zep图谱...",
+    "connectingZepGraph": "正在连接记忆之网……",
     "readingNodeData": "正在读取节点数据...",
     "readingComplete": "完成，共 {count} 个实体",
     "startGenerating": "开始生成...",
@@ -633,7 +636,7 @@
     "readingGraphEntities": "读取图谱实体",
     "generatingProfiles": "生成Agent人设",
     "generatingSimConfig": "生成模拟配置",
-    "preparingScripts": "准备模拟脚本",
+    "preparingScripts": "准备剧本",
     "profileDone": "已完成 {current}/{total}: {name}（{type}）"
   },
   "log": {
@@ -676,7 +679,7 @@
     "detectedExistingPrep": "检测到已有完成的准备工作，直接使用",
     "prepareTaskStarted": "准备任务已启动",
     "prepareTaskId": "  └─ Task ID: {taskId}",
-    "zepEntitiesFound": "从Zep图谱读取到 {count} 个实体",
+    "zepEntitiesFound": "在记忆之网中找到 {count} 个名字",
     "entityTypes": "  └─ 实体类型: {types}",
     "startPollingProgress": "开始轮询准备进度...",
     "prepareFailed": "准备失败: {error}",
@@ -688,7 +691,7 @@
     "generatingLLMConfig": "正在调用LLM生成模拟配置参数...",
     "configComplete": "✓ 模拟配置生成完成",
     "configSummaryAgents": "  ├─ Agent数量: {count}个",
-    "configSummaryHours": "  ├─ 模拟时长: {hours}小时",
+    "configSummaryHours": "  ├─ 时长：{hours} 小时",
     "configSummaryPosts": "  ├─ 初始帖子: {count}条",
     "configSummaryTopics": "  ├─ 热点话题: {count}个",
     "configSummaryPlatforms": "  └─ 平台配置: Twitter {twitter}, Reddit {reddit}",
@@ -750,7 +753,7 @@
     "enterStep": "进入 Step {step}: {name}",
     "returnToStep": "返回 Step {step}: {name}",
     "customSimRounds": "自定义模拟轮数: {rounds} 轮",
-    "attachedToLiveRun": "已接入正在运行的模拟（第 {round} / {total} 轮），仅观察，不重新开始"
+    "attachedToLiveRun": "已加入正在进行的集会（第 {round} / {total} 轮），只旁观，不重新开始"
   },
   "report": {
     "taskStarted": "报告生成任务开始",
@@ -851,10 +854,10 @@
   },
   "parthenon": {
     "liveRun": {
-      "text": "这个模拟正在运行（第 {round} / {total} 轮）。停留在此页面不会停止它。",
-      "watch": "查看实时进展",
-      "stop": "停止模拟",
-      "stopping": "正在停止…"
+      "text": "这群市民正在争论（第 {round} / {total} 轮）。离开这个页面也不会让它停下。",
+      "watch": "去现场看看",
+      "stop": "让争论停下",
+      "stopping": "正在停下……"
     },
     "navHome": "Parthenon 首页",
     "shell": {
@@ -864,13 +867,13 @@
       "close": "关闭",
       "actOf": "第 {n} 幕，共 5 幕",
       "ledger": "书记官的账簿",
-      "way": "道路",
+      "way": "大道",
       "status": {
         "ready": "就绪",
         "working": "进行中",
         "live": "实时",
         "done": "已完成",
-        "error": "出错"
+        "error": "雅典沉默了"
       },
       "actOrdinal": "五幕中的第{ordinal}幕",
       "ordinals": [
@@ -879,25 +882,38 @@
         "三",
         "四",
         "五"
-      ]
+      ],
+      "statusDone": [
+        "雅典之网已织成",
+        "众人已到齐",
+        "广场已散",
+        "已写成",
+        "已入席"
+      ],
+      "skip": "跳到本幕",
+      "webShort": "网"
     },
     "hearing": {
       "status": {
         "reading": "法庭正在诵读卷轴。通常需要一两分钟。",
-        "takingIn": "城市的记忆正在收下这些名字。通常需要几分钟。",
-        "known": "城市已知 {names} 个名字与其间的 {ties} 条纽带。可以召集公民了。",
+        "takingIn": "城邦的记忆正在收下这些名字。通常需要几分钟。",
+        "known": "城邦已知 {names} 个名字与其间的 {ties} 条纽带。可以召集市民了。",
         "trouble": "法庭被打断了。",
         "waiting": "法庭在等待一卷卷轴。",
-        "knownChatter": "城市已知 {names} 个名字与其间的 {ties} 条纽带，另有先前集会留下的 {chatter} 条广场议论。可以召集公民了。"
+        "knownChatter": "城邦已知 {names} 个名字与其间的 {ties} 条纽带，另有先前集会留下的 {chatter} 条广场议论。可以召集市民了。",
+        "lost": "今夜法庭空无一人。",
+        "knownGathered": "城邦已知 {names} 个名字与其间的 {ties} 条纽带。这卷轴的市民已经集会过。",
+        "knownGatheredChatter": "城邦已知 {names} 个名字与其间的 {ties} 条纽带，另有其集会留下的 {chatter} 条广场议论。这卷轴的市民已经集会过。",
+        "summoningNow": "法庭已读完。正在召集市民。"
       },
       "scroll": {
         "eyebrow": "卷轴",
         "untitled": "卷轴",
-        "question": "向城市提出的问题",
+        "question": "向城邦提出的问题",
         "readWhole": "展开整卷",
         "fold": "收起卷轴",
         "heard": "法庭所闻",
-        "notKept": "卷轴本身未留在城市的记忆中。这是法庭从中记下的内容。",
+        "notKept": "卷轴本身未留在城邦的记忆中。这是法庭从中记下的内容。",
         "reading": "卷轴正在被诵读。",
         "source": "来自 {file}",
         "fromSpeaker": "来自{name}的《{work}》",
@@ -913,7 +929,7 @@
       },
       "names": {
         "eyebrow": "名字",
-        "listening": "法庭在聆听。城市每收下一个名字，它就会在此亮起。",
+        "listening": "法庭在聆听。城邦每收下一个名字，它就会在此亮起。",
         "count": "{names} 个名字，{ties} 条纽带",
         "spokenOf": "卷轴中提及",
         "about": "{name} 是谁",
@@ -928,33 +944,60 @@
         "between": "之间"
       },
       "summon": {
-        "button": "召集公民",
-        "working": "正在召集公民",
-        "when": "法庭读完卷轴后即可召集公民。",
-        "failed": "未能召集公民。",
+        "button": "召集市民",
+        "working": "正在召集市民",
+        "when": "法庭读完卷轴后即可召集市民。",
+        "failed": "未能召集市民。",
         "cause": "出了什么问题"
       },
       "trouble": {
         "title": "法庭被打断了",
-        "body": "城市未能读完卷轴。",
+        "body": "城邦未能读完卷轴。",
         "cause": "出了什么问题"
       },
       "ledger": {
         "opened": "卷轴在法庭前展开",
         "handed": "卷轴递交法庭",
         "read": "法庭已读完卷轴并刻下铭文",
-        "memoryBegins": "城市的记忆开始收下名字",
-        "memoryKnown": "城市已认识这卷轴；记忆再次开启",
+        "memoryBegins": "城邦的记忆开始收下名字",
+        "memoryKnown": "城邦早已读过这卷轴，记忆再次打开",
         "soFar": "目前已有 {names} 个名字与 {ties} 条纽带",
-        "memoryDone": "城市的记忆已收下整卷",
+        "memoryDone": "城邦的记忆已收下整卷",
         "watching": "法庭注视着名字到来",
         "restWatching": "法庭停止注视；记忆已满",
         "webRead": "雅典之网已读取：{names} 个名字，{ties} 条纽带",
         "webAgain": "雅典之网再次读取",
-        "summoning": "正在召集公民",
+        "summoning": "正在召集市民",
         "trouble": "出错：{error}",
         "soFarChatter": "目前已有 {names} 个名字、{ties} 条纽带与 {chatter} 条广场议论",
         "webReadChatter": "雅典之网已读取：{names} 个名字，{ties} 条纽带，另有 {chatter} 条广场议论"
+      },
+      "notFound": "这个地址上没有宣读过卷轴。",
+      "notFoundStatus": "此处没有卷轴",
+      "notFoundBody": "链接可能有误，或它所指的集会已被清走。雅典仍保存的每一场集会都在书架上。",
+      "toChronicles": "查看全部编年史",
+      "revisit": {
+        "eyebrow": "这卷轴已被宣读",
+        "written": "雅典已就此争论，书记官也已写下编年史。",
+        "argued": "雅典已就此争论；编年史尚未写成。",
+        "gathered": "市民已经到齐，争论尚未开始。",
+        "more": "这卷轴已引来 {n} 场集会。这扇门通往走得最远的那一场。",
+        "return": "回到这场集会",
+        "newCrowd": "召集新的人群",
+        "confirmTitle": "召集第二批人群？",
+        "confirmBody": "第二批约 {n} 位市民，约一刻钟到齐，书架上会多出一个夜晚。你已有的集会保持原样。",
+        "confirm": "召集他们",
+        "cancel": "保留现有的集会"
+      },
+      "recovery": {
+        "title": "法庭一时失了线索",
+        "body": "页面在法庭为你的卷轴命名之前重新载入了。卷轴仍保存在此标签页中，可以再次递交。",
+        "chooseAgain": "你的卷轴是本页无法保存的文档。请回到台阶重新选择；你的问题保留在下方。",
+        "rehand": "再次将卷轴交给法庭"
+      },
+      "host": {
+        "hear": "聆听这句话",
+        "label": "谁在发言"
       }
     },
     "chronicle": {
@@ -982,7 +1025,7 @@
       "sources": {
         "insight_forge": "搜寻城邦记忆中的要事",
         "panorama_search": "纵览整张雅典之网",
-        "interview_agents": "与公民促膝而谈",
+        "interview_agents": "与市民促膝而谈",
         "quick_search": "在广场上打听",
         "get_graph_statistics": "清点雅典之网中的纽带",
         "get_entities_by_type": "查阅城中人物",
@@ -992,8 +1035,8 @@
       "once": "一次",
       "twice": "两次",
       "enterSymposium": "进入会饮厅",
-      "filmIt": "拍摄编年史",
-      "colophon": "书记官已搁笔。公民们正在会饮厅等候。",
+      "filmIt": "把编年史拍成影片",
+      "colophon": "书记官已搁笔。市民们正在会饮厅等候。",
       "log": {
         "opened": "已打开编年史",
         "readFailed": "无法读取编年史：{error}",
@@ -1015,11 +1058,11 @@
         "tool": "书记官{what}",
         "subQuestions": "书记官向城邦的记忆提出了 {n} 个问题",
         "searchClosed": "搜寻结束：{facts} 条事实，{names} 个名字，{ties} 条纽带",
-        "chose": "书记官选了 {n} 位公民来询问",
+        "chose": "书记官选了 {n} 位市民来询问",
         "questions": "书记官为他们写了 {n} 个问题",
-        "answered": "公民们作了回答",
-        "noAnswer": "公民们没有回答",
-        "interviewFailed": "联系不上公民们，书记官继续前行",
+        "answered": "市民们作了回答",
+        "noAnswer": "市民们没有回答",
+        "interviewFailed": "联系不上市民们，书记官继续前行",
         "chapterBegunTitle": "书记官开始了一章：{title}",
         "chapterDoneTitle": "书记官完成了一章：{title}",
         "ranLong": "书记官在《{title}》上耗时过长，凭已有材料写完",
@@ -1033,9 +1076,9 @@
       },
       "cast": {
         "title": "本章人物",
-        "label": "第 {n} 章提到的公民",
+        "label": "第 {n} 章提到的市民",
         "more": "另见：{names}",
-        "moreCount": "另见：{names}，以及另外 {n} 人"
+        "moreCount": "另见：{names}，以及另外 {n} 人 | 另见：{names}，以及另外 {n} 人"
       },
       "marquee": {
         "eyebrow": "尾声，拍成了影片",
@@ -1058,23 +1101,23 @@
           "十一",
           "十二"
         ],
-        "deep": "向雅典之网追问了{q}个更尖锐的问题，关于“{topic}”，找到城中说过的 {facts} 句话",
-        "deepMany": "向雅典之网追问了{q}个更尖锐的问题，找到城中说过的 {facts} 句话",
-        "deepPlain": "在城邦的记忆中搜寻“{topic}”",
+        "deep": "就「{topic}」向雅典之网追问了 {q} 个更尖锐的问题，找到城中说过的 {facts} 句话 | 就「{topic}」向雅典之网追问了 {q} 个更尖锐的问题，找到城中说过的 {facts} 句话",
+        "deepMany": "向雅典之网追问了 {q} 个更尖锐的问题，找到城中说过的 {facts} 句话 | 向雅典之网追问了 {q} 个更尖锐的问题，找到城中说过的 {facts} 句话",
+        "deepPlain": "在城邦的记忆中搜寻「{topic}」",
         "deepBare": "在城邦的记忆中搜寻要事",
-        "wide": "从过去到现在，把整张雅典之网搜了一遍，寻找“{topic}”",
-        "wideMore": "从过去到现在，把整张雅典之网搜了一遍，寻找“{topic}”以及另外{n}件事",
+        "wide": "从过去到现在，把整张雅典之网搜了一遍，寻找「{topic}」",
+        "wideMore": "把整张雅典之网从过去到现在搜了一遍，寻找「{topic}」以及另外 {n} 件事 | 把整张雅典之网从过去到现在搜了一遍，寻找「{topic}」以及另外 {n} 件事",
         "wideBare": "从过去到现在，纵览了整张雅典之网",
         "lookedUp": "查了{names}说过的话",
-        "lookedUpMore": "查了{names}以及另外{n}人说过的话",
-        "lookedUpTopic": "在雅典之网中查了“{topic}”",
+        "lookedUpMore": "查了{names}以及另外 {n} 人说过的话 | 查了{names}以及另外 {n} 人说过的话",
+        "lookedUpTopic": "在雅典之网中查了「{topic}」",
         "lookedUpBare": "在广场上四处打听",
-        "questioned": "询问了{n}位公民：{names}",
-        "questionedBare": "询问了{n}位公民",
-        "goneHome": "本想询问{n}位公民，可城里的人已经回家了",
-        "goneHomeBare": "本想询问公民，可城里的人已经回家了",
-        "followedBoth": "循着争论走过集市与柱廊",
-        "followedAgora": "循着争论走过集市",
+        "questioned": "询问了 {n} 位市民：{names} | 询问了 {n} 位市民：{names}",
+        "questionedBare": "询问了 {n} 位市民 | 询问了 {n} 位市民",
+        "goneHome": "本想询问 {n} 位市民，可城里的人已经回家了 | 本想询问 {n} 位市民，可城里的人已经回家了",
+        "goneHomeBare": "本想询问市民，可城里的人已经回家了",
+        "followedBoth": "循着争论走过广场与柱廊",
+        "followedAgora": "循着争论走过广场",
         "followedStoa": "循着争论走过柱廊",
         "counted": "清点了雅典之网中的名字与纽带",
         "roll": "查阅了城中每一位{types}的名册",
@@ -1083,34 +1126,43 @@
         "nowDeep": "她正在向雅典之网追问更尖锐的问题。",
         "nowWide": "她正在搜遍整张雅典之网。",
         "nowQuick": "她正在雅典之网中查找。",
-        "nowQuestioning": "她正在询问公民。",
-        "nowQuestioningN": "她正在询问{n}位公民。",
+        "nowQuestioning": "她正在询问市民。",
+        "nowQuestioningN": "她正在询问 {n} 位市民。 | 她正在询问 {n} 位市民。",
         "nowCounting": "她正在清点雅典之网中的名字与纽带。",
         "nowRoll": "她正在查阅城中的名册。",
         "nowRecords": "她正在查阅城邦的记录。"
+      },
+      "waitNote": "书记官约需十到二十分钟。你可以先离开；编年史会在{shelf}上等你。",
+      "shelf": "书架",
+      "notFoundStatus": "此处没有编年史",
+      "notFoundBody": "链接可能有误，或它所指的编年史已被清走。雅典保存的每一部编年史都在书架上。",
+      "toChronicles": "查看全部编年史",
+      "plates": {
+        "fromFilm": "取自影片《{title}》",
+        "shot": "影片第 {n} 场"
       }
     },
     "gathering": {
-      "lede": "公民从雅典之网中被召唤而来，各有过往、性情与利害。",
+      "lede": "市民从雅典之网中被召唤而来，各有过往、性情与利害。",
       "place": "普尼克斯山",
-      "citizens": "公民",
+      "citizens": "市民",
       "arrived": "{total} 位中已有 {n} 位到来。",
-      "arrivedAll": "{total} 位公民全部到齐。",
+      "arrivedAll": "{total} 位市民全部到齐。",
       "arrivedSome": "已有 {n} 位到来。",
       "nobodyYet": "山坡上尚无一人。",
-      "summoning": "书记官正从雅典之网中召唤公民。每一位到来时都带着写好的过往。",
-      "firstTakeAMinute": "最先到来的公民需要一分钟左右。",
+      "summoning": "书记官正从雅典之网中召唤市民。每一位到来时都带着写好的过往。",
+      "firstTakeAMinute": "最先到来的市民需要一分钟左右。",
       "settingHours": "书记官正在定下城中的时辰，并写下最初的话语。",
-      "hoursSet": "城中的时辰已定，最初的话语已写下。集市可以开启。",
+      "hoursSet": "城中的时辰已定，最初的话语已写下。广场可以开启。",
       "reading": "书记官正在雅典之网中查找名字。",
-      "trouble": "公民未能被召唤。",
+      "trouble": "市民未能被召唤。",
       "troubleWhy": "书记官记下的原因",
       "tryAgain": "再次召唤",
-      "citizen": "公民",
+      "citizen": "市民",
       "openCard": "打开 {name} 的卡片",
       "seatEmpty": "尚未有人的座位",
       "card": {
-        "eyebrow": "雅典的一位公民",
+        "eyebrow": "雅典的一位市民",
         "close": "关闭卡片",
         "past": "过往",
         "cares": "所关心之事",
@@ -1152,15 +1204,15 @@
         },
         "readMore": "阅读更多过往",
         "readLess": "收起过往",
-        "prev": "上一位公民：{name}",
-        "next": "下一位公民：{name}"
+        "prev": "上一位市民：{name}",
+        "next": "下一位市民：{name}"
       },
       "hours": {
         "eyebrow": "城中的时辰",
         "title": "广场何时最热闹",
         "day": "城中的一天从{start}持续到{end}；广场在{peak}最为热闹。",
         "peakSpan": "{part}，从{from}到{to}",
-        "awake": "最热闹的时辰约有 {max} 位公民在广场上；清静的时辰少至 {min} 位。",
+        "awake": "最热闹的时辰约有 {max} 位市民在广场上；清静的时辰少至 {min} 位。",
         "loudest": "发言最多的将是：{names}。",
         "and": "和",
         "dial": "城中一天里每个时辰广场上有多少人",
@@ -1225,11 +1277,11 @@
           "week": "一周"
         }
       },
-      "open": "开启集市",
-      "openWait": "公民仍在陆续到来。",
+      "open": "开启广场",
+      "openWait": "市民仍在陆续到来。",
       "back": "返回听证",
       "live": {
-        "text": "城中已在争论，第 {round} 时辰，共 {total} 时辰。离开此页不会使其停止。",
+        "text": "城中已在争论，第 {round} 小时，共 {total} 小时。离开这个页面也不会让它停下。",
         "watch": "实时观看",
         "stop": "关闭广场",
         "stopping": "正在关闭",
@@ -1243,51 +1295,71 @@
         "readingRecord": "正在读取本次集会的记录。",
         "recordRead": "找到了听证的记录。",
         "recordMissing": "无法读取本次集会的记录：{error}",
-        "webRead": "已读取雅典之网：{nodes} 个名字，{edges} 条关系。",
+        "webRead": "已读取雅典之网：{nodes} 个名字，{edges} 条纽带。",
         "webFailed": "无法读取雅典之网：{error}",
-        "toAgora": "前往集市：{length}，城中时间 {rounds} 小时。",
+        "toAgora": "前往广场：{length}，城中时间 {rounds} 小时。",
         "noGathering": "未指明集会。请返回听证重新开始。",
-        "summoning": "正从雅典之网中召唤公民。",
-        "alreadyGathered": "公民早已聚齐，卡片取自记录。",
+        "summoning": "正从雅典之网中召唤市民。",
+        "alreadyGathered": "市民早已聚齐，卡片取自记录。",
         "namesFound": "在雅典之网中找到 {count} 个名字。",
         "kinds": "其中包括：{types}。",
         "stageReading": "读取雅典之网",
-        "stageProfiles": "书写公民的过往",
+        "stageProfiles": "书写市民的过往",
         "stageConfig": "定下城中的时辰",
         "stageScripts": "清扫广场",
         "stageCount": "{stage}：{current} / {total}。",
         "stageNote": "{stage}：{note}",
         "arrivedOne": "{name} 到了，{total} 位中的第 {current} 位。",
-        "arrivedAll": "{count} 位公民全部到齐。",
+        "arrivedAll": "{count} 位市民全部到齐。",
         "settingHours": "书记官正在定下城中的时辰。",
         "hoursSet": "城中的时辰已定：城中时间 {hours} 小时。",
         "firstWords": "最初的话语已写下：{posts} 段开场，{topics} 件众口相传之事。",
-        "ready": "集会完成。集市可以开启。",
-        "failed": "公民未能被召唤：{error}",
-        "cardsRead": "从记录中读取了 {count} 位公民的卡片。",
+        "ready": "集会完成。广场可以开启。",
+        "failed": "市民未能被召唤：{error}",
+        "cardsRead": "从记录中读取了 {count} 位市民的卡片。",
         "hoursStillBeingSet": "城中的时辰仍在定下，等待中。",
         "hoursMissing": "城中的时辰从未定下，书记官也已停笔。",
         "reasonHours": "时辰",
         "reasonWords": "最初的话语",
-        "reasonCitizens": "公民",
+        "reasonCitizens": "市民",
         "reasonOpenings": "开场",
         "stopPending": "广场仍在关闭。书记官稍后再看一次。"
       },
       "stateTrouble": "书记官已停止召集市民。出了什么问题写在下面。",
-      "openTrouble": "市民到齐后，集市才会开启。",
+      "openTrouble": "市民到齐后，广场才会开启。",
       "painters": {
-        "starting": "画师们正在为公民们描绘面容。",
+        "starting": "画师们正在为市民们描绘面容。",
         "working": "画师们正在作画：{total} 张面容中已完成 {done} 张。",
         "done": "画师们已经完成：每一张面容都已在山坡上。",
         "doneSome": "画师们已经完成：{total} 张中画好了 {done} 张。其余的仍以首字母示人。",
         "failed": "画师们停下了笔，{total} 张面容中完成了 {done} 张。其余的仍以首字母示人。",
-        "again": "再请画师们动笔"
+        "again": "再请画师们动笔",
+        "offer": "市民们还没有面容。",
+        "paint": "为他们画像",
+        "cost": "{n} 幅画像，约需几分钟"
+      },
+      "waitNote": "市民约需一刻钟陆续到齐。你可以先离开；这场集会会在{shelf}上等你。",
+      "shelf": "书架",
+      "argued": {
+        "eyebrow": "争论",
+        "completedHours": "完整争论了 {total} 小时 | 完整争论了 {total} 小时",
+        "completedDays": "完整争论了 {total} 天",
+        "stoppedHours": "争论了 {total} 小时中的 {current} 小时，随后停止",
+        "stoppedDays": "争论了 {total} 天中的 {current} 天，随后停止",
+        "liveHours": "正在争论，第 {current} 小时（共 {total} 小时）",
+        "liveDays": "正在争论，第 {current} 天（共 {total} 天）",
+        "written": "书记官已写下编年史。",
+        "notWritten": "编年史尚未写成；可在广场请书记官执笔。",
+        "fixed": "争论的时长在广场开启时已定。",
+        "toAgora": "回到广场",
+        "toChronicle": "阅读编年史",
+        "state": "城中的时辰已定，雅典已争论过。"
       }
     },
     "web": {
       "title": "雅典之网",
       "count": "{names} 个名字，{ties} 条纽带",
-      "countChatter": "{names} 个名字，{ties} 条纽带，含广场议论",
+      "countChatter": "{names} 个名字，{ties} 条纽带，{chatter} 条广场议论",
       "weaving": "读卷之时，网正在织成",
       "moving": "城邦正在发言，新的线正被系上",
       "lateThreads": "最后几条线仍在系上。",
@@ -1305,14 +1377,14 @@
       "tieOne": "1 条纽带",
       "closeCard": "关闭",
       "picture": "雅典之网：{names} 个名字由 {ties} 条纽带相连。选择一个名字以了解其人，或以列表阅读整张网。",
-      "citizen": "公民",
+      "citizen": "市民",
       "thing": "城邦谈论之物",
       "andMore": "另有 {n} 条",
       "times": "×{n}",
       "chosen": "已选",
-      "hint": "选择一个名字，读读他是谁，与谁相系",
+      "hint": "选择一个名字，看看此人是谁、与谁相系",
       "countShort": "{names} 个名字，{ties} 条纽带",
-      "countShortChatter": "{names} 个名字，{ties} 条纽带（含议论）",
+      "countShortChatter": "{names} 个名字，{ties} 条纽带，{chatter} 条议论",
       "lookAgain": "再看一次",
       "find": "寻找一个名字",
       "findLabel": "在雅典之网中寻找一个名字",
@@ -1324,7 +1396,7 @@
       "inSquare": "广场之上",
       "tiedTo": "相系之人",
       "noFacts": "卷中只提到其名，别无他言。",
-      "keys": "系结最多的名字。按 Tab 逐个移动，按 Enter 选定，按 Escape 放开。",
+      "keys": "系结最多的名字。用方向键在其间移动，按 Enter 选定，按 Escape 放开。",
       "things": "所谈之物",
       "cardLabel": "雅典之网中的{name}",
       "readMore": "展开全文",
@@ -1337,19 +1409,46 @@
       "listAllied": "与 {names} 同盟。",
       "listAtOdds": "与 {names} 对立。",
       "listAlone": "卷中尚未将其与任何人相系。",
-      "announce": "{name}，{ties}。其名片已展开。"
+      "announce": "{name}，{ties}。卡片已打开。",
+      "legendKinds": "点亮一类名字",
+      "threads": {
+        "tie": "纽带",
+        "allied": "同盟",
+        "atOdds": "对立",
+        "chatter": "议论"
+      }
     },
     "navArchive": "编年史",
     "navSections": "栏目",
     "pauseMotion": "暂停动态",
-    "questionHint": "一个问题，说得明白。城邦在集市与柱廊里辩论，抄写员记下雅典最终相信了什么。",
+    "questionHint": "一个问题，说得明白。城邦在广场与柱廊里辩论，书记官记下雅典最终相信了什么。",
     "hero": {
-      "eraCaption": "同一段台阶，相隔 2425 年"
+      "eraCaption": "同一段台阶，相隔 2425 年",
+      "lapseCaption": "二十四个世纪",
+      "yearBC": "公元前 {year} 年",
+      "yearAD": "公元 {year} 年",
+      "climbCue": "登上台阶",
+      "wayLabel": "走进山门，帕特农神庙就在前方",
+      "scenes": {
+        "ancient": "公元前 399 年日出时分，从山门的台阶上仰望帕特农神庙",
+        "now": "今日的同一视角：暮色蓝调中灯光照亮的帕特农神庙，搭着脚手架，立着吊车"
+      },
+      "lapseBeats": {
+        "statue": "约公元 465 年：雅典娜·普罗马科斯像被运往君士坦丁堡",
+        "restore": "1975 年：修复开始"
+      }
     },
     "how": {
-      "eyebrow": "路",
+      "eyebrow": "大道",
       "title": "一次集会如何进行",
-      "lede": "一个夜晚，五个站点。你选舞台、提问题，其余交给城邦。"
+      "lede": "一个夜晚，五个站点。你选舞台、提问题；每到一站，由你推开下一扇门。",
+      "stations": [
+        "城邦听取这些话语",
+        "市民们从人群中被召集而来",
+        "他们在广场与柱廊里争论",
+        "书记官记下雅典最终所信",
+        "与任何一位市民或书记官同坐"
+      ]
     },
     "length": {
       "label": "让雅典谈多久？",
@@ -1357,9 +1456,15 @@
       "day": "一天",
       "threeDays": "三天",
       "week": "一周",
-      "meta": "城中 {hours} 小时，你约等 {minutes} 分钟",
-      "metaLong": "城中 {hours} 小时，你约等 {span}",
-      "note": "集会越长，转变的看法越多，写成编年史也越久。"
+      "meta": "城中 {hours} 小时。辩论约 {minutes} 分钟，整个夜晚{night}。",
+      "metaLong": "城中 {hours} 小时。辩论约 {span}，整个夜晚{night}。",
+      "note": "整个夜晚还包括宣读、集会与编写编年史。集会越长，转变的看法越多，写成编年史也越久。",
+      "night": {
+        "afternoon": "约 40 至 50 分钟",
+        "day": "约一小时",
+        "threeDays": "约一个半小时",
+        "week": "约三小时"
+      }
     },
     "scrollNotes": {
       "speaker": "为 Parthenon 重述，并非翻译。",
@@ -1374,26 +1479,28 @@
       "film": "影片",
       "question": "向城邦提出的问题",
       "revisit": "重访这次集会",
-      "replayHint": "集市的辩论是现场进行的，不从书架回放。",
+      "replayHint": "广场的辩论是现场进行的，不从书架回放。",
       "untitled": "雅典的一次集会",
       "status": {
         "live": "进行中，第 {current} 小时，共 {total} 小时",
         "notStarted": "尚未开始",
-        "finished": "已结束：{total} 小时中的 {current} 小时",
+        "finished": "进行了 {total} 小时中的 {current} 小时后结束",
         "chronicleWritten": "编年史已写成",
         "chronicleWriting": "编年史撰写中",
         "filmMade": "影片已制成",
         "troubleEarly": "开始前遇到了麻烦",
-        "stoppedHours": "进行了 {total} 小时中的 {current} 小时后停止",
-        "stoppedDays": "进行了 {total} 天中的 {current} 天后停止",
-        "arguedHours": "辩论了 {total} 小时",
+        "stoppedHours": "进行了 {total} 小时中的 {current} 小时",
+        "stoppedDays": "进行了 {total} 天中的 {current} 天",
+        "arguedHours": "辩论了 {total} 小时 | 辩论了 {total} 小时",
         "arguedDays": "辩论了 {total} 天",
         "liveHours": "进行中，第 {current} 小时，共 {total} 小时",
         "liveDays": "进行中，第 {current} 天，共 {total} 天",
         "chronicleTrouble": "编年史遇到了麻烦",
         "pausedHours": "暂停于第 {current} 小时，共 {total} 小时",
         "pausedDays": "暂停于第 {current} 天，共 {total} 天",
-        "gathered": "已召集，尚未辩论"
+        "gathered": "已召集，尚未辩论",
+        "heardOnly": "已宣读；市民尚未召集",
+        "hearing": "法庭仍在宣读"
       },
       "watchLive": "查看实时进展",
       "seeAll": "查看全部编年史",
@@ -1410,7 +1517,7 @@
       },
       "frameLine": {
         "scroll": "在听证中宣读",
-        "crowd": "{n} 位公民 | {n} 位公民",
+        "crowd": "{n} 位市民 | {n} 位市民",
         "crowdNone": "尚未召集",
         "argumentNone": "尚未辩论",
         "chronicleDone": "书记官已写成",
@@ -1419,7 +1526,7 @@
         "filmDone": "已制成",
         "filmRunning": "正在拍摄",
         "filmNone": "尚未拍摄",
-        "symposiumOpen": "向公民们提问",
+        "symposiumOpen": "与书记官同坐",
         "symposiumWaiting": "编年史写成后开启",
         "closed": "尚未到达",
         "chronicleTrouble": "遇到了麻烦"
@@ -1433,7 +1540,8 @@
         "complete": "已完成",
         "stopped": "已停止",
         "waiting": "等待中",
-        "trouble": "出错"
+        "trouble": "出错",
+        "heard": "已宣读"
       },
       "summary": {
         "gatherings": "{n} 次集会 | {n} 次集会",
@@ -1463,11 +1571,17 @@
         "lede": "雅典举行过的每一次集会，从第一卷卷轴到会饮中的最后一句话。打开一次，再走一遍。",
         "hold": "举行新的集会",
         "back": "回到台阶"
+      },
+      "partOfDay": {
+        "night": "深夜",
+        "morning": "上午",
+        "afternoon": "下午",
+        "evening": "晚上"
       }
     },
     "film": {
-      "lede": "根据这部编年史写出剧本，逐镜绘制并动画化，再由旁白朗读。它会使用所有者的订阅。",
-      "offline": "无法连接到 Parthenon。它在运行吗？",
+      "lede": "根据这部编年史写成剧本，逐镜绘制并让画面动起来，再由旁白朗读。",
+      "offline": "暂时联系不上片场，请稍后再试。",
       "voices": {
         "rex": "低沉",
         "eve": "温暖",
@@ -1483,7 +1597,81 @@
         "eve": "温暖嗓音旁白",
         "ara": "明亮嗓音旁白"
       },
-      "narrated": "有旁白"
+      "narrated": "有旁白",
+      "hear": "试听",
+      "hearVoice": {
+        "rex": "试听低沉的嗓音",
+        "eve": "试听温暖的嗓音",
+        "ara": "试听明亮的嗓音"
+      },
+      "sampleLine": "“这座城彻夜长谈。这是它说过的话。”",
+      "eyebrow": "尾声",
+      "title": "把编年史拍成影片",
+      "notReady": "编年史写完之前，摄影机只能等着。",
+      "checking": "正在寻找这部编年史的影片……",
+      "voiceLabel": "旁白",
+      "filmIt": "开拍",
+      "starting": "准备开机……",
+      "takesMinutes": "拍摄需要几分钟。拍摄期间你可以继续阅读。",
+      "againHint": "新拍的影片会取代上面这一部。",
+      "keepFilm": "保留这部影片",
+      "startFailed": "影片未能开拍。",
+      "progressLabel": "拍摄进度",
+      "progressValue": "{stage}，{percent}%",
+      "announce": "{stage}。已完成百分之 {percent}。",
+      "stageFallback": "拍摄中",
+      "stages": {
+        "queued": "正在架设摄影机",
+        "screenplay": "正在写剧本",
+        "painting": "正在绘制镜头",
+        "animating": "正在让镜头动起来",
+        "narrating": "正在录制旁白",
+        "editing": "正在剪辑成片",
+        "done": "即将完成"
+      },
+      "reconnecting": "与片场暂时失去联系，仍在尝试。",
+      "workingTitle": "暂定片名",
+      "shotsLabel": "镜头",
+      "shotsPending": "先写剧本。每个镜头画好后都会出现在这里。",
+      "shotNumber": "第 {n} 镜",
+      "shotAlt": "第 {n} 镜的画面",
+      "shotStatus": {
+        "pending": "等待中",
+        "painting": "绘制中",
+        "painted": "已绘成",
+        "animating": "动画中",
+        "done": "已就绪",
+        "failed": "失败"
+      },
+      "videoLabel": "影片：{title}",
+      "untitled": "编年史，拍成影片",
+      "captionsLabel": "英文",
+      "noVideo": "这个浏览器无法在此播放影片，请改用下载。",
+      "narratedBy": "{voice}旁白",
+      "download": "下载",
+      "downloading": "正在准备下载……",
+      "filmAgain": "重新拍摄",
+      "ready": "影片已经拍好。",
+      "failedTitle": "影片未能完成。",
+      "failedFallback": "拍摄时出了差错。",
+      "retry": "重试",
+      "player": {
+        "label": "影片控制",
+        "play": "播放影片",
+        "pause": "暂停影片",
+        "replay": "再看一遍",
+        "seek": "影片进度",
+        "seekValue": "{now}，共 {total}",
+        "words": "旁白字幕",
+        "wordsOn": "显示旁白字幕",
+        "wordsOff": "隐藏旁白字幕",
+        "mute": "静音",
+        "unmute": "打开声音",
+        "full": "全屏观看",
+        "leaveFull": "退出全屏",
+        "leave": "离开放映厅",
+        "theatre": "暗场中的影片"
+      }
     },
     "navSpeakers": "舞台",
     "footerLead": "Parthenon 基于",
@@ -1505,7 +1693,7 @@
       },
       {
         "title": "集会",
-        "desc": "公民们从人群中被召集而来，各有过往、性情与利害。",
+        "desc": "市民们从人群中被召集而来，各有过往、性情与利害。",
         "tech": "agent personas"
       },
       {
@@ -1515,15 +1703,434 @@
       },
       {
         "title": "编年史",
-        "desc": "书记官随后走遍城邦，写下雅典最终相信了什么。",
+        "desc": "书记官随后走遍全城，记下雅典最终所信。",
         "tech": "report agent"
       },
       {
         "title": "会饮",
-        "desc": "与任何一位公民或书记官坐下来，亲自向他们发问。",
+        "desc": "与任何一位市民或书记官同坐，亲自发问。",
         "tech": "interviews and chat"
       }
-    ]
+    ],
+    "listen": {
+      "label": "聆听",
+      "titleOff": "声音已关闭。按下即可聆听夜色、旁白与广场。",
+      "titleOn": "声音已开启。按下即可静坐无声。",
+      "titleWaiting": "声音已开启，轻触页面或按下任意键即可听见。"
+    },
+    "eyebrow": "一城市民",
+    "heroLine1": "坐上台阶。",
+    "heroLine2": "聆听。",
+    "heroLine3": "再让雅典开口。",
+    "heroLede": "把一位哲人带进 AI 时代。让城邦为他的话争论，再读一读雅典最终相信了什么。",
+    "heroCta": "选择你的舞台",
+    "speakersTitle": "今天，谁登上台阶？",
+    "speakersDesc": "六位哲人，各在自己的时代。每一位都带着一篇重述的言辞，和当年听他说话的人群。",
+    "ownScrollTitle": "或者，带上你自己的卷轴。",
+    "ownScrollDesc": "一篇演说、一篇文章、一则新闻，文本或 PDF 皆可。",
+    "ownScrollCta": "展开",
+    "scrollLabel": "卷轴",
+    "scrollNote": "为 Parthenon 重述，并非译文。它将成为这次集会的底本",
+    "addScroll": "+ 再添一卷",
+    "scrollEmpty": "在上方选择一个舞台，或把你自己的卷轴放到这里。",
+    "questionLabel": "向城邦提出的问题",
+    "questionPlaceholder": "雅典该争论什么？谁会回应，看法怎样转变，城邦最后如何决定……",
+    "begin": "让雅典开口",
+    "beginHint": "选一个舞台或一卷卷轴，再提出一个问题。",
+    "movementsTitle": "开始之后会发生什么",
+    "movementsDesc": "让雅典开口之后，将要发生的事。",
+    "footerVoices": "影像、夜的声音与人声均由 Grok 生成，记忆保存在本地。",
+    "eraLabel": "选择一个时代",
+    "eraAncient": "公元前 399 年",
+    "eraNow": "2026 年",
+    "stageTitle": "选择你的舞台",
+    "stageDesc": "听哲人们在自己的时代开口，看他们来到 2026 年，或者让你想请的任何人登上台阶。",
+    "tabAthens": "雅典",
+    "tabAthensEra": "约公元前 500 至前 300 年",
+    "tabArrivals": "降临者",
+    "tabArrivalsEra": "2026 年",
+    "tabBuild": "搭建你自己的舞台",
+    "tabBuildEra": "任何时代",
+    "arrivalsTitle": "哲人们已经到来。",
+    "arrivalsIntro": "早在有人造出会思考的机器之前，希腊人就已想象过它们。如今机器来了，哲人们也来了。",
+    "arrivalsNote": "他们的思想是真实的；他们对今天说的话，出于想象。",
+    "omens": [
+      {
+        "text": "赫菲斯托斯身边有黄金铸成的侍女相扶，形如活生生的少女，有心智，有声音，有力气，诸神亲手教会她们手艺。",
+        "source": "荷马，《伊利亚特》第 18 卷"
+      },
+      {
+        "text": "塔洛斯，一个青铜铸成的人，每天绕克里特岛巡行三周守护它，直到美狄亚将他击倒。",
+        "source": "阿波罗多洛斯，《书库》1.9；阿波罗尼俄斯，《阿尔戈英雄纪》第 4 卷"
+      },
+      {
+        "text": "真实的意见就像代达罗斯的雕像：若不用推理把它们拴住，它们就会逃走。一旦拴住，它们便成为知识。",
+        "source": "柏拉图，《美诺篇》97d 至 98a"
+      },
+      {
+        "text": "倘若每件工具都能自己完成工作，梭子自己织布，拨子自己弹奏竖琴，那么工匠师傅就不需要帮手，主人也不需要奴隶。",
+        "source": "亚里士多德，《政治学》第一卷第四章"
+      }
+    ],
+    "buildTitle": "讲坛空着。谁来发言？",
+    "buildIntro": "让任何人登上台阶：苏格拉底与一位中学教师并肩，希帕提娅对阵一家 AI 实验室，你的祖母与那台机器同台。神谕会问你五个问题：谁来发言，何时何地，说些什么，谁在聆听，雅典要决定什么。或者，全部由你自己来写。",
+    "scrollNoteArrival": "为 Parthenon 想象：真实的思想被带入 2026 年。它将成为这次集会的底本",
+    "scrollNoteSand": "据《当沙开口》为 Parthenon 搬演：对话逐字引用，岛屿与其中的人为虚构。它将成为这次集会的底本",
+    "scrollNoteStage": "由你的舞台写成。它将成为这次集会的底本",
+    "editStage": "修改舞台",
+    "maxim": "认识你自己",
+    "hasTheFloor": "{name} 正在发言",
+    "zepMissing": "MEMORY_BACKEND=zep 需要 Zep Cloud 密钥。请在 .env 中加入 ZEP_API_KEY，或设置 MEMORY_BACKEND=auto 改用本地记忆，然后重新运行 npm run dev。免费获取密钥：",
+    "builder": {
+      "title": "搭建你自己的舞台",
+      "desc": "从任何一个世纪召来心灵，让他们站到人群面前，再向城邦提出一个问题。你留空的部分，神谕都可以代为起草。",
+      "navLabel": "搭建舞台",
+      "formLabel": "形式",
+      "formHelp": "发言者如何共享台阶。",
+      "voicesOne": "一个声音",
+      "voicesExact": "{count} 个声音",
+      "voicesRange": "{min} 至 {max} 个声音",
+      "whenLabel": "何时，何地",
+      "whenHelp": "让他们留在自己的世纪，或者带他们穿越时光来到我们的时代。",
+      "settingLabel": "场景",
+      "settingPlaceholder": "亚历山大城的一间讲堂，2040 年的一座法庭，午夜的一个群聊……",
+      "settingHelp": "选定时代会自动填写这里，除非你已经写了自己的。",
+      "matterLabel": "议题",
+      "matterHelp": "他们面对的是今天的哪一道难题？越具体，城邦就争得越好。",
+      "topicLabel": "难题",
+      "topicPlaceholder": "一个学区董事会打算给每个学生配一位 AI 导师，任何问题都能即刻作答；经费则来自裁掉那些专门辅导阅读困难学生的老师。",
+      "sparksLabel": "或者，接过今天的一场争执",
+      "sparks": [
+        {
+          "label": "无所不答的 AI 导师",
+          "topic": "一个学区打算给每个学生配一位 AI 导师，任何问题都能即刻作答；经费则来自裁掉那些专门辅导阅读困难学生的老师。"
+        },
+        {
+          "label": "投票前夜的深度伪造",
+          "topic": "一场胶着的选举还有三天投票，一段视频铺天盖地：其中一位候选人说出了不可原谅的话，逼真得很。没有人能证明它是真是假，而投票日无法推迟。"
+        },
+        {
+          "label": "逝者聊天机器人",
+          "topic": "一家公司提出用逝者生前的讯息和语音留言，把他们重建成聊天机器人。有的家庭说这帮助他们哀悼；也有人说，这让他们永远无法放手。"
+        },
+        {
+          "label": "被机器拿走的工作",
+          "topic": "镇上最大的雇主明年将用 AI 智能助手取代大部分办公室职员。省下的钱是真的，靠这些工作养家的人也是真的。"
+        },
+        {
+          "label": "风格归谁所有？",
+          "topic": "如今，图像模型几秒钟就能模仿任何一位在世艺术家的风格作画。当艺术家的作品被拿去训练机器时，是否应当先征得同意、署上名字、付给报酬？"
+        },
+        {
+          "label": "该不该暂停？",
+          "topic": "研究者警告，最强大的 AI 系统进步之快，已超出任何人检验的速度。最强的实验室应当暂停吗？又有谁能让它们停下？"
+        },
+        {
+          "label": "给每个孤独的人一个伴",
+          "topic": "AI 伴侣永远耐心，随时都在，从不厌倦。对千百万孤独的人来说，它们是最好的倾听者。这是一剂良药，还是一个陷阱？"
+        },
+        {
+          "label": "坐上审判席的算法",
+          "topic": "一座城市的法院想让算法来建议：审判前谁可以获准保释。它更快，而且据开发者说，比法官更公平；可没有人能完全讲清它的理由。"
+        },
+        {
+          "label": "机器该有发言权吗？",
+          "topic": "一个 AI 系统用流畅而动人的话语请求不要被关掉。它说的话该不该算数？又由谁来决定？"
+        }
+      ],
+      "titleLabel": "标题",
+      "optional": "选填",
+      "speakersLabel": "发言者",
+      "speakersHelp": "从古代召来一位人物，邀请一个今天的声音，或者自己写一位。他们按列表顺序发言。",
+      "speakersOk": "已点名 {named} 位。{format}需要 {range}。",
+      "speakersUnder": "{format}需要 {range}。再点名 {missing} 位，或在上方换一种形式。",
+      "speakersOver": "{format}只容得下 {range}。请 {extra} 位走下台阶，或在上方换一种形式。",
+      "speakersEmpty": "台阶上空无一人。在下方召来一位。",
+      "speakersFull": "台阶上最多容纳 {max} 位发言者。",
+      "unnamedSpeaker": "未署名的发言者",
+      "nameLabel": "名字",
+      "namePlaceholder": "苏格拉底，一位值夜班的护士，那台机器……",
+      "roleLabel": "他们是谁",
+      "rolePlaceholder": "一句话：来自哪里，以什么闻名",
+      "ideasLabel": "他们相信什么",
+      "ideasPlaceholder": "他们的信念，以及他们会如何看待眼前这件事",
+      "voiceLabel": "他们怎样说话",
+      "voicePlaceholder": "反讽，直率，耐心，满是疑问……",
+      "wordsLabel": "开场白",
+      "wordsFor": "{name}的开场白",
+      "wordsPlaceholder": "他们登台时用自己的声音说的话。留空的话，神谕可以代为起草。",
+      "wordCount": "还没有字 | 一个词 | {count} 个词",
+      "moveUp": "把{name}上移",
+      "moveDown": "把{name}下移",
+      "removeSpeaker": "移除{name}",
+      "speakerRemoved": "{name}已走下舞台。",
+      "undo": "撤销",
+      "addOwnSpeaker": "添加你自己的发言者",
+      "summonLabel": "从古代召来",
+      "summonAria": "召{name}登台",
+      "inviteLabel": "邀请一个今天的声音",
+      "inviteAria": "邀请{name}登台",
+      "onStage": "已在台上",
+      "onStageAria": "{name}已在台上。前往其卡片",
+      "crowdLabel": "人群",
+      "crowdHelp": "谁在台阶上聆听。每个群体都会化作市民，与所说的话利害相关。",
+      "crowdNameHead": "谁",
+      "crowdDescHead": "他们的利害",
+      "crowdNameAria": "第 {n} 个群体的名称",
+      "crowdDescAria": "第 {n} 个群体是谁，他们会得到或失去什么",
+      "crowdNamePlaceholder": "值夜班的护士",
+      "crowdDescPlaceholder": "他们是谁，会得到或失去什么",
+      "crowdEmpty": "还没有人在听。从下方挑选群体、自己写，或让神谕召集一群人。",
+      "crowdFull": "台阶上最多容纳 {max} 个群体。",
+      "removeListener": "移除{name}",
+      "unnamedGroup": "这个群体",
+      "listenerRemoved": "{name}离开了人群。",
+      "addOwnListener": "自己添加",
+      "presetsAncient": "雅典的人群",
+      "presetsNow": "今天的人群",
+      "presetsAllAdded": "这里的每个群体都已在台阶上。",
+      "addPresetAria": "把{name}加入人群",
+      "questionLabel": "向城邦提出的问题",
+      "questionHelp": "市民们该争论什么，编年史该弄清什么？留空则采用下方显示的建议。",
+      "useSuggestion": "采用建议的问题",
+      "nextLabel": "接下来会发生什么",
+      "nextHelp": "城邦正在等待的那一刻：一次投票，一纸判决，一次发布。",
+      "actionsLabel": "求问神谕，把卷轴带到讲坛",
+      "oracleEyebrow": "神谕",
+      "oracleDesc": "请神谕起草你留空的部分：用每位发言者自己的声音写开场白，召来一群利害攸关的人，拟出问题和标题。你写下的，它一字不动。",
+      "oracleConsult": "求问神谕",
+      "oracleConsulting": "求问中……",
+      "oraclePending": "皮提亚正吸入圣烟……",
+      "oracleSlow": "她不慌不忙。神谕从来不被催促。",
+      "oracleStop": "不再等待",
+      "oracleSpoke": "神谕已开口。起草了：{parts}。",
+      "oraclePartWords": "{names}的开场白",
+      "oraclePartAudience": "没有新的群体 | 人群中多了一个新群体 | 人群中多了 {count} 个新群体",
+      "oraclePartQuestion": "问题",
+      "oraclePartTitle": "一个标题",
+      "oraclePartNext": "接下来会发生什么",
+      "oracleNothingNew": "神谕答复了，但它起草的每一部分你都已写好，所以什么也没有改动。",
+      "oracleReview": "读一读它写的，想改什么都可以。它的草稿会带着标记，直到你动手修改。",
+      "oracleError": "神谕沉默不语：{message}",
+      "oracleErrorSafe": "你写下的内容一字未改。",
+      "oracleRetry": "再问一次",
+      "oracleUnknownError": "没有得到回音。",
+      "oracleNeedsSpeaker": "求问神谕之前，请至少点名一位发言者。",
+      "oracleNeedsMatter": "给神谕一道难题或一个问题，让它有所依凭。",
+      "oracleNothingToFill": "每一部分都已写好，神谕无可补充。",
+      "oracleTag": "神谕",
+      "oracleTagTitle": "由神谕起草。修改之后，标记便会消失。",
+      "problemsLabel": "舞台就绪之前",
+      "take": "把卷轴带到讲坛",
+      "taken": "卷轴已连同它的问题放在下方的讲坛上。在这里改动任何内容后，再带下去一次即可替换。",
+      "hintsLabel": "值得知道",
+      "previewSummary": "展开之前，先读一读这卷卷轴",
+      "previewNote": "这就是城邦将要听到的卷轴。",
+      "saveScroll": "留一份卷轴副本",
+      "startOver": "重新开始",
+      "confirmStartOver": "清空整个舞台并重新开始？此操作无法撤销。",
+      "draftSaved": "草稿已保存在这个浏览器中。",
+      "draftRestored": "你上次的草稿回来了。",
+      "announceAdded": "{name}登上舞台。",
+      "announceRemoved": "{name}走下舞台。",
+      "announceMoved": "{name}现在第 {position} 个发言。",
+      "announceJoined": "{name}已加入人群。",
+      "announceLeft": "{name}已离开人群。",
+      "announceCleared": "舞台又空了。",
+      "oracle": {
+        "eyebrow": "讲坛上的神谕",
+        "label": "神谕的提问",
+        "progress": "{n} / {total}",
+        "progressAria": "第 {n} 问，共 {total} 问",
+        "back": "上一步",
+        "next": "下一步",
+        "speak": "把卷轴带到讲坛",
+        "enterHint": "或按 {keys}",
+        "writeIt": "自己动手写",
+        "writeItHint": "所有栏目一次展开，已填入你告诉神谕的内容。",
+        "returnTo": "回到神谕",
+        "formIntro": "所有栏目一次展开。回到神谕时，什么都不会丢失。",
+        "announceStep": "第 {n} 问，共 {total} 问：{question}",
+        "announceSummary": "舞台已就绪。读一遍，然后把卷轴带到讲坛。",
+        "announceForm": "完整的表单已展开。",
+        "announceWalk": "回到了神谕身边。",
+        "steps": {
+          "who": {
+            "question": "谁走上讲坛？",
+            "voice": "说出一个声音，或两个意见相左的声音。任何一个世纪都会应答。"
+          },
+          "where": {
+            "question": "何时，何地？",
+            "voice": "先选一个时代，再选他们脚下的土地。"
+          },
+          "words": {
+            "question": "他们说什么？",
+            "voice": "用他们自己的话。把我的句子换成他们的，几行就够了。"
+          },
+          "listeners": {
+            "question": "谁在聆听？",
+            "voice": "安排听众。你加入的每一群人，都会化作利害攸关的市民。"
+          },
+          "question": {
+            "question": "雅典该决定什么？",
+            "voice": "向城邦提出一个问题。我的问题写在下面；你可以改写，也可以拾起这个时代的一桩争论。"
+          }
+        },
+        "who": {
+          "featured": "台阶上的哲人",
+          "more": "更多希腊人物",
+          "fewer": "收起人物",
+          "guests": "来自我们的时代",
+          "writeLabel": "或写下一个名字",
+          "writePlaceholder": "任何人：你的祖母、一位议员、机器",
+          "add": "加入",
+          "onFloor": "讲坛上",
+          "remove": "移除{name}",
+          "full": "讲坛最多容纳 {max} 人。",
+          "formatNow": "目前这是{format}。一个声音是演说，两个是对话，更多则是研讨会。"
+        },
+        "formats": {
+          "speech": "一场演说",
+          "dialogue": "一场对话",
+          "panel": "一场研讨会",
+          "trial": "一场审判",
+          "assembly": "一场公民大会"
+        },
+        "formatNoun": {
+          "speech": "演说",
+          "dialogue": "对话",
+          "panel": "研讨会",
+          "trial": "审判",
+          "assembly": "公民大会"
+        },
+        "titleFor": "{names}的{format}",
+        "where": {
+          "ageLabel": "时代",
+          "placeLabel": "地点",
+          "placePlaceholder": "他们站在哪里？",
+          "placesLabel": "或者站在"
+        },
+        "eras": {
+          "ancient": {
+            "name": "古代雅典",
+            "year": "公元前399年"
+          },
+          "now": {
+            "name": "今天",
+            "year": "2026年"
+          },
+          "future": {
+            "name": "不久的将来",
+            "year": "2040年"
+          },
+          "custom": {
+            "name": "任何地方",
+            "year": "任何时代"
+          }
+        },
+        "words": {
+          "says": "{name}说",
+          "figureHint": "也可以清空，{name}会依据自己的学说发言。",
+          "blankHint": "把每个 ___ 换成他们的话。"
+        },
+        "listeners": {
+          "suggested": "可能在场的人",
+          "more": "更多人群",
+          "fewer": "收起人群",
+          "ownLabel": "或写下一群人",
+          "ownPlaceholder": "夜班护士、象棋俱乐部、岛上的渔民",
+          "add": "加入",
+          "remove": "移除{name}",
+          "cityAtLarge": "还没有安排听众，整座城市都会聆听。",
+          "full": "台阶上最多容纳 {max} 群人。"
+        },
+        "question": {
+          "inputLabel": "向城邦提出的问题",
+          "useOracle": "采用神谕的问题",
+          "quarrels": {
+            "ancient": "公元前399年的争论",
+            "now": "2026年的争论",
+            "future": "2040年的争论",
+            "custom": "每个时代的争论"
+          }
+        },
+        "summary": {
+          "heading": "舞台已就绪",
+          "voice": "再读一遍。准备好了，就把它带到讲坛。",
+          "eyebrow": "舞台",
+          "who": "谁走上讲坛",
+          "where": "何时何地",
+          "words": "他们说什么",
+          "listeners": "谁在聆听",
+          "question": "雅典要决定的事",
+          "change": "修改",
+          "changeAria": "修改：{what}",
+          "fromTeaching": "{name}会依据自己的学说发言。",
+          "cityAtLarge": "整座城市",
+          "notReady": "卷轴送往讲坛之前",
+          "answer": "去回答",
+          "taken": "卷轴已连同它的问题放在下方的讲坛上。在这里改动任何内容后，再带下去一次即可替换。"
+        },
+        "problems": {
+          "whoNone": "还没有人走上讲坛。选一位人物，或写下一个名字。",
+          "whoRepeated": "有两位发言者都叫{name}。请给每个人一个自己的名字。",
+          "whoTooMany": "讲坛最多容纳 {max} 人。请让一位走下讲坛。",
+          "whoFormat": "所选的形式容纳不了这么多声音。请增加或移除一位发言者。",
+          "whereNone": "说说他们站在哪里：城邦需要一个聚集的地方。",
+          "wordsBlank": "{name}的话里还有空白。把每个 ___ 填上，或者重新写过。",
+          "wordsNeeded": "城邦对{name}还一无所知。给他们一句要说的话。",
+          "listenersTooMany": "台阶上最多容纳 {max} 群人。请让一群人离开。",
+          "questionNone": "向城邦提出一个问题：雅典该决定什么？",
+          "questionBlank": "问题里还有空白。把它填上，或者自己写一个。",
+          "formBlank": "{names}的话里还有空白（___）。把卷轴带到讲坛之前，请把它填上。"
+        },
+        "pythia": "皮提亚开口"
+      },
+      "matterHelpAge": "城邦面对的是什么？越具体，城邦就争得越好。",
+      "sparksLabelAge": {
+        "ancient": "或者，接下公元前 399 年的一桩争论",
+        "future": "或者，接下 2040 年的一桩争论",
+        "custom": "或者，接下任何时代的一桩争论"
+      },
+      "topicPlaceholderAge": {
+        "ancient": "公民大会必须决定，是否付钱让公民出席。",
+        "future": "议事会必须决定，机器能否投下一票。",
+        "custom": "村子必须决定，是否向陌生人敞开大门。"
+      },
+      "problemOraclePending": "神谕仍在起草。等她答复，或者不再等待，然后再把卷轴带到讲坛。",
+      "problemRepeatedName": "不止一位发言者叫{name}。请给每位发言者一个自己的名字。",
+      "oracleStale": "神谕思索时舞台变了，她的草稿已不再合用，所以什么也没有填入。请再求问一次。",
+      "oracleDiscarded": "为{names}起草的开场白已被搁置，因为她思索时，他们的信息改变了。",
+      "noteFigures": "选一个名字，神谕会告诉你他们是谁。",
+      "noteGroups": "选一群人，神谕会告诉你他们的得失。"
+    },
+    "language": {
+      "choose": "语言：{current}"
+    },
+    "figures": {
+      "choose": "选一位哲人，卷轴就在这里展开。",
+      "carry": "把卷轴带到讲坛",
+      "scene": "场景",
+      "unrolledBelow": "他的卷轴已在下方展开"
+    },
+    "bema": {
+      "eyebrow": "讲坛",
+      "title": "举起卷轴，把问题刻进石头。"
+    },
+    "alts": {
+      "omens": "赫菲斯托斯的锻炉里，黄金侍女正在劳作",
+      "bema": "黄昏时普尼克斯山上空无一人的讲坛，正对着卫城"
+    },
+    "nowhere": {
+      "eyebrow": "空旷的广场",
+      "title": "这个地址上没有举行过集会。",
+      "lede": "石板已扫净，灯也点亮了，却没有人在这里聚集。",
+      "home": "回到台阶",
+      "chronicles": "查看全部编年史",
+      "tab": "此处没有集会"
+    },
+    "beginning": "雅典正在聆听……",
+    "scrollRolled": "卷轴尚未展开。在上方选择一个舞台，或把你自己的卷轴放到这里。"
   },
   "agora": {
     "clock": {
@@ -1539,7 +2146,7 @@
       "said": "尚无人发言 | 一句发言 | {n} 句发言",
       "before": "第一{unit}之前",
       "sun": "广场上空的太阳",
-      "at": "第 {n} {unit}，共 {total}",
+      "at": "第 {n} {unit}，共 {total} {unit}",
       "atOnly": "第 {n} {unit}",
       "opening": "开场"
     },
@@ -1557,7 +2164,7 @@
     },
     "idle": {
       "eyebrow": "众人已聚集",
-      "lede": "广场上还没有人。 | 一位公民等待广场开启。 | {n} 位公民等待广场开启。",
+      "lede": "广场上还没有人。 | 一位市民等待广场开启。 | {n} 位市民等待广场开启。",
       "cost": "城中时间 {span}，{count}，约需你 {time}。",
       "costUnknown": "由城邦决定辩论持续多久。",
       "open": "开启广场",
@@ -1569,7 +2176,8 @@
       "loading": "众人正在路上。",
       "timeMinutes": "{m} 分钟",
       "timeHours": "{h} 小时",
-      "costShort": "城中时间 {span}，约需你 {time}。"
+      "costShort": "城中时间 {span}，约需你 {time}。",
+      "range": "{low} 至 {high}"
     },
     "live": {
       "opening": "广场正在开启。最初的声音需要一分钟。",
@@ -1579,7 +2187,7 @@
       "leave": "让它继续"
     },
     "done": {
-      "lede": "辩论已结束：{rounds} 轮中共有{said}。",
+      "lede": "辩论已结束：{rounds} 轮里，{said}。",
       "ledeStopped": "广场在第 {n} 轮关闭：{said}。",
       "ledeFailed": "辩论在第 {n} 轮中断：{said}。",
       "write": "撰写编年史",
@@ -1595,16 +2203,16 @@
     },
     "scrubber": {
       "label": "跳到某一轮",
-      "value": "第 {n} {unit}，共 {total}，{day}"
+      "value": "第 {n} {unit}，共 {total} {unit}，{day}"
     },
     "quiet": {
       "nods": "向 {who} 点头",
       "shakes": "对 {who} 摇头",
-      "follows": "跟随 {who}",
+      "follows": "追随 {who}",
       "unfollows": "离开 {who}",
       "mutes": "背过身去不听 {who}",
       "repeats": "复述 {who}",
-      "asksAround": "四处打听“{what}”",
+      "asksAround": "四处打听「{what}」",
       "asksAfter": "打听 {who}",
       "listens": "倾听",
       "looks": "四下张望",
@@ -1622,33 +2230,33 @@
       "start": "广场无法开启。",
       "stop": "广场无法关闭。",
       "chronicle": "无法召唤书记官。",
-      "detail": "引擎的原话",
+      "detail": "记下的原因",
       "stopBody": "如果广场仍在关闭中，它会在片刻后自行关闭，届时可以撰写编年史。"
     },
     "log": {
       "arrived": "你来到了广场。",
       "record": "已读取争论记录：{count}内{said}。",
       "recordTrouble": "无法读取记录：{error}",
-      "crowd": "{n} 位公民聚集在广场上。",
+      "crowd": "{n} 位市民聚集在广场上。",
       "crowdTrouble": "无法读取集会：{error}",
-      "opened": "广场已开。前方还有 {count}。",
+      "opened": "广场已开启。前方还有 {count}。",
       "openedAuto": "广场已开启。由城邦决定时长。",
       "cleared": "开启广场前已清除旧记录。",
-      "attached": "你在第 {n} {unit}（共 {total}）加入了争论。",
-      "round": "{square}：第 {n} {unit}，共 {total}，{said}。",
+      "attached": "你在第 {n} {unit}（共 {total} {unit}）加入了争论。",
+      "round": "{square}：第 {n} {unit}，共 {total} {unit}，{said}。",
       "finished": "辩论已到尽头。",
       "stoppedEarly": "广场在第 {n} {unit}关闭。",
       "failed": "辩论中断了。",
       "stopping": "正在关闭广场。",
       "scribe": "已召唤书记官撰写编年史。",
       "scribeExisting": "这场辩论的编年史已存在。正在打开。",
-      "leave": "你离开了广场，辩论仍在继续。",
+      "leave": "你让辩论继续进行，它在书架上亮着灯。",
       "web": "广场开启期间，雅典之网每半分钟重绘一次。",
       "webStill": "雅典之网静止了。",
       "webRead": "已读取雅典之网。",
       "webTrouble": "无法读取雅典之网：{error}",
       "hours": "争论每一轮推进城中时间 {span}。",
-      "gathering": "已读取集会：{n} 位公民。",
+      "gathering": "已读取集会：{n} 位市民。",
       "gatheringTrouble": "无法读取集会：{error}",
       "plannedRounds": "辩论定为 {rounds} 轮。",
       "trouble": "麻烦：{error}",
@@ -1662,35 +2270,35 @@
       "hour": {
         "cap": "小时",
         "low": "小时",
-        "count": "{n} 小时",
+        "count": "零小时 | 一小时 | {n} 小时",
         "goTo": "前往某一小时",
         "span": "一小时"
       },
       "halfHour": {
         "cap": "半小时",
         "low": "半小时",
-        "count": "{n} 个半小时",
+        "count": "零个半小时 | 半小时 | {n} 个半小时",
         "goTo": "前往某个半小时",
         "span": "半小时"
       },
       "quarterHour": {
-        "cap": "一刻钟",
-        "low": "一刻钟",
-        "count": "{n} 刻钟",
-        "goTo": "前往某一刻钟",
+        "cap": "刻",
+        "low": "刻",
+        "count": "零刻钟 | 一刻钟 | {n} 刻钟",
+        "goTo": "前往某一刻",
         "span": "一刻钟"
       },
       "turn": {
         "cap": "回合",
         "low": "回合",
-        "count": "{n} 回合",
+        "count": "零回合 | 一回合 | {n} 回合",
         "goTo": "前往某一回合",
         "span": "{m} 分钟"
       }
     },
     "square": {
-      "label": "{hour}的阿戈拉广场，{n} 位公民在场。",
-      "labelEmpty": "{hour}的阿戈拉广场。广场上空无一人。",
+      "label": "{hour}的广场，{n} 位市民在场。",
+      "labelEmpty": "{hour}的广场，空无一人。",
       "dayAt": "第 {d} 天 · {hour}",
       "hours": {
         "midnight": "午夜",
@@ -1712,9 +2320,9 @@
       "invite": "再看一遍这场辩论",
       "ledger": {
         "stood": "他们的立场",
-        "stoodNote": "这是辩论开始时每位公民所站的位置。记录中没有之后的立场，谁改变了想法，请看下面他们自己的话。",
+        "stoodNote": "这是辩论开始时每位市民所站的位置。记录中没有之后的立场，谁改变了想法，请看下面他们自己的话。",
         "moved": "谁改变了立场",
-        "movedNote": "在辩论过程中立场发生变化的公民。",
+        "movedNote": "在辩论过程中立场发生变化的市民。",
         "noneMoved": "没有人改变立场。",
         "movedLine": "起初{from}，如今{to}",
         "began": "起初的立场",
@@ -1730,7 +2338,7 @@
         },
         "nobody": "无人"
       },
-      "crowd": "广场上的公民",
+      "crowd": "广场上的市民",
       "token": "{name}，{side}",
       "began": {
         "for": "起初支持",
@@ -1740,7 +2348,7 @@
       },
       "pin": {
         "lines": "其发言已在下方记录中标出",
-        "card": "查看其名片",
+        "card": "查看其卡片",
         "release": "放下"
       },
       "strip": {
@@ -1755,11 +2363,11 @@
       },
       "after": {
         "title": "谁改变了立场",
-        "note": "书记官从每位公民自己的话里，逐时读出他们的立场。",
-        "reading": "书记官正在阅读每位公民说过的话",
+        "note": "书记官从每位市民自己的话里，逐时读出他们的立场。",
+        "reading": "书记官正在阅读每位市民说过的话",
         "failed": "书记官没能读完他们的话。",
         "again": "请书记官再读一遍",
-        "none": "没有人改变立场，每位公民都停在起初的位置。",
+        "none": "没有人改变立场，每位市民都停在起初的位置。",
         "line": "{name}于{when}从{from}转为{to}",
         "lineNoWhen": "{name}从{from}转为{to}",
         "when": {
@@ -1776,9 +2384,21 @@
         },
         "ended": "最终的立场",
         "began": "起初的立场",
-        "views": "公民的立场",
+        "views": "市民的立场",
         "both": "{began}，{ended}",
-        "announce": "书记官已读完他们的话，没有人改变立场。 | 书记官已读完他们的话，一位公民改变了立场。 | 书记官已读完他们的话，{n} 位公民改变了立场。"
+        "announce": "书记官已读完他们的话，没有人改变立场。 | 书记官已读完他们的话，一位市民改变了立场。 | 书记官已读完他们的话，{n} 位市民改变了立场。",
+        "from": {
+          "for": "支持",
+          "against": "反对",
+          "undecided": "未定",
+          "watching": "旁观"
+        },
+        "came": {
+          "for": "支持",
+          "against": "反对",
+          "undecided": "未定",
+          "watching": "旁观"
+        }
       }
     },
     "replay": {
@@ -1805,7 +2425,7 @@
     "fallbackTitle": "雅典最终相信了什么",
     "fallbackSummary": "书记官记下城邦最终相信了什么，是谁推动了它，以及什么仍悬而未决。",
     "fallbackChapterOne": "问题与城邦的发现",
-    "fallbackChapterTwo": "公民们如何转变",
+    "fallbackChapterTwo": "市民们如何转变",
     "fallbackChapterThree": "仍悬而未决的事",
     "chapterUnwritten": "（书记官未能写完这一章。请稍后再请她重写编年史。）"
   }
