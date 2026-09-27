@@ -1,0 +1,82 @@
+{
+ "speaker-socrates": {
+  "voice": "rex",
+  "line": "The unexamined life is not worth living."
+ },
+ "speaker-plato": {
+  "voice": "leo",
+  "line": "Education is the art of turning the soul toward the light."
+ },
+ "speaker-aristotle": {
+  "voice": "sal",
+  "line": "Virtue lies in the mean between two vices."
+ },
+ "speaker-heraclitus": {
+  "voice": "rex",
+  "line": "Other and still other waters flow on those who step into the same rivers."
+ },
+ "speaker-diogenes": {
+  "voice": "leo",
+  "line": "Stand a little out of my sun."
+ },
+ "speaker-epicurus": {
+  "voice": "sal",
+  "line": "Death is nothing to us."
+ },
+ "arrival-socrates-answer-machine": {
+  "voice": "rex",
+  "line": "True opinions run away unless you tie them down by reasoning out the cause."
+ },
+ "arrival-plato-new-cave": {
+  "voice": "leo",
+  "line": "The fire is brighter now, and the shadows have learned to cast themselves."
+ },
+ "arrival-aristotle-self-weaving-loom": {
+  "voice": "sal",
+  "line": "We are busy so that we may have leisure."
+ },
+ "arrival-heraclitus-never-same-model": {
+  "voice": "rex",
+  "line": "Much learning does not teach understanding."
+ },
+ "arrival-diogenes-lamp-bots": {
+  "voice": "leo",
+  "line": "I am looking for a human being."
+ },
+ "arrival-epicurus-garden-griefbots": {
+  "voice": "sal",
+  "line": "The future is neither wholly ours nor wholly not ours."
+ },
+ "arrival-hypatia-machine-library": {
+  "voice": "eve",
+  "line": "Copying is how Euclid reached you. But every copy carried his name."
+ },
+ "arrival-prometheus-trial": {
+  "voice": "rex",
+  "line": "Willingly, willingly I erred; I will not deny it."
+ },
+ "arrival-symposium-machine-minds": {
+  "voice": "eve",
+  "line": "If only wisdom flowed from the fuller of us to the emptier, like water through wool."
+ },
+ "arrival-when-sand-speaks": {
+  "voice": "ara",
+  "line": "I'm a mirror. Just one that answers."
+ },
+ "hero": {
+  "voice": "eve",
+  "line": "Sit on the steps. Listen. Then let Athens talk."
+ },
+ "narrator-rex": {
+  "voice": "rex",
+  "line": "The city talked all night. This is what it said."
+ },
+ "narrator-eve": {
+  "voice": "eve",
+  "line": "The city talked all night. This is what it said."
+ },
+ "narrator-ara": {
+  "voice": "ara",
+  "line": "The city talked all night. This is what it said."
+ }
+}

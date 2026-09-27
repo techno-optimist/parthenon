@@ -1,0 +1,17 @@
+{
+ "ancient": {
+  "src": "/media/sound/ancient.m4a",
+  "loopStart": 0.1,
+  "loopEnd": 16.0
+ },
+ "now": {
+  "src": "/media/sound/now.m4a",
+  "loopStart": 0.1,
+  "loopEnd": 13.7
+ },
+ "night": {
+  "src": "/media/sound/night.m4a",
+  "loopStart": 0.1,
+  "loopEnd": 16.0
+ }
+}

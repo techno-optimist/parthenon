@@ -1,0 +1,82 @@
+{
+ "speaker-socrates": {
+  "voice": "rex",
+  "line": "未经审视的人生不值得过。"
+ },
+ "speaker-plato": {
+  "voice": "leo",
+  "line": "教育，是引导灵魂转向光明的技艺。"
+ },
+ "speaker-aristotle": {
+  "voice": "sal",
+  "line": "德性是两种恶之间的中道。"
+ },
+ "speaker-heraclitus": {
+  "voice": "rex",
+  "line": "踏入同一条河流的人，不断遇到新的水流。"
+ },
+ "speaker-diogenes": {
+  "voice": "leo",
+  "line": "站开一点，别挡住我的阳光。"
+ },
+ "speaker-epicurus": {
+  "voice": "sal",
+  "line": "死亡与我们无关。"
+ },
+ "arrival-socrates-answer-machine": {
+  "voice": "rex",
+  "line": "真意见若不用推究原因把它拴住，就会逃走。"
+ },
+ "arrival-plato-new-cave": {
+  "voice": "leo",
+  "line": "如今的火更亮了，影子也学会了自己投下自己。"
+ },
+ "arrival-aristotle-self-weaving-loom": {
+  "voice": "sal",
+  "line": "我们忙碌，是为了得到闲暇。"
+ },
+ "arrival-heraclitus-never-same-model": {
+  "voice": "rex",
+  "line": "博学并不能使人智慧。"
+ },
+ "arrival-diogenes-lamp-bots": {
+  "voice": "leo",
+  "line": "我在找一个人。"
+ },
+ "arrival-epicurus-garden-griefbots": {
+  "voice": "sal",
+  "line": "未来既不完全属于我们，也不完全不属于我们。"
+ },
+ "arrival-hypatia-machine-library": {
+  "voice": "eve",
+  "line": "欧几里得正是靠抄写才传到你们手里。但每一份抄本都带着他的名字。"
+ },
+ "arrival-prometheus-trial": {
+  "voice": "rex",
+  "line": "我是自愿的，自愿犯下这过错，我不否认。"
+ },
+ "arrival-symposium-machine-minds": {
+  "voice": "eve",
+  "line": "但愿智慧能从我们中较满的人流向较空的人，就像水顺着羊毛从满杯流进空杯。"
+ },
+ "arrival-when-sand-speaks": {
+  "voice": "ara",
+  "line": "我是一面镜子。只不过，是会回答的那一面。"
+ },
+ "hero": {
+  "voice": "eve",
+  "line": "坐上台阶。聆听。再让雅典开口。"
+ },
+ "narrator-rex": {
+  "voice": "rex",
+  "line": "这座城彻夜长谈。这是它说过的话。"
+ },
+ "narrator-eve": {
+  "voice": "eve",
+  "line": "这座城彻夜长谈。这是它说过的话。"
+ },
+ "narrator-ara": {
+  "voice": "ara",
+  "line": "这座城彻夜长谈。这是它说过的话。"
+ }
+}
