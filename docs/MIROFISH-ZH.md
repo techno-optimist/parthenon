@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./static/image/MiroFish_logo_compressed.jpeg" alt="MiroFish Logo" width="75%"/>
+<img src="../static/image/MiroFish_logo_compressed.jpeg" alt="MiroFish Logo" width="75%"/>
 
 <a href="https://trendshift.io/repositories/16144" target="_blank"><img src="https://trendshift.io/api/badge/repositories/16144" alt="666ghj%2FMiroFish | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
@@ -8,7 +8,7 @@
 </br>
 <em>A Simple and Universal Swarm Intelligence Engine, Predicting Anything</em>
 
-<a href="https://www.shanda.com/" target="_blank"><img src="./static/image/shanda_logo.png" alt="666ghj%2FMiroFish | Shanda" height="40"/></a>
+<a href="https://www.shanda.com/" target="_blank"><img src="../static/image/shanda_logo.png" alt="666ghj%2FMiroFish | Shanda" height="40"/></a>
 
 [![GitHub Stars](https://img.shields.io/github/stars/666ghj/MiroFish?style=flat-square&color=DAA520)](https://github.com/666ghj/MiroFish/stargazers)
 [![GitHub Watchers](https://img.shields.io/github/watchers/666ghj/MiroFish?style=flat-square)](https://github.com/666ghj/MiroFish/watchers)
@@ -20,7 +20,7 @@
 [![X](https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/mirofish_ai)
 [![Instagram](https://img.shields.io/badge/Instagram-Follow-E4405F?style=flat-square&logo=instagram&logoColor=white)](https://www.instagram.com/mirofish_ai/)
 
-[English](./README.md) | [中文文档](./README-ZH.md)
+[English](./MIROFISH.md) | [中文文档](./MIROFISH-ZH.md)
 
 </div>
 
@@ -49,16 +49,16 @@ MiroFish 致力于打造映射现实的群体智能镜像，通过捕捉个体�
 <div align="center">
 <table>
 <tr>
-<td><img src="./static/image/Screenshot/运行截图1.png" alt="截图1" width="100%"/></td>
-<td><img src="./static/image/Screenshot/运行截图2.png" alt="截图2" width="100%"/></td>
+<td><img src="../static/image/Screenshot/运行截图1.png" alt="截图1" width="100%"/></td>
+<td><img src="../static/image/Screenshot/运行截图2.png" alt="截图2" width="100%"/></td>
 </tr>
 <tr>
-<td><img src="./static/image/Screenshot/运行截图3.png" alt="截图3" width="100%"/></td>
-<td><img src="./static/image/Screenshot/运行截图4.png" alt="截图4" width="100%"/></td>
+<td><img src="../static/image/Screenshot/运行截图3.png" alt="截图3" width="100%"/></td>
+<td><img src="../static/image/Screenshot/运行截图4.png" alt="截图4" width="100%"/></td>
 </tr>
 <tr>
-<td><img src="./static/image/Screenshot/运行截图5.png" alt="截图5" width="100%"/></td>
-<td><img src="./static/image/Screenshot/运行截图6.png" alt="截图6" width="100%"/></td>
+<td><img src="../static/image/Screenshot/运行截图5.png" alt="截图5" width="100%"/></td>
+<td><img src="../static/image/Screenshot/运行截图6.png" alt="截图6" width="100%"/></td>
 </tr>
 </table>
 </div>
@@ -68,7 +68,7 @@ MiroFish 致力于打造映射现实的群体智能镜像，通过捕捉个体�
 ### 1. 武汉大学舆情推演预测 + MiroFish项目讲解
 
 <div align="center">
-<a href="https://www.bilibili.com/video/BV1VYBsBHEMY/" target="_blank"><img src="./static/image/武大模拟演示封面.png" alt="MiroFish Demo Video" width="75%"/></a>
+<a href="https://www.bilibili.com/video/BV1VYBsBHEMY/" target="_blank"><img src="../static/image/武大模拟演示封面.png" alt="MiroFish Demo Video" width="75%"/></a>
 
 点击图片查看使用微舆BettaFish生成的《武大舆情报告》进行预测的完整演示视频
 </div>
@@ -76,7 +76,7 @@ MiroFish 致力于打造映射现实的群体智能镜像，通过捕捉个体�
 ### 2. 《红楼梦》失传结局推演预测
 
 <div align="center">
-<a href="https://www.bilibili.com/video/BV1cPk3BBExq" target="_blank"><img src="./static/image/红楼梦模拟推演封面.jpg" alt="MiroFish Demo Video" width="75%"/></a>
+<a href="https://www.bilibili.com/video/BV1cPk3BBExq" target="_blank"><img src="../static/image/红楼梦模拟推演封面.jpg" alt="MiroFish Demo Video" width="75%"/></a>
 
 点击图片查看基于《红楼梦》前80回数十万字，MiroFish深度预测失传结局
 </div>
@@ -179,7 +179,7 @@ docker compose up -d
 ## 📬 更多交流
 
 <div align="center">
-<img src="./static/image/QQ群.png" alt="QQ交流群" width="60%"/>
+<img src="../static/image/QQ群.png" alt="QQ交流群" width="60%"/>
 </div>
 
 &nbsp;
