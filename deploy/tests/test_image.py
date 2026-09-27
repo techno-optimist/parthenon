@@ -50,8 +50,11 @@ def test_the_running_image_installs_the_film_tools_and_fonts():
         assert package in install, package
     assert '--no-install-recommends' in install
     assert 'rm -rf /var/lib/apt/lists/*' in step
-    # Only in the final stage: the build stages do not reach the image.
-    assert 'apt-get install' not in DOCKERFILE.read_text().rsplit('\nFROM ', 1)[0]
+    # The film tools are installed in the final stage (the build stages do not
+    # reach the image), and the build stage's compiler stays out of it.
+    final = DOCKERFILE.read_text().rsplit('\nFROM ', 1)[1]
+    assert step in final.replace('\\\n', '')
+    assert 'gcc' not in final
 
 
 def test_the_image_has_exactly_what_the_backend_looks_for():
