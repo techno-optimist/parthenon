@@ -35,6 +35,11 @@ export const draftStage = (stage, fill, options) => {
   return asked(service.post('/api/parthenon/stage/draft', { stage, fill }), options)
 }
 
+/** One explicit brief/refinement through the existing guarded Oracle route. */
+export const proposeStage = ({ brief, current, sources }, options = {}) =>
+  asked(service.post('/api/parthenon/stage/draft', { mode: 'proposal', brief, current, sources },
+    { signal: options.signal }), options)
+
 /**
  * Whether a word opens the steps to speech, and nothing else (the city counts
  * a wrong word against the visitor's tries for the hour).

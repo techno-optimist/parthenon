@@ -1245,12 +1245,13 @@ import {
 
 const props = defineProps({
   disabled: { type: Boolean, default: false },
+  initialStage: { type: Object, default: null },
 })
 
 /**
  * use-stage: { file: File, fileName, markdown, question, recordQuestion, title, era, stage }
  */
-const emit = defineEmits(['use-stage'])
+const emit = defineEmits(['use-stage', 'stage-change'])
 
 const { t, te, tm, rt, locale } = useI18n()
 
@@ -1449,7 +1450,7 @@ const pristineCheck = (s) => {
   )
 }
 
-const restored = readDraft()
+const restored = props.initialStage ? normalizeStage(props.initialStage) : readDraft()
 const stage = reactive(restored || emptyStage())
 const isPristine = computed(() => pristineCheck(stage))
 
@@ -1480,6 +1481,7 @@ function flushSave() {
 watch(
   stage,
   () => {
+    emit('stage-change', JSON.parse(JSON.stringify(stage)))
     clearTimeout(saveTimer)
     saveTimer = setTimeout(saveDraft, 400)
   },
@@ -2213,7 +2215,7 @@ function readWalk() {
 
 const savedWalk = pristineCheck(stage) ? null : readWalk()
 // 'walk' (the Oracle's questions) or 'form' (write it yourself)
-const mode = ref(savedWalk && savedWalk.mode === 'form' ? 'form' : 'walk')
+const mode = ref(props.initialStage || (savedWalk && savedWalk.mode === 'form') ? 'form' : 'walk')
 const step = ref(savedWalk ? Math.min(clampStep(savedWalk.step), firstOpenStep(stage)) : 0)
 // The Oracle seats a crowd once; if the visitor sends every group away, it stays empty.
 const seated = ref(!!(savedWalk && savedWalk.seated))
@@ -2791,6 +2793,7 @@ defineExpose({ loadStage, summon })
 const onPageHide = () => flushSave()
 
 onMounted(() => {
+  emit('stage-change', JSON.parse(JSON.stringify(stage)))
   window.addEventListener('pagehide', onPageHide)
 })
 

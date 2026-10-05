@@ -406,6 +406,10 @@ function cleanBlock(value, max = Infinity) {
   return cap(joined, max)
 }
 
+// Supplied source excerpts use the same seed prose rules without the topic's
+// smaller cap. Preserve URLs and the full accepted 8000-character context.
+export const sourceContextBlock = value => cleanBlock(value, 8000)
+
 // Single-line text (it lives inside a bullet or a heading).
 function cleanLine(value, max = Infinity) {
   return cap(neutraliseLine(cleanBlock(value).replace(/\s+/g, ' ')), max)

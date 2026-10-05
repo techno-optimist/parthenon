@@ -287,7 +287,13 @@ def draft_stage():
         return _error('Send a JSON object with the stage to draft.', 400)
 
     try:
-        draft = StageOracle().draft(body.get('stage'), body.get('fill'))
+        mode = body.get('mode', 'fill')
+        if mode == 'proposal':
+            draft = StageOracle().propose(body.get('brief'), body.get('current'), body.get('sources', ''))
+        elif mode == 'fill':
+            draft = StageOracle().draft(body.get('stage'), body.get('fill'))
+        else:
+            raise StageValidationError('Choose a supported Oracle request mode: fill or proposal.')
     except LLMResponseError as error:
         # LLMResponseError messages are written to be safe to show.
         logger.warning(
