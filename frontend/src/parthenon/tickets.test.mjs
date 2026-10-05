@@ -225,10 +225,11 @@ test('the question routes go through the ticket waiter, and take a signal to sto
   assert.match(read('simulation.js'), /export const interviewAgents = \(data, options\) => \{\s*return asked\(service\.post\('\/api\/simulation\/interview\/batch', data\), options\)/)
   assert.match(read('report.js'), /export const chatWithReport = \(data, options\) => \{\s*return asked\(service\.post\('\/api\/report\/chat', data\), options\)/)
   assert.match(read('parthenon.js'), /export const draftStage = \(stage, fill, options\) => \{\s*return asked\(service\.post\('\/api\/parthenon\/stage\/draft', \{ stage, fill \}\), options\)/)
+  assert.match(read('parthenon.js'), /export const proposeStage = \(\{ brief, current, sources \}, options = \{\}\) =>\s*asked\(service\.post\('\/api\/parthenon\/stage\/draft', \{ mode: 'proposal', brief, current, sources \},\s*\{ signal: options\.signal \}\), options\)/)
   assert.match(read('parthenon.js'), /export const askSpeaker = \(simulationId, body, options\) =>\s*asked\(service\.post\(`\/api\/parthenon\/gathering\/\$\{encodeURIComponent\(simulationId\)\}\/speaker`/)
-  // Only these four: a read, a start or a film is never waited on as a ticket.
+  // Only these five helpers: a read, a start or a film is never waited on as a ticket.
   const all = ['simulation.js', 'report.js', 'parthenon.js', 'graph.js'].map(read).join('\n')
-  assert.equal((all.match(/\basked\(/g) || []).length, 4)
+  assert.equal((all.match(/\basked\(/g) || []).length, 5)
   assert.match(read('tickets.js'), /\/api\/parthenon\/ticket\/\$\{encodeURIComponent\(id\)\}/)
 })
 

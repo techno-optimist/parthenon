@@ -118,6 +118,7 @@ class LLMClient:
         temperature: Optional[float],
         max_tokens: Optional[int],
         response_format: Optional[Dict[str, Any]],
+        single_request: bool = False,
     ) -> Any:
         """Send one raw Chat Completions request through the compatibility layer.
 
@@ -127,6 +128,8 @@ class LLMClient:
         """
 
         client = self.client
+        if single_request and hasattr(client, 'with_options'):
+            client = client.with_options(max_retries=0)
         seconds = time_budget.call_seconds()
         by_budget = False
         if seconds is not None and hasattr(client, "with_options"):
@@ -187,6 +190,7 @@ class LLMClient:
         temperature: float = 0.3,
         max_tokens: Optional[int] = 4096,
         max_attempts: int = 1,
+        single_request: bool = False,
     ) -> Dict[str, Any]:
         """
         发送聊天请求并返回JSON
@@ -202,6 +206,8 @@ class LLMClient:
         """
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        if single_request and max_attempts != 1:
+            raise ValueError('single_request requires exactly one attempt')
 
         response_format: Optional[Dict[str, str]] = {"type": "json_object"}
         request_max_tokens = max_tokens
@@ -218,10 +224,12 @@ class LLMClient:
                         temperature=temperature,
                         max_tokens=request_max_tokens,
                         response_format=response_format,
+                        **({'single_request': True} if single_request else {}),
                     )
                 except Exception as error:
                     if (
                         response_format is not None
+                        and not single_request
                         and _is_response_format_unsupported(error)
                     ):
                         logger.warning(

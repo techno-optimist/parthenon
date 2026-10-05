@@ -485,3 +485,8 @@ class StageOracle:
         draft = parse_draft(raw, normalized, parts)
         logger.info('Oracle drafted parts: %s', ','.join(draft['filled']))
         return draft
+
+    def propose(self, brief: Any, current: Any = None, sources: Any = '') -> Dict[str, Any]:
+        # Import here so the legacy draft/fill contract remains independent.
+        from .stage_proposal import propose
+        return propose(lambda: self.llm, brief, current, sources)

@@ -173,6 +173,24 @@ def test_chat_json_falls_back_only_for_explicit_response_format_rejection():
     assert "response_format" not in sequence.calls[1]
 
 
+def test_single_request_disables_sdk_retries_and_json_negotiation_fallback():
+    unsupported = ProviderError(status_code=400, body={'error': {
+        'param': 'response_format', 'code': 'unsupported_parameter',
+        'message': 'response_format is not supported by this model',
+    }})
+    sequence = CompletionSequence(unsupported, _response('{"ok": true}'))
+    client = _client_for(sequence)
+    options = []
+    def with_options(**kwargs):
+        options.append(kwargs)
+        return client.client
+    client.client.with_options = with_options
+    with pytest.raises(ProviderError):
+        client.chat_json(messages=[{'role': 'user', 'content': 'Return JSON'}], single_request=True)
+    assert len(sequence.calls) == 1
+    assert options == [{'max_retries': 0}]
+
+
 def test_response_format_fallback_keeps_content_retry_available():
     unsupported = ProviderError(
         status_code=400,

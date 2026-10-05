@@ -234,7 +234,7 @@
             </div>
           </div>
           <div class="wrap builder-wrap">
-            <StageBuilder :disabled="loading" @use-stage="useStage" />
+            <OracleSetup :disabled="loading" @use-stage="useStage" />
           </div>
         </div>
 
@@ -406,7 +406,7 @@ import HistoryDatabase from '../components/HistoryDatabase.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import ParthenonBrand from '../components/ParthenonBrand.vue'
 import CinematicHero from '../components/CinematicHero.vue'
-import StageBuilder from '../components/StageBuilder.vue'
+import OracleSetup from '../components/OracleSetup.vue'
 import ListenToggle from '../components/ListenToggle.vue'
 import InviteLine from '../components/InviteLine.vue'
 import { speakers, speakerSeedFile } from '../parthenon/speakers.js'
@@ -879,6 +879,11 @@ const chooseArrival = (arrival) => {
 // The builder composed a stage: it replaces the scroll and brings its own question.
 const useStage = (payload) => {
   if (loading.value) return
+  if (RUN_LENGTHS.some(length => length.id === payload.runLength)) {
+    runLength.value = publicLimits.value
+      ? clampRunLength(payload.runLength, RUN_LENGTHS, publicLimits.value.max_run)
+      : payload.runLength
+  }
   const firstName = payload.stage?.speakers?.find((sp) => sp.name?.trim())?.name.trim() || ''
   selection.value = {
     kind: 'stage',
